@@ -8,6 +8,12 @@ on:
     branches: [main]
     paths: ['package.json']
   workflow_dispatch:
+    inputs:
+      plateforme:
+        description: 'Plateforme à (re)compiler'
+        type: choice
+        options: [mac, windows, les deux]
+        default: les deux
 
 permissions:
   contents: write
@@ -35,11 +41,11 @@ jobs:
 
   build:
     needs: release
-    if: needs.release.outputs.created == 'true'
+    if: needs.release.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event.inputs.plateforme == 'mac' && '["macos-latest"]' || github.event.inputs.plateforme == 'windows' && '["windows-latest"]' || '["macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
