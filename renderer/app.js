@@ -94,6 +94,17 @@ const metricOf = label => { const k = Stats.KPIS.find(x => x[0] === label); retu
 const fmtOf = label => { const k = Stats.KPIS.find(x => x[0] === label); return k ? k[2] : 'dec2'; };
 const axisFmt = f => (f === 'pct' ? (v => Math.round(v * 100) + '%') : f === 'diff' || f === 'int' ? (v => Math.round(v).toLocaleString('fr-FR')) : (v => v.toFixed(1).replace('.', ',')));
 const lastRank = p => (D().ranks || []).filter(r => r.playerId === p.id).sort((a, b) => b.date - a.date)[0] || null;
+const ranksOf = p => (D().ranks || []).filter(r => r.playerId === p.id && r.score !== null && r.score !== undefined).sort((a, b) => a.date - b.date);
+const TIER_SHORT = ['Fer', 'Bronze', 'Argent', 'Or', 'Plat.', 'Émer.', 'Diam.'];
+const DIV_TXT = ['IV', 'III', 'II', 'I'];
+// score de rang (palier × 400 + division × 100 + LP ; Maître et plus = 2 800 + LP) → texte lisible
+const scoreText = v => (v >= 2800 ? Math.round(v - 2800) + ' LP' : `${TIER_SHORT[Math.max(0, Math.floor(v / 400))] || '?'} ${DIV_TXT[Math.floor((v % 400) / 100)] || ''}`);
+function lpCell(g) {
+  if (g.lpDelta === null || g.lpDelta === undefined) return '<span class="faint" data-tip="LP inconnus : partie jouée avant le début du suivi, ou plusieurs parties entre deux relevés de rang.">—</span>';
+  const cls = g.lpDelta > 0 ? 'ok' : g.lpDelta < 0 ? 'red' : 'muted';
+  const tip = g.lpManual ? 'Saisi à la main' : g.lpEstimated ? 'Estimation : plusieurs parties ont été jouées entre deux relevés de rang' : 'Calculé à partir du rang avant et après la partie';
+  return `<span class="${cls}" data-tip="${tip}">${g.lpEstimated ? '≈ ' : ''}${Stats.fmt(g.lpDelta, 'diff')}</span>`;
+}
 const dots = gs => `<div class="dots">${gs.map(g => `<i class="${g.win ? 'w' : 'l'}"></i>`).join('')}</div>`;
 const winrate = gs => (gs.length ? gs.filter(g => g.win).length / gs.length : null);
 function gameTip(g, label, value) {
@@ -337,6 +348,8 @@ function pageDashboard() {
   const rows = Stats.kpiTable(d, p, '', gs);
   const by = Object.fromEntries(rows.map(r => [r.label, r]));
   const rk = lastRank(p);
+  const snaps = ranksOf(p);
+  const lpTotal = snaps.length >= 2 ? snaps[snaps.length - 1].score - snaps[0].score : null;
   const cards = settingsOf(p).cards.filter(l => by[l]);
   if (!state.metric || !by[state.metric]) state.metric = cards.find(l => metricOf(l) && metricOf(l) !== 'Victoire') || cards.find(l => metricOf(l)) || 'CS/min';
 
@@ -388,6 +401,7 @@ function pageDashboard() {
   return `<div class="row" style="align-items:flex-start">
       <div><h1>${esc(p.riotId)}</h1>
         <div class="row" style="margin-bottom:24px"><span class="chip">${esc(p.role)}</span>${rk ? `<span class="chip accent">${icon('trophy', 13)} ${esc(rk.label)}</span>` : ''}
+          ${lpTotal === null ? '' : `<span class="chip ${lpTotal > 0 ? 'accent' : lpTotal < 0 ? 'red' : ''}" data-tip="Écart de rang entre le premier relevé (${esc(dateFr(snaps[0].date))}) et aujourd'hui">${icon(lpTotal >= 0 ? 'up' : 'down', 13)} ${Stats.fmt(lpTotal, 'diff')} LP depuis le ${esc(dateFr(snaps[0].date))}</span>`}
           ${p.rankTarget ? `<span class="chip">${icon('target', 13)} ${esc(p.rankTarget)}</span>` : ''}<span class="muted small">${gs.length} partie${gs.length > 1 ? 's' : ''} prise${gs.length > 1 ? 's' : ''} en compte</span></div></div>
       <span class="spacer"></span>${periodSeg(p)}</div>
     <div class="kpis">${kpis}</div>
@@ -395,6 +409,9 @@ function pageDashboard() {
     <div class="chart-card"><div class="head"><div class="chips">${cards.filter(metricOf).map(l => `<button class="${state.metric === l ? 'on' : ''}" data-action="metric" data-metric="${esc(l)}">${esc(l)}</button>`).join('')}</div></div>
       ${chart}
       <div class="legend"><span><i style="background:var(--accent)"></i>Victoire</span><span><i style="background:var(--red)"></i>Défaite</span>${obj === null ? '' : '<span><i style="background:var(--red);border-radius:2px;height:2px;width:12px"></i>Objectif</span>'}${mk > 0 ? '<span><i style="background:var(--violet)"></i>Début du coaching</span>' : ''}</div></div>
+    ${snaps.length >= 2 ? `<h2>Rang et LP</h2><div class="chart-card">${Charts.lineChart({
+      points: snaps.slice(-40).map(r => ({ v: r.score, label: dateFr(r.date).slice(0, 5), tip: r.label + '\n' + dateTimeFr(r.date) + (typeof r.wins === 'number' ? '\n' + r.wins + ' V · ' + r.losses + ' D cette saison' : '') })),
+      fmt: scoreText, color: '#69c3d8' })}</div>` : ''}
     <h2>Forme récente</h2>${formHtml}
     <h2>Objectifs et indicateurs</h2>
     <table class="table"><tr><th class="l">Indicateur</th><th>Valeur</th><th>Objectif</th><th>Statut</th><th>Progression</th><th>10 dern.</th><th>Tendance</th><th>Évolution</th></tr>${table}</table>
@@ -419,10 +436,11 @@ function pageParties() {
       <td>${Stats.fmt(Stats.METRICS['CS/min'](g), 'dec2')}</td><td>${Stats.fmt(Stats.METRICS['Vision/min'](g), 'dec2')}</td>
       <td class="${g.goldDiff15 > 0 ? 'ok' : g.goldDiff15 < 0 ? 'red' : ''}">${Stats.fmt(g.goldDiff15, 'diff')}</td>
       <td>${g.deaths15 === null || g.deaths15 === undefined ? '—' : g.deaths15}</td>
-      <td class="${g.lpDelta > 0 ? 'ok' : g.lpDelta < 0 ? 'red' : 'muted'}">${Stats.fmt(g.lpDelta, 'diff')}</td>
+      <td>${lpCell(g)}</td>
       <td>${g.role !== p.role ? '<span class="chip">hors rôle</span>' : g.comment || g.mental ? icon('book', 15, 'muted') : ''}</td></tr>`).join('');
   return `<h1>Parties</h1>
-    <div class="sub">${total} partie${total > 1 ? 's' : ''} classée${total > 1 ? 's' : ''} en solo. Clique sur une partie pour voir le détail${canEdit() ? ' et ajouter ton suivi' : ''}.</div>
+    <div class="sub">${total} partie${total > 1 ? 's' : ''} classée${total > 1 ? 's' : ''} en solo. Clique sur une partie pour voir le détail${canEdit() ? ' et ajouter ton suivi' : ''}.
+      <br><span class="small">LP : calculés automatiquement à partir du rang relevé toutes les 5 minutes (≈ = estimation). Inconnus pour les parties jouées avant le début du suivi.</span></div>
     <div class="row" style="margin-bottom:14px">
       <div class="seg">${[['all', 'Toutes'], ['w', 'Victoires'], ['l', 'Défaites']].map(([k, l]) => `<button class="${state.gameFilter === k ? 'on' : ''}" data-action="gfilter" data-v="${k}">${l}</button>`).join('')}</div>
       <span class="spacer"></span><input id="q" data-input="q" placeholder="Chercher un champion…" value="${esc(state.q)}" style="width:240px"></div>
@@ -449,7 +467,8 @@ function renderDrawer() {
   const suivi = edit ? `
       <label>Note mentale</label>${pills('mental', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']], g.mental)}
       <label>Objectif de la partie atteint</label>${pills('objectiveMet', [[true, 'Oui'], [false, 'Non'], ['', '—']], g.objectiveMet === null || g.objectiveMet === undefined ? '' : g.objectiveMet)}
-      <label>LP gagnés ou perdus</label><input id="lp" type="number" data-gfield="lpDelta" value="${g.lpDelta === null || g.lpDelta === undefined ? '' : g.lpDelta}" style="width:120px">
+      <label>LP gagnés ou perdus <span class="faint">${g.lpManual ? '(saisi à la main)' : g.lpEstimated ? '(estimation automatique, corrigeable)' : g.lpDelta !== null && g.lpDelta !== undefined ? '(calcul automatique)' : '(vide = calcul automatique)'}</span></label>
+      <input id="lp" type="number" data-gfield="lpDelta" value="${g.lpDelta === null || g.lpDelta === undefined ? '' : g.lpDelta}" style="width:120px">
       <label>Commentaire</label><textarea id="cm" data-gfield="comment" rows="4" style="width:100%" placeholder="Ce qui a marché, ce qui est à revoir…">${esc(g.comment || '')}</textarea>
       <div class="actions"><button class="btn danger" data-action="delete-game" data-id="${esc(g.matchId)}">${icon('trash', 15)} Retirer la partie</button></div>`
     : `${g.mental ? `<label>Note mentale</label><div>${g.mental} / 5</div>` : ''}
@@ -464,7 +483,7 @@ function renderDrawer() {
       ${cell('CS', `${g.cs} <span class="muted small">(${Stats.fmt(M['CS/min'](g), 'dec2')}/min)</span>`)}${cell('CS à 10 min', Stats.fmt(g.cs10, 'int'))}${cell('Morts avant 15 min', g.deaths15 === null || g.deaths15 === undefined ? '—' : g.deaths15)}
       ${cell('Écart or à 10 min', Stats.fmt(g.goldDiff10, 'diff'))}${cell('Écart XP à 10 min', Stats.fmt(g.xpDiff10, 'diff'))}${cell('Écart or à 15 min', Stats.fmt(g.goldDiff15, 'diff'))}
       ${cell('Vision', `${g.vision} <span class="muted small">(${Stats.fmt(M['Vision/min'](g), 'dec2')}/min)</span>`)}${cell('Wards posées / détruites', `${g.wardsPlaced ?? '—'} / ${g.wardsKilled ?? '—'}`)}${cell('Pinks', g.pinks ?? '—')}
-      ${cell('Dégâts/min', Stats.fmt(M['Dégâts/min'](g), 'int'))}${cell('Or/min', Stats.fmt(M['Or/min'](g), 'int'))}${cell('LP', Stats.fmt(g.lpDelta, 'diff'))}
+      ${cell('Dégâts/min', Stats.fmt(M['Dégâts/min'](g), 'int'))}${cell('Or/min', Stats.fmt(M['Or/min'](g), 'int'))}${cell('LP', lpCell(g))}
     </div>
     <h2>Suivi</h2>${suivi}`;
   $('#drawer').classList.remove('hidden');

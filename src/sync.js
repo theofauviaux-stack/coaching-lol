@@ -1,18 +1,7 @@
 // Synchronisation : récupère les parties SoloQ (file 420) jouées au rôle coaché et le rang Solo/Duo.
 const POSTES = { TOP: 'Top', JUNGLE: 'Jungle', MIDDLE: 'Mid', MID: 'Mid', BOTTOM: 'ADC', BOT: 'ADC', UTILITY: 'Support', SUPPORT: 'Support' };
-const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER'];
-const TIERS_FR = { IRON: 'Fer', BRONZE: 'Bronze', SILVER: 'Argent', GOLD: 'Or', PLATINUM: 'Platine', EMERALD: 'Émeraude', DIAMOND: 'Diamant', MASTER: 'Maître', GRANDMASTER: 'Grand Maître', CHALLENGER: 'Challenger' };
-const DIVS = { IV: 0, III: 1, II: 2, I: 3 };
-
-function rankScore(tier, division, lp) {
-  const ti = TIERS.indexOf(tier);
-  if (ti < 0) return null;
-  return ti >= 7 ? 2800 + lp : ti * 400 + (DIVS[division] || 0) * 100 + lp;
-}
-function rankLabel(tier, division, lp) {
-  const ti = TIERS.indexOf(tier);
-  return (TIERS_FR[tier] || tier) + (ti >= 7 ? '' : ' ' + division) + ' · ' + lp + ' LP';
-}
+const lp = require('./lp');
+const { rankScore, rankLabel, TIERS_FR } = lp;
 
 function gameFromMatch(match, tl, p, playerId) {
   const info = match.info;
@@ -114,23 +103,11 @@ async function syncPlayer(data, client, player, opts = {}) {
     added.push(g);
   }
 
-  // Rang Solo/Duo + LP gagnés/perdus quand une seule partie classée a été jouée depuis le dernier relevé
+  // Rang Solo/Duo, puis LP de chaque partie déduits des relevés de rang (voir src/lp.js)
   onProgress('Rang Solo/Duo…');
   const entries = await client.leagues(player.puuid, player.region);
-  const e = (entries || []).find(x => x.queueType === 'RANKED_SOLO_5x5');
-  if (e) {
-    const score = rankScore(e.tier, e.rank, e.leaguePoints);
-    const prev = data.ranks.filter(r => r.playerId === player.id).sort((a, b) => b.date - a.date)[0];
-    const games = e.wins + e.losses;
-    const changed = !prev || prev.score !== score || (prev.wins + prev.losses) !== games;
-    if (changed) {
-      data.ranks.push({ playerId: player.id, date: Date.now(), tier: TIERS_FR[e.tier] || e.tier, division: TIERS.indexOf(e.tier) >= 7 ? '' : e.rank,
-        lp: e.leaguePoints, wins: e.wins, losses: e.losses, score, label: rankLabel(e.tier, e.rank, e.leaguePoints) });
-      if (prev && added.length === 1 && ignored === 0 && games - (prev.wins + prev.losses) === 1) {
-        added[0].lpDelta = score - prev.score;
-      }
-    }
-  }
+  lp.recordRank(data, player, entries, opts.now ? opts.now() : Date.now());
+  lp.attributeLp(data, player.id);
   player.lastSync = Date.now();
   player.status = 'ok';
   player.statusText = added.length + ' nouvelle(s) partie(s)' + (ignored ? ' · ' + ignored + ' hors rôle' : '');

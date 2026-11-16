@@ -9,6 +9,7 @@ const mu = require('./src/macupdate');
 const cloudMod = require('./src/cloud');
 const access = require('./src/access');
 const playersMod = require('./src/players');
+const lpMod = require('./src/lp');
 
 const REPO = 'theofauviaux-stack/coaching-lol';
 let win = null;
@@ -199,7 +200,7 @@ async function pushNow() {
 // ---------------------------------------------------------------- synchro Riot (silencieuse, ordinateur du coach)
 async function runSync(playerIds) {
   const key = getSecret('apiKey');
-  if (syncing || !key) return;
+  if (syncing || polling || !key) return;
   syncing = true;
   const client = new RiotClient(key);
   const players = store.data.players.filter(p => !playerIds || playerIds.includes(p.id));
@@ -222,6 +223,40 @@ async function runSync(playerIds) {
     syncing = false;
     if (session && session.source === 'local') refreshView();
     schedulePush(1000);
+  }
+}
+
+// Relevé du rang toutes les 5 minutes (une requête par joueur) : c'est ce qui permet de connaître
+// les LP de chaque partie. Si de nouvelles parties sont comptées, on les récupère quelques minutes après
+// (le temps que Riot les publie).
+let polling = false;
+async function pollRanks() {
+  const key = getSecret('apiKey');
+  if (!key || syncing || polling || !store.data.players.length) return;
+  polling = true;
+  const client = new RiotClient(key, { delayMs: 300 });
+  const newGames = [];
+  let changedAny = false;
+  try {
+    for (const p of store.data.players) {
+      if (!p.puuid) continue;
+      try {
+        const r = lpMod.recordRank(store.data, p, await client.leagues(p.puuid, p.region));
+        if (r.recorded) { changedAny = true; lpMod.attributeLp(store.data, p.id); }
+        if (r.newGames > 0) newGames.push(p.id);
+      } catch (e) { if (e.code === 'KEY') break; }
+    }
+  } finally {
+    polling = false;
+  }
+  if (changedAny) {
+    store.save();
+    if (session && session.source === 'local') refreshView();
+    schedulePush(2000);
+  }
+  if (newGames.length) {
+    setTimeout(() => runSync(newGames), 3 * 60 * 1000);
+    setTimeout(() => runSync(newGames), 8 * 60 * 1000); // seconde chance si Riot tarde à publier la partie
   }
 }
 
@@ -395,7 +430,15 @@ function registerIpc() {
   handle('game:update', ({ matchId, playerId, fields }) => {
     requireEdit();
     const g = store.data.games.find(x => x.matchId === matchId && x.playerId === playerId);
-    if (g) for (const k of ['mental', 'objectiveMet', 'comment', 'lpDelta']) if (k in fields) g[k] = fields[k];
+    if (g) {
+      for (const k of ['mental', 'objectiveMet', 'comment', 'lpDelta']) if (k in fields) g[k] = fields[k];
+      // LP corrigés à la main : on ne les recalcule plus ; champ vidé : le calcul automatique reprend
+      if ('lpDelta' in fields) {
+        g.lpManual = fields.lpDelta !== null && fields.lpDelta !== undefined;
+        g.lpEstimated = false;
+        if (!g.lpManual) lpMod.attributeLp(store.data, playerId);
+      }
+    }
     return { ok: true, data: changed() };
   });
   handle('game:delete', ({ matchId, playerId }) => {
@@ -503,6 +546,8 @@ function createWindow() {
 app.whenReady().then(() => {
   store = new Store(process.env.COACHING_LOL_DATA || app.getPath('userData'));
   if (isCoachMachine()) ensurePlayerCodes();
+  // LP des parties déjà connues, à partir des relevés de rang existants
+  if (store.data.players.reduce((n, p) => n + lpMod.attributeLp(store.data, p.id), 0)) store.save();
   registerIpc();
   createWindow();
   refreshDDragon();
@@ -510,6 +555,8 @@ app.whenReady().then(() => {
   win.webContents.once('did-finish-load', () => {
     if (process.env.COACHING_LOL_TEST) return require(process.env.COACHING_LOL_TEST)({ app, win, store, fs, path });
     if (getSecret('apiKey') && store.data.players.length) setTimeout(() => runSync(), 3000);
+    setTimeout(pollRanks, 20000);
+    setInterval(pollRanks, 5 * 60 * 1000);
     schedulePush(15000); // garde aussi le serveur éveillé (le plan gratuit se met en pause après 7 jours sans activité)
     setInterval(() => schedulePush(1000), 6 * 3600 * 1000);
     checkPreviousUpdate();

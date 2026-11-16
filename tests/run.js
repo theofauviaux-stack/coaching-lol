@@ -54,7 +54,10 @@ function mockFetch(rankWins) {
   const p = { id: 'p1', riotId: 'secretalmasty#EUW', region: 'euw', role: 'Jungle', objectives: { 'CS/min': 7 } };
   data.players.push(p);
   const client = new RiotClient('RGAPI-test', { fetch: mockFetch(100), delayMs: 0, sleep: async () => {} });
-  const r1 = await syncPlayer(data, client, p, { maxGames: 30 });
+  // dates des relevés de rang : juste avant la fin de la partie 106, puis juste après
+  const start = n => 1763000000000 + n * 3600000;
+  const T1 = start(106) - 10 * 60000, T3 = start(106) + 31 * 60000;
+  const r1 = await syncPlayer(data, client, p, { maxGames: 30, now: () => T1 });
   assert.strictEqual(r1.added, 4, 'parties au rôle ajoutées');
   assert.strictEqual(r1.ignored, 1, 'partie hors rôle ignorée');
   assert.strictEqual(p.puuid, 'PUUID-1');
@@ -72,7 +75,7 @@ function mockFetch(rankWins) {
 
   // deuxième synchro : aucune nouvelle partie, aucun doublon
   calls = [];
-  const r2 = await syncPlayer(data, client, p, { maxGames: 30 });
+  const r2 = await syncPlayer(data, client, p, { maxGames: 30, now: () => T1 });
   assert.strictEqual(r2.added, 0);
   assert.strictEqual(data.games.length, 4);
   assert.ok(!calls.some(u => /matches\/EUW1_\d+$/.test(u)), 'pas de re-téléchargement');
@@ -81,7 +84,7 @@ function mockFetch(rankWins) {
   const mf = mockFetch(101);
   const c3 = new RiotClient('RGAPI-test', { fetch: async u => (u.includes('/ids?') ? { status: 200, json: async () => ['EUW1_106', 'EUW1_105'], headers: { get: () => null } } : mf(u)), delayMs: 0, sleep: async () => {} });
   data.ranks[0].lp = 392; data.ranks[0].score = 3192;
-  const r3 = await syncPlayer(data, c3, p, {});
+  const r3 = await syncPlayer(data, c3, p, { now: () => T3 });
   assert.strictEqual(r3.added, 1);
   assert.strictEqual(data.games.find(x => x.matchId === 'EUW1_106').lpDelta, 20);
 
