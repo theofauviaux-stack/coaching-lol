@@ -13,7 +13,9 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :
 
 - **Windows** : `Coaching-LoL-Setup-x.y.z.exe`. Au premier lancement, Windows peut afficher « Windows a protégé votre ordinateur » : clique sur *Informations complémentaires* › *Exécuter quand même* (l'application n'est pas signée).
-- **Mac** : `Coaching LoL-x.y.z-universal.dmg`. Ouvre le dmg, glisse l'app dans Applications. Au premier lancement : clic droit sur l'app › *Ouvrir* › *Ouvrir* (l'application n'est pas signée par Apple).
+- **Mac** : `Coaching-LoL-x.y.z-universal.dmg` (Mac Intel et Apple Silicon). Ouvre le dmg, glisse l'app dans Applications. L'application n'est pas signée par Apple, donc au premier lancement :
+  1. Ouvre l'app une fois (macOS la bloque), puis va dans *Réglages Système* › *Confidentialité et sécurité*, descends et clique sur *Ouvrir quand même*.
+  2. Si macOS dit que l'app « est endommagée », ouvre le Terminal et tape : `xattr -cr "/Applications/Coaching LoL.app"`, puis relance l'app.
 
 ## Clé API Riot
 
