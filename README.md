@@ -2,11 +2,19 @@
 
 Application privée (Mac et Windows) de suivi de coaching League of Legends.
 
-- Tu ajoutes un joueur avec son pseudo Riot (Nom#TAG), sa région et son rôle coaché.
-- L'application récupère toute seule ses parties **SoloQ jouées au rôle coaché** (stats complètes, CS à 10 min, écarts d'or et d'XP à 10 et 15 min, morts avant 15 min) et son rang Solo/Duo, grâce à ta clé API Riot personnelle.
-- Tout est enregistré sur ton ordinateur : joueurs, parties, rangs, sessions de coaching.
-- Tableau de bord par joueur : 8 cartes au choix, forme récente, objectifs (par rôle ou personnalisés), champion pool, matchups, graphiques, progression du rang.
-- Sessions de coaching avec KPI suivi : moyenne avant et depuis la session, objectif atteint ou non, courbe partie par partie.
+- **Écran de code à 4 chiffres** au démarrage : le code coach ouvre tous les joueurs ; le code d'un joueur n'ouvre que son espace, en lecture seule.
+- Le coach ajoute un joueur avec son pseudo Riot (Nom#TAG), sa région et son rôle. L'app récupère toute seule, en arrière-plan, ses parties **SoloQ jouées à ce rôle** (CS à 10 min, écarts d'or et d'XP à 10 et 15 min, morts avant 15 min…) et son rang, grâce à la clé API Riot personnelle du coach.
+- **Paramètres par joueur** : objectifs, cartes du tableau de bord, axes de travail des séances, code d'accès.
+- Tableau de bord interactif (survol des points = détail de la partie, clic = panneau de détail), forme récente, objectifs, champions, adversaires.
+- Séances de coaching avec indicateur suivi : moyenne avant et depuis la séance, cible, courbe partie par partie.
+
+## Fonctionnement en ligne (espaces joueurs)
+
+- L'ordinateur du coach est le seul à parler à l'API Riot. Il envoie automatiquement les données vers une base Supabase (plan gratuit) avec la clé secrète du projet, collée une fois dans *Paramètres › Général › Serveur en ligne* et gardée chiffrée sur cet ordinateur.
+- L'app installée chez un joueur se connecte avec son code : elle ne reçoit que ses données, en lecture seule.
+- Le schéma de la base est dans `supabase/schema.sql` (tables fermées, accès uniquement par fonctions ; codes stockés en empreinte ; blocage après 8 codes faux par adresse IP et 60 au total en 15 minutes).
+- `src/cloud-config.json` contient l'adresse du projet et sa clé **publique** (publiques par conception). La clé secrète n'est jamais dans ce dépôt.
+- Le plan gratuit de Supabase met la base en pause après 7 jours sans activité : l'app du coach la réveille à chaque envoi (au démarrage et toutes les 6 heures).
 
 ## Installer
 
@@ -27,7 +35,7 @@ La clé reste sur ton ordinateur, chiffrée par le système. Elle n'est jamais e
 
 ## Mises à jour
 
-L'application vérifie au lancement puis toutes les 4 heures s'il existe une nouvelle version sur GitHub. Elle la télécharge en arrière-plan, puis l'installe quand on la quitte (ou tout de suite avec « Redémarrer maintenant »).
+L'application vérifie au lancement puis toutes les 4 heures s'il existe une nouvelle version sur GitHub. Elle la télécharge en arrière-plan sans rien afficher, puis l'installe quand on la quitte (fermer la fenêtre quitte l'app, sur Mac aussi). L'état est visible dans *Paramètres › Général › À propos*.
 
 - **Windows** : via electron-updater.
 - **Mac** (sans certificat Apple) : l'app télécharge le zip de la nouvelle version, vérifie son empreinte SHA-512, puis remplace `Coaching LoL.app` une fois fermée et la relance. Il faut que l'app soit dans Applications (pas lancée depuis le dmg). Si macOS bloque le remplacement, l'app l'indique : il suffit d'activer Coaching LoL dans *Réglages Système* › *Confidentialité et sécurité* › *Gestion des apps*.

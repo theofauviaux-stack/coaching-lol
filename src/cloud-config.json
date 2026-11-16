@@ -1,0 +1,5 @@
+{
+  "url": "https://uennbdjsrjvpqnlfrnty.supabase.co",
+  "publicKey": "sb_publishable_vwCCTyoolOk4NtAtys1Vhg_dXKXmKH-",
+  "_note": "Adresse et clé publique du projet Supabase : publiques par conception. Les tables sont fermées (RLS) ; seules les fonctions login / get_data / logout sont ouvertes. La clé secrète n'est jamais dans ce dépôt : le coach la colle dans l'app (Paramètres › Général)."
+}

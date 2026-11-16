@@ -89,8 +89,8 @@
     return Math.max(0, Math.min(10, Math.floor(10 * r)));
   }
 
-  function kpiTable(data, player, since) {
-    const gs = playerGames(data, player, since);
+  function kpiTable(data, player, since, games) {
+    const gs = games || playerGames(data, player, since);
     const last10 = gs.slice(-10);
     return KPIS.map(([label, f, format, metric]) => {
       const value = gs.length || label === 'Parties jouées' ? f(gs) : null;

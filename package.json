@@ -1,7 +1,7 @@
 {
   "name": "coaching-lol",
   "productName": "Coaching LoL",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Suivi privé de coaching League of Legends : parties SoloQ au rôle coaché, objectifs, sessions.",
   "main": "main.js",
   "author": "Theo Fauviaux",
@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node tests/run.js && node tests/macupdate.js",
+    "test": "node tests/run.js && node tests/macupdate.js && node tests/cloud.js && node tests/cloud-sql.js",
     "dist": "electron-builder",
     "release": "electron-builder --publish always"
   },
@@ -17,6 +17,7 @@
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8"
   },
