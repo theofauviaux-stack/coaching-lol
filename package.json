@@ -37,13 +37,30 @@
     "mac": {
       "category": "public.app-category.sports",
       "target": [
-        { "target": "dmg", "arch": ["universal"] },
-        { "target": "zip", "arch": ["universal"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
       ],
       "identity": null
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }]
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -54,7 +71,8 @@
       {
         "provider": "github",
         "owner": "theofauviaux-stack",
-        "repo": "coaching-lol"
+        "repo": "coaching-lol",
+        "releaseType": "release"
       }
     ]
   }

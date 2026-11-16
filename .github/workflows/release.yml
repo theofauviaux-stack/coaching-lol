@@ -1,18 +1,41 @@
 name: Publier une version
 
-# Pour publier une mise à jour : changer "version" dans package.json, puis créer un tag v<version>
-# (ex. v1.0.1) et le pousser. GitHub compile Mac + Windows et publie la release.
+# Pour publier une mise à jour : changer "version" dans package.json (ex. 1.0.1) et l'envoyer sur main.
+# GitHub crée la release v<version>, compile Mac + Windows et y dépose les installateurs.
 # Les applications installées la détectent toutes seules au démarrage.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths: ['package.json']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.rel.outputs.created }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: rel
+        name: Créer la release si cette version n'existe pas encore
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "La release v$VERSION existe déjà : rien à faire."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            gh release create "v$VERSION" --target "$GITHUB_SHA" --title "Coaching LoL $VERSION" --notes "Version $VERSION. Windows : Coaching-LoL-Setup-$VERSION.exe · Mac : le fichier .dmg"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: release
+    if: needs.release.outputs.created == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -25,7 +48,7 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm test
-      - name: Compiler et publier
+      - name: Compiler et déposer dans la release
         run: npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

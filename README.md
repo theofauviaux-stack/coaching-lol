@@ -30,9 +30,8 @@ La clé reste sur ton ordinateur, chiffrée par le système. Elle n'est jamais e
 
 ### Publier une nouvelle version
 
-1. Modifie `"version"` dans `package.json` (ex. `1.0.1`).
-2. Crée un tag et pousse-le : `git tag v1.0.1 && git push origin v1.0.1`.
-3. GitHub Actions compile Mac et Windows et publie la release.
+1. Modifie `"version"` dans `package.json` (ex. `1.0.1`) et envoie la modification sur `main`.
+2. GitHub Actions crée la release `v1.0.1`, compile Mac et Windows et y dépose les installateurs (environ 10 minutes).
 
 ## Développement
 
