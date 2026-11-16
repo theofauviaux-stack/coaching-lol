@@ -592,21 +592,18 @@ function pageJoueurs() {
       ${p.status === 'error' ? `<div class="small red">${icon('alert', 13)} ${esc(p.statusText)}</div>` : ''}
       <div class="row" style="margin-top:auto">
         <button class="btn primary" data-action="open-player" data-id="${p.id}">${icon('dashboard', 15)} Tableau de bord</button>
-        <button class="btn" data-action="player-settings" data-id="${p.id}">${icon('settings', 15)}</button>
-        <button class="btn" data-action="edit-player" data-id="${p.id}">${icon('edit', 15)}</button>
+        <button class="btn" data-action="edit-player" data-id="${p.id}">${icon('edit', 15)} Modifier</button>
+        <button class="btn danger" data-action="delete-player" data-id="${p.id}">${icon('trash', 15)} Supprimer</button>
+        <span class="spacer"></span>
+        <button class="icon-btn" data-action="player-settings" data-id="${p.id}" title="Paramètres du joueur">${icon('settings', 16)}</button>
       </div></div>`;
   }).join('');
   return `<h1>Joueurs</h1><div class="sub">Chaque joueur a son code à 4 chiffres pour ouvrir son espace dans l'app, sur son ordinateur.</div>
     <div class="players">${cards}<div class="pcard add" data-action="new-player">${icon('plus', 26)}<b>Ajouter un joueur</b></div></div>`;
 }
 
-function playerForm(p) {
-  const isNew = !p;
-  p = p || { region: 'euw', role: '' };
-  return `<h1>${isNew ? 'Nouveau joueur' : 'Modifier le joueur'}</h1>
-  <div class="muted">${isNew ? 'Ses parties classées au rôle choisi arrivent toutes seules. Ses objectifs se règlent ensuite dans Paramètres.' : esc(p.riotId)}</div>
-  <form id="player-form"><input type="hidden" name="pid" value="${esc(p.id || '')}">
-    <div class="grid2">
+function profileFields(p) {
+  return `<div class="grid2">
       <div class="field"><label>Pseudo Riot (Nom#TAG)</label><input name="riotId" required placeholder="ex. Faker#KR1" value="${esc(p.riotId || '')}"></div>
       <div class="grid2">
         <div class="field"><label>Région</label><select name="region">${REGIONS.map(r => opt(r, p.region, r.toUpperCase())).join('')}</select></div>
@@ -618,7 +615,16 @@ function playerForm(p) {
       <div class="field"><label>Rang de départ</label><select name="rankStart"><option value="">—</option>${RANGS.map(r => opt(r, p.rankStart)).join('')}</select></div>
       <div class="field"><label>Rang visé</label><select name="rankTarget"><option value="">—</option>${RANGS.map(r => opt(r, p.rankTarget)).join('')}</select></div>
     </div>
-    <div class="field"><label>Objectif du coaching</label><input name="goal" value="${esc(p.goal || '')}" placeholder="ex. Passer Grand Maître"></div>
+    <div class="field"><label>Objectif du coaching</label><input name="goal" value="${esc(p.goal || '')}" placeholder="ex. Passer Grand Maître"></div>`;
+}
+
+function playerForm(p) {
+  const isNew = !p;
+  p = p || { region: 'euw', role: '' };
+  return `<h1>${isNew ? 'Nouveau joueur' : 'Modifier le joueur'}</h1>
+  <div class="muted">${isNew ? 'Ses parties classées au rôle choisi arrivent toutes seules. Ses objectifs se règlent ensuite dans Paramètres.' : esc(p.riotId)}</div>
+  <form id="player-form"><input type="hidden" name="pid" value="${esc(p.id || '')}">
+    ${profileFields(p)}
     <div class="field"><label>Code d'accès du joueur (4 chiffres)</label>
       <div class="row"><input name="code" id="code-input" inputmode="numeric" maxlength="4" pattern="\\d{4}" class="codein" placeholder="${isNew ? 'généré automatiquement' : ''}" value="${esc(p.code || '')}" style="width:190px">
       <button type="button" class="btn" data-action="gen-code">${icon('dice', 15)} Générer</button></div></div>
@@ -661,6 +667,9 @@ function settingsJoueur(p) {
   const cards = settingsOf(p).cards;
   const labels = Stats.KPIS.map(k => k[0]);
   return `
+    <div class="section"><h3>${icon('user', 17)} Profil</h3><div class="muted small">Pseudo, rôle et rangs. Changer de compte Riot efface les parties déjà récupérées et les re-télécharge pour le nouveau compte (les séances sont gardées).</div>
+      <form id="profile-form"><input type="hidden" name="pid" value="${esc(p.id)}">${profileFields(p)}
+        <div class="actions"><button type="submit" class="btn primary">Enregistrer le profil</button></div></form></div>
     <div class="section"><h3>${icon('key', 17)} Code d'accès</h3><div class="muted small">À donner au joueur : il ouvre uniquement son espace, en lecture seule, dans l'app installée chez lui.</div>
       <div class="row" style="margin-top:12px"><input id="pcode" inputmode="numeric" maxlength="4" value="${esc(p.code || '')}" style="width:150px;letter-spacing:.3em;font:800 18px Manrope">
         <button class="btn" data-action="gen-pcode">${icon('dice', 15)} Générer</button><button class="btn primary" data-action="save-pcode">Enregistrer le code</button></div></div>
@@ -670,7 +679,9 @@ function settingsJoueur(p) {
       <div class="grid4">${[0, 1, 2, 3, 4, 5, 6, 7].map(i => `<div class="field"><label>Carte ${i + 1}</label><select data-change="card" data-i="${i}">${labels.map(l => opt(l, cards[i])).join('')}</select></div>`).join('')}</div></div>
     <div class="section"><h3>${icon('sessions', 17)} Axes de travail des séances</h3><div class="muted small">Un axe par ligne. Proposés dans ses séances.</div>
       <textarea id="paxes" rows="7" style="width:100%;margin-top:10px">${esc(settingsOf(p).axes.join('\n'))}</textarea>
-      <div class="actions"><button class="btn primary" data-action="save-paxes">Enregistrer les axes</button></div></div>`;
+      <div class="actions"><button class="btn primary" data-action="save-paxes">Enregistrer les axes</button></div></div>
+    <div class="section" style="border-color:rgba(239,141,145,.3)"><h3 class="red">${icon('trash', 17)} Supprimer ce joueur</h3><div class="muted small">Efface son profil, ses parties, ses rangs et ses séances, ici et sur le serveur. Son code ne fonctionnera plus.</div>
+      <div class="actions" style="justify-content:flex-start"><button class="btn danger" data-action="delete-player" data-id="${p.id}">${icon('trash', 15)} Supprimer ${esc(p.riotId)}</button></div></div>`;
 }
 
 function settingsGeneral() {
@@ -789,7 +800,15 @@ document.addEventListener('click', async e => {
     case 'delete-session': if (confirm('Supprimer cette séance ?')) apply(await window.api.deleteSession(id), 'Séance supprimée.'); break;
     case 'new-player': openModal(playerForm()); break;
     case 'edit-player': openModal(playerForm(D().players.find(x => x.id === id))); break;
-    case 'delete-player': if (confirm('Supprimer ce joueur, ses parties et ses séances ?')) { closeModal(); apply(await window.api.deletePlayer(id), 'Joueur supprimé.'); } break;
+    case 'delete-player': {
+      const dp = D().players.find(x => x.id === id);
+      if (!dp) break;
+      openModal(`<h1>Supprimer ${esc(dp.riotId)} ?</h1>
+        <div class="muted" style="margin-top:8px">Son profil, ses parties, ses rangs et ses séances seront effacés de l'app et du serveur. Son code d'accès ne fonctionnera plus. C'est définitif.</div>
+        <div class="actions"><button class="btn ghost" data-action="close-modal">Annuler</button><button class="btn danger" data-action="confirm-delete" data-id="${dp.id}">${icon('trash', 15)} Supprimer définitivement</button></div>`);
+      break;
+    }
+    case 'confirm-delete': closeModal(); if (state.playerId === id) state.playerId = null; apply(await window.api.deletePlayer(id), 'Joueur supprimé.'); break;
     case 'gen-code': { const r = await window.api.newCode(); if (r.ok) $('#code-input').value = r.code; break; }
     case 'toggle-code': state.showCodes[id] = !state.showCodes[id]; render(); break;
     case 'close-modal': closeModal(); break;
@@ -849,14 +868,19 @@ document.addEventListener('submit', async e => {
   e.preventDefault();
   const formId = e.target.getAttribute('id'); // un champ nommé « id » masquerait form.id
   const f = Object.fromEntries(new FormData(e.target).entries());
-  if (formId === 'player-form') {
+  if (formId === 'player-form' || formId === 'profile-form') {
     const riotId = String(f.riotId || '').trim();
     if (!/^[^#]+#[^#]+$/.test(riotId)) return toast('Le pseudo doit être au format Nom#TAG.', 'err');
     if (f.code && !/^\d{4}$/.test(f.code)) return toast('Le code doit faire 4 chiffres.', 'err');
     const isNew = !f.pid;
     const p = { riotId, region: f.region, role: f.role, startDate: f.startDate, rankStart: f.rankStart, rankTarget: f.rankTarget, goal: f.goal };
     if (f.code) p.code = f.code;
-    if (!isNew) p.id = f.pid;
+    if (!isNew) {
+      p.id = f.pid;
+      const cur = D().players.find(x => x.id === f.pid);
+      const accountChanged = cur && (riotId.toLowerCase() !== String(cur.riotId).toLowerCase() || f.region !== cur.region);
+      if (accountChanged && !confirm(`Changer de compte Riot pour ce joueur ?\n\nLes parties déjà récupérées pour ${cur.riotId} seront effacées, puis celles de ${riotId} seront téléchargées. Ses séances sont gardées.`)) return;
+    }
     const r = await window.api.savePlayer(p);
     if (r && r.ok) {
       closeModal();

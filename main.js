@@ -8,6 +8,7 @@ const { syncPlayer } = require('./src/sync');
 const mu = require('./src/macupdate');
 const cloudMod = require('./src/cloud');
 const access = require('./src/access');
+const playersMod = require('./src/players');
 
 const REPO = 'theofauviaux-stack/coaching-lol';
 let win = null;
@@ -368,9 +369,7 @@ function registerIpc() {
     } else {
       target = list.find(x => x.id === p.id);
       if (!target) throw new Error('Joueur introuvable.');
-      const riotChanged = ['riotId', 'region', 'role'].some(k => k in p && p[k] !== target[k]);
-      Object.assign(target, p);
-      if (riotChanged) { target.puuid = ''; resync = true; }
+      resync = playersMod.updatePlayer(store.data, target, p).resync;
     }
     if (resync) setTimeout(() => runSync([target.id]), 500);
     return { ok: true, id: target.id, data: changed() };
@@ -378,9 +377,7 @@ function registerIpc() {
   handle('player:newCode', () => { requireEdit(); return { ok: true, code: access.randomCode(store.data, getSecret('coachCode')) }; });
   handle('player:delete', id => {
     requireEdit();
-    const d = store.data;
-    d.players = d.players.filter(p => p.id !== id);
-    for (const k of ['games', 'ignored', 'ranks', 'sessions']) d[k] = d[k].filter(x => x.playerId !== id);
+    playersMod.deletePlayer(store.data, id);
     return { ok: true, data: changed(1000) };
   });
 

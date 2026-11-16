@@ -57,6 +57,27 @@ module.exports = async function ({ app, win, fs, path }) {
     await wait(1400);
     out.objectifPerso = await js(`document.querySelector('[data-obj="CS/min"]').classList.contains('custom')`);
     await shot('09-parametres-joueur');
+    // profil modifié depuis Paramètres
+    await js(`(() => { const f = document.querySelector('#profile-form'); f.querySelector('[name=goal]').value = 'Passer Grand Maître cette saison'; f.querySelector('button[type=submit]').click(); })()`);
+    await wait(700);
+    out.profilModifie = await js(`state.data.players[0].goal`);
+    // ajout d'un second joueur puis suppression depuis la page Joueurs, avec confirmation
+    await click('[data-action="go"][data-page="joueurs"]');
+    await click('.pcard.add');
+    await wait(300);
+    await js(`(() => { const f = document.querySelector('#player-form'); f.querySelector('[name=riotId]').value = 'Doublon#EUW'; f.querySelector('[name=role]').value = 'ADC'; f.querySelector('button[type=submit]').click(); })()`);
+    await wait(800);
+    out.apresAjout = await js(`state.data.players.map(p => p.riotId + ' (code ' + (p.code ? 'oui' : 'non') + ')')`);
+    await click('[data-action="go"][data-page="joueurs"]');
+    await shot('08b-joueurs-boutons');
+    await js(`(() => { const b = [...document.querySelectorAll('.pcard [data-action="delete-player"]')].pop(); b.click(); })()`);
+    await wait(300);
+    out.confirmation = await js(`document.querySelector('#modal-box h1').textContent`);
+    await shot('08c-confirmation-suppression');
+    await click('[data-action="confirm-delete"]');
+    await wait(800);
+    out.apresSuppression = await js(`state.data.players.map(p => p.riotId)`);
+    await click('[data-action="go"][data-page="parametres"]');
     await click('[data-action="stab"][data-v="general"]');
     await shot('10-parametres-general');
     // déconnexion puis connexion avec le code du joueur
