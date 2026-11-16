@@ -206,10 +206,31 @@ language sql security definer set search_path = public as $$
   delete from auth_tokens where token_hash = encode(sha256(coalesce(p_token, '')::bytea), 'hex')
 $$;
 
--- Droits : seules login / get_data / logout sont ouvertes au public ; admin_push est réservée à la clé secrète.
+-- Envoi par l'app du coach sans clé secrète : l'app génère elle-même un jeton aléatoire (256 bits)
+-- et seule son empreinte est enregistrée ici (table push_keys, remplie depuis le SQL Editor).
+create table if not exists public.push_keys (
+  hash text primary key,
+  label text,
+  created_at timestamptz not null default now()
+);
+alter table public.push_keys enable row level security;
+
+create or replace function public.coach_push(p_key text, p jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from push_keys where hash = encode(sha256(coalesce(p_key, '')::bytea), 'hex')) then
+    return jsonb_build_object('error', 'jeton_inconnu');
+  end if;
+  return admin_push(p);
+end $$;
+
+-- Droits : login / get_data / logout / coach_push sont ouvertes au public (coach_push exige un jeton enregistré) ;
+-- admin_push est réservée à la clé secrète.
 revoke all on function public.hash_code(text) from public, anon, authenticated;
 revoke all on function public.admin_push(jsonb) from public, anon, authenticated;
 grant execute on function public.admin_push(jsonb) to service_role;
 grant execute on function public.login(text) to anon, authenticated;
 grant execute on function public.get_data(text) to anon, authenticated;
 grant execute on function public.logout(text) to anon, authenticated;
+revoke all on function public.coach_push(text, jsonb) from public;
+grant execute on function public.coach_push(text, jsonb) to anon, authenticated;

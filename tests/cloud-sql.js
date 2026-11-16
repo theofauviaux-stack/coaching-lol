@@ -82,12 +82,20 @@ const path = require('path');
   assert.strictEqual(d3.players.length, 0);
   assert.strictEqual(d3.games.length, 0);
 
+  // envoi par jeton : refusé tant que l'empreinte n'est pas enregistrée, accepté ensuite
+  const jeton = 'a'.repeat(64);
+  assert.strictEqual((await one(`select public.coach_push($1, $2) as r`, [jeton, JSON.stringify(snapshot)])).r.error, 'jeton_inconnu');
+  await db.query(`insert into push_keys (hash, label) values (encode(sha256($1::text::bytea), 'hex'), 'test')`, [jeton]);
+  assert.strictEqual((await one(`select public.coach_push($1, $2) as r`, [jeton, JSON.stringify(snapshot)])).r.players, 2);
+  assert.strictEqual((await one(`select public.coach_push($1, $2) as r`, ['b'.repeat(64), '{}'])).r.error, 'jeton_inconnu');
+
   // droits : le public ne peut pas appeler admin_push ni lire les tables
   const can = async (role, what) => (await one(`select has_function_privilege('${role}', '${what}', 'execute') as ok`)).ok;
   assert.strictEqual(await can('anon', 'public.admin_push(jsonb)'), false);
   assert.strictEqual(await can('anon', 'public.hash_code(text)'), false);
   assert.strictEqual(await can('anon', 'public.login(text)'), true);
   assert.strictEqual(await can('service_role', 'public.admin_push(jsonb)'), true);
+  assert.strictEqual(await can('anon', 'public.coach_push(text,jsonb)'), true);
   const rls = await db.query(`select relname from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' and not relrowsecurity`);
   assert.deepStrictEqual(rls.rows, [], 'RLS active sur toutes les tables');
 

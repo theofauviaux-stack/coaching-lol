@@ -690,11 +690,12 @@ function settingsGeneral() {
       <div class="status-line"><span class="dot ${c.hasKey ? 'on' : 'err'}"></span>${c.hasKey ? 'Clé enregistrée (' + esc(c.keyPreview) + '). Les parties arrivent automatiquement.' : 'Aucune clé : les parties ne peuvent pas être récupérées.'}</div>
       <div class="row" style="margin-top:12px"><input id="key" style="width:420px" placeholder="Remplacer la clé : RGAPI-…"><button class="btn" data-action="save-key">Tester et enregistrer</button></div></div>
     <div class="section"><h3>${icon('cloud', 17)} Serveur en ligne (espaces joueurs)</h3>
-      ${cl.hasSecret
-        ? `<div class="status-line"><span class="dot ${cl.lastError ? 'err' : 'on'}"></span>${cl.lastError ? 'Dernier envoi en échec : ' + esc(cl.lastError) : 'Relié. Dernier envoi ' + esc(ago(cl.lastPush)) + '.'}</div>`
-        : `<div class="status-line"><span class="dot"></span>Pas encore relié : les joueurs ne peuvent pas encore ouvrir leur espace chez eux.</div>
-           <ol class="steps"><li>Ouvre ton projet sur supabase.com › <b>Project Settings</b> › <b>API Keys</b>.</li><li>Dans « Secret keys », clique sur l'œil puis copie la clé (elle commence par <b>sb_secret_</b>).</li><li>Colle-la ci-dessous. Elle reste chiffrée sur cet ordinateur.</li></ol>`}
-      <div class="row" style="margin-top:12px"><input id="csecret" type="password" style="width:420px" placeholder="${cl.hasSecret ? 'Remplacer la clé secrète' : 'sb_secret_…'}"><button class="btn ${cl.hasSecret ? '' : 'primary'}" data-action="save-secret">Relier</button></div></div>
+      ${cl.linked
+        ? `<div class="status-line"><span class="dot on"></span>Relié. Dernier envoi ${esc(ago(cl.lastPush))}. Tes joueurs peuvent ouvrir leur espace chez eux avec leur code.</div>`
+        : `<div class="status-line"><span class="dot ${cl.lastError ? 'err' : ''}"></span>Pas encore relié${cl.lastError ? ' (' + esc(cl.lastError) + ')' : ''} : les joueurs ne peuvent pas encore ouvrir leur espace chez eux.</div>
+           <div class="muted small" style="margin-top:12px">Empreinte de cet ordinateur, à enregistrer une seule fois dans la base (table <b>push_keys</b> de Supabase). Ce n'est pas un secret : elle sert seulement à reconnaître cet ordinateur.</div>
+           <div class="row" style="margin-top:8px"><code id="keyhash" style="font-size:12px;background:var(--panel-2);border:1px solid var(--line-2);border-radius:7px;padding:8px 10px;word-break:break-all;flex:1">${esc(cl.keyHash || '')}</code></div>`}
+      <div class="row" style="margin-top:12px"><button class="btn ${cl.linked ? '' : 'primary'}" data-action="check-cloud">${icon('sync', 15)} Vérifier la liaison</button></div></div>
     <div class="section"><h3>${icon('sync', 17)} Récupération des parties</h3>
       <div class="row" style="margin-top:8px"><label style="margin:0">Toutes les</label><select data-setting="autoSyncMinutes">${[[15, '15 minutes'], [30, '30 minutes'], [60, 'heures'], [180, '3 heures']].map(([v, l]) => opt(v, s.autoSyncMinutes, l)).join('')}</select>
         <label style="margin:0 0 0 18px">Parties max par joueur à chaque fois</label><select data-setting="maxGamesPerSync">${[10, 20, 30, 50, 100].map(v => opt(v, s.maxGamesPerSync)).join('')}</select></div>
@@ -800,6 +801,7 @@ document.addEventListener('click', async e => {
     case 'save-ccode': apply(await window.api.setCoachCode($('#ccode').value.trim()), 'Code coach changé.'); break;
     case 'save-key': { const r = await window.api.saveKey($('#key').value); apply(r); break; }
     case 'save-secret': { el.disabled = true; el.innerHTML = '<span class="spinner"></span>'; const r = await window.api.saveCloudSecret($('#csecret').value); apply(r); break; }
+    case 'check-cloud': { el.disabled = true; el.innerHTML = '<span class="spinner"></span> Vérification…'; apply(await window.api.checkCloud()); break; }
     case 'save-tobj': {
       const objectives = JSON.parse(JSON.stringify(D().settings.objectives));
       document.querySelectorAll('[data-tobj]').forEach(i => { objectives[i.dataset.tobj][i.dataset.role] = i.value === '' ? null : Number(i.value); });

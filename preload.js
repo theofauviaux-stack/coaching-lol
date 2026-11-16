@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   setCoachCode: code => call('coach:code', code),
   saveKey: key => call('key:save', key),
   saveCloudSecret: secret => call('cloud:secret', secret),
+  checkCloud: () => call('cloud:check'),
   exportBackup: () => call('backup:export'),
   importBackup: () => call('backup:import'),
   openExternal: url => call('open:external', url),

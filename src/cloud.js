@@ -6,7 +6,8 @@ const path = require('path');
 const ERREURS = {
   code_inconnu: 'Code inconnu.',
   trop_essais: 'Trop d\'essais. Réessaie dans 15 minutes.',
-  session_expiree: 'Session expirée : entre à nouveau ton code.'
+  session_expiree: 'Session expirée : entre à nouveau ton code.',
+  jeton_inconnu: 'Cet ordinateur n\'est pas encore enregistré sur le serveur.'
 };
 
 // Adresse du projet et clé publique : publiques par conception (les tables sont fermées, seules
@@ -59,6 +60,8 @@ class CloudClient {
   getData(token) { return this.rpc('get_data', { p_token: token }); }
   logout(token) { return this.rpc('logout', { p_token: token }).catch(() => null); }
   push(snapshot, secretKey) { return this.rpc('admin_push', { p: snapshot }, secretKey); }
+  // envoi avec le jeton propre à l'ordinateur du coach (clé publique + jeton enregistré dans la base)
+  pushWithToken(snapshot, token) { return this.rpc('coach_push', { p_key: token, p: snapshot }); }
 }
 
 // Instantané envoyé par l'app du coach : tout sauf la clé Riot, les secrets et les parties écartées.

@@ -44,7 +44,16 @@ function setSecret(name, value) {
   }
   store.save();
 }
-const SECRET_FIELDS = ['apiKey', 'apiKeyEnc', 'coachCode', 'coachCodeEnc', 'cloudSecret', 'cloudSecretEnc'];
+const SECRET_FIELDS = ['apiKey', 'apiKeyEnc', 'coachCode', 'coachCodeEnc', 'cloudSecret', 'cloudSecretEnc', 'pushToken', 'pushTokenEnc'];
+
+// Jeton d'envoi propre à l'ordinateur du coach : généré ici, jamais affiché ; seule son empreinte
+// (SHA-256) est enregistrée dans la base (table push_keys). Remplace la clé secrète du projet.
+function getPushToken() {
+  let t = getSecret('pushToken');
+  if (!t) { t = crypto.randomBytes(32).toString('hex'); setSecret('pushToken', t); }
+  return t;
+}
+const pushKeyHash = () => crypto.createHash('sha256').update(getPushToken()).digest('hex');
 
 const isCoachMachine = () => !!getSecret('coachCode');
 function ensurePlayerCodes() {
@@ -78,7 +87,12 @@ function viewData() {
     d.coach = {
       hasKey: !!k, keyPreview: k ? k.slice(0, 11) + '…' + k.slice(-4) : '',
       coachCode: getSecret('coachCode'),
-      cloud: { configured: !!cloud, hasSecret: !!getSecret('cloudSecret'), lastPush: store.data.settings.lastPush || null, lastError: store.data.settings.pushError || '' },
+      cloud: {
+        configured: !!cloud, hasSecret: !!getSecret('cloudSecret'),
+        lastPush: store.data.settings.lastPush || null, lastError: store.data.settings.pushError || '',
+        linked: !!store.data.settings.lastPush && !store.data.settings.pushError,
+        keyHash: pushKeyHash()
+      },
       update: updateInfo
     };
   }
@@ -155,15 +169,17 @@ function startRemoteRefresh() {
 
 // ---------------------------------------------------------------- envoi vers le serveur (ordinateur du coach)
 function schedulePush(delay = 8000) {
-  if (!cloud || !getSecret('cloudSecret') || !isCoachMachine()) return;
+  if (!cloud || !isCoachMachine()) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(pushNow, delay);
 }
 async function pushNow() {
+  if (!cloud || !isCoachMachine()) return { ok: false, message: 'Serveur non configuré.' };
   const secret = getSecret('cloudSecret');
-  if (!cloud || !secret) return { ok: false, message: 'Serveur non configuré.' };
+  const snapshot = cloudMod.buildSnapshot(store.data, getSecret('coachCode'));
   try {
-    await cloud.push(cloudMod.buildSnapshot(store.data, getSecret('coachCode')), secret);
+    if (secret) await cloud.push(snapshot, secret);
+    else await cloud.pushWithToken(snapshot, getPushToken());
     store.data.settings.lastPush = Date.now();
     store.data.settings.pushError = '';
     store.save();
@@ -418,6 +434,12 @@ function registerIpc() {
     setSecret('apiKey', key);
     setTimeout(() => runSync(), 500);
     return { ok: true, message: 'Clé valide et enregistrée.', data: viewData() };
+  });
+
+  handle('cloud:check', async () => {
+    requireEdit();
+    const r = await pushNow();
+    return { ok: r.ok, message: r.ok ? 'Serveur relié : les données des joueurs sont en ligne.' : r.message, data: viewData() };
   });
 
   handle('cloud:secret', async secret => {
