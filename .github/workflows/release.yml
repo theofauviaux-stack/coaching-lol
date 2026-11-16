@@ -1,0 +1,32 @@
+name: Publier une version
+
+# Pour publier une mise à jour : changer "version" dans package.json, puis créer un tag v<version>
+# (ex. v1.0.1) et le pousser. GitHub compile Mac + Windows et publie la release.
+# Les applications installées la détectent toutes seules au démarrage.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm test
+      - name: Compiler et publier
+        run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
