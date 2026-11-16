@@ -84,8 +84,8 @@ async function syncPlayer(data, client, player, opts = {}) {
   }
 
   onProgress('Liste des parties SoloQ…');
-  const start = player.startDate ? new Date(player.startDate).getTime() : undefined;
-  const ids = await client.matchIds(player.puuid, player.region, { queue: 420, count: 100, startTime: start });
+  // On récupère aussi les parties d'avant le début du coaching : elles servent de point de comparaison.
+  const ids = await client.matchIds(player.puuid, player.region, { queue: 420, count: 100 });
   const known = new Set(data.games.filter(g => g.playerId === player.id).map(g => g.matchId)
     .concat(data.ignored.filter(g => g.playerId === player.id).map(g => g.matchId)));
   const num = id => Number(String(id).split('_')[1] || 0);

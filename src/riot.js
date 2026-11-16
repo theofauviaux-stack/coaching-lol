@@ -37,6 +37,12 @@ class RiotClient {
       }
       if (res.status === 200) return res.json();
       if (res.status === 404) return null;
+      if ((res.status === 401 || res.status === 403) && !this.keyRetried) {
+        // un refus isolé arrive parfois juste après la création d'une clé : on réessaie une fois
+        this.keyRetried = true;
+        await this.sleep(1500);
+        continue;
+      }
       if (res.status === 401 || res.status === 403) {
         throw new RiotError('Clé API refusée (' + res.status + ') : elle a peut-être expiré. Une clé de développement dure 24 h.', 'KEY');
       }

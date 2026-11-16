@@ -96,7 +96,17 @@ async function refreshDDragon() {
   try {
     const res = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
     const v = (await res.json())[0];
-    if (v && v !== store.data.settings.ddVersion) { store.data.settings.ddVersion = v; store.save(); send('data:changed', publicData()); }
+    const s = store.data.settings;
+    if (v && (v !== s.ddVersion || !s.champs)) {
+      // noms français des champions (l'API Riot donne « MonkeyKing », « JarvanIV »… : on affiche « Wukong », « Jarvan IV »)
+      try {
+        const cj = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/champion.json`)).json();
+        const champs = {};
+        for (const c of Object.values(cj.data || {})) champs[c.id.toLowerCase()] = [c.id, c.name];
+        if (Object.keys(champs).length) s.champs = champs;
+      } catch (e) { /* on garde les noms bruts */ }
+      s.ddVersion = v; store.save(); send('data:changed', publicData());
+    }
   } catch (e) { /* hors ligne : on garde la version connue */ }
 }
 

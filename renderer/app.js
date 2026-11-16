@@ -27,12 +27,15 @@ const opt = (v, cur, label) => `<option value="${esc(v)}" ${String(v) === String
 const dateFr = t => (t ? new Date(t).toLocaleDateString('fr-FR') : '—');
 const dateTimeFr = t => (t ? new Date(t).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 const isoDay = t => (t ? new Date(t).toISOString().slice(0, 10) : '');
+const champInfo = champ => (state.data && state.data.settings.champs && state.data.settings.champs[String(champ || '').toLowerCase()]) || null;
 const icon = champ => {
   const v = state.data && state.data.settings.ddVersion;
   if (!v || !champ) return '';
-  const key = String(champ).replace(/[ '.]/g, '').replace('FiddleSticks', 'Fiddlesticks');
+  const ci = champInfo(champ);
+  const key = ci ? ci[0] : String(champ).replace(/[ '.]/g, '').replace('FiddleSticks', 'Fiddlesticks');
   return `https://ddragon.leagueoflegends.com/cdn/${v}/img/champion/${key}.png`;
 };
+const champ = c => { const ci = champInfo(c); return esc(ci ? ci[1] : c); }; // nom affiché, échappé
 const player = () => state.data.players.find(p => p.id === state.playerId) || null;
 
 function toast(msg, ms = 3500) {
@@ -154,7 +157,7 @@ function playerForm(p) {
       </div>
     </div>
     <div class="grid3">
-      <div class="field"><label>Date de début</label><input type="date" name="startDate" value="${esc(p.startDate || '')}"></div>
+      <div class="field"><label>Début du coaching</label><input type="date" name="startDate" value="${esc(p.startDate || '')}"></div>
       <div class="field"><label>Rang de départ</label><select name="rankStart"><option value="">—</option>${RANGS.map(r => opt(r, p.rankStart)).join('')}</select></div>
       <div class="field"><label>Rang visé</label><select name="rankTarget"><option value="">—</option>${RANGS.map(r => opt(r, p.rankTarget)).join('')}</select></div>
     </div>
@@ -217,7 +220,7 @@ function pageDashboard() {
   }).join('');
 
   const last10 = allRole.slice(-10);
-  const form = last10.length ? `<div class="form">${last10.map(g => `<div class="g"><img src="${icon(g.champion)}" alt=""><div class="r ${g.win ? 'V' : 'D'}">${g.win ? 'V' : 'D'}</div><div class="c">${esc(g.champion)}</div></div>`).join('')}</div>` : '<div class="muted">Aucune partie au rôle pour l\'instant.</div>';
+  const form = last10.length ? `<div class="form">${last10.map(g => `<div class="g"><img src="${icon(g.champion)}" alt=""><div class="r ${g.win ? 'V' : 'D'}">${g.win ? 'V' : 'D'}</div><div class="c">${champ(g.champion)}</div></div>`).join('')}</div>` : '<div class="muted">Aucune partie au rôle pour l\'instant.</div>';
 
   const table = rows.map(r => `<tr>
       <td class="l"><b>${esc(r.label)}</b></td><td><b>${Stats.fmt(r.value, r.format)}</b></td>
@@ -231,26 +234,31 @@ function pageDashboard() {
   const pool = Stats.groupBy(gs, 'champion').slice(0, 10);
   const mu = Stats.groupBy(gs, 'opponent').slice(0, 8);
   const groupTable = (list, title) => list.length ? `<table><tr><th class="l">${title}</th><th>Parties</th><th>Bilan</th><th>Victoire %</th><th>KDA</th><th>CS/min</th><th>KP</th><th>Écart or 15</th><th>Morts &lt;15</th></tr>
-      ${list.map(c => `<tr><td class="l"><img class="ico" src="${icon(c.name)}" alt="">${esc(c.name)}</td><td>${c.games}</td><td class="muted">${c.wins}V - ${c.games - c.wins}D</td>
+      ${list.map(c => `<tr><td class="l"><img class="ico" src="${icon(c.name)}" alt="">${champ(c.name)}</td><td>${c.games}</td><td class="muted">${c.wins}V - ${c.games - c.wins}D</td>
       <td class="${c.winrate >= 0.55 ? 'ok' : c.winrate < 0.45 ? 'red' : ''}">${Stats.fmt(c.winrate, 'pct')}</td><td>${Stats.fmt(c.kda, 'dec2')}</td><td>${Stats.fmt(c.csmin, 'dec2')}</td>
       <td>${Stats.fmt(c.kp, 'pct')}</td><td>${Stats.fmt(c.gd15, 'diff')}</td><td>${Stats.fmt(c.d15, 'dec1')}</td></tr>`).join('')}</table>` : '<div class="muted">—</div>';
 
   const last20 = allRole.slice(-20);
+  const startT = p.startDate ? new Date(p.startDate).getTime() : null;
+  const startIdx = startT ? last20.findIndex(g => g.date >= startT) : -1;
+  const startMk = startIdx > 0 ? startIdx : -1; // repère seulement s'il y a des parties avant le coaching
   const labels = last20.map((g, i) => String(allRole.length - last20.length + i + 1));
   const ch = (title, metric, color, fmtF, objLabel) => {
     const o = objLabel ? Stats.objectiveFor(d, p, objLabel).value : null;
-    return `<div class="chart"><h3>${title}</h3>${Charts.lineChart({ series: [{ values: last20.map(Stats.METRICS[metric]), color }], labels, target: o, fmt: fmtF })}</div>`;
+    return `<div class="chart"><h3>${title}</h3>${Charts.lineChart({ series: [{ values: last20.map(Stats.METRICS[metric]), color }], labels, target: o, fmt: fmtF, marker: startMk, markerLabel: 'début coaching' })}</div>`;
   };
   const f2 = v => v.toFixed(2).replace('.', ','), fp = v => Math.round(v * 100) + '%', fi = v => Math.round(v).toString();
   const rankChart = ranks.length ? `<div class="chart"><h3>Progression du rang (score classé)</h3>${Charts.lineChart({ series: [{ values: ranks.slice(-15).map(r => r.score), color: '#C8AA6E' }], labels: ranks.slice(-15).map(r => dateFr(r.date).slice(0, 5)), fmt: fi })}<div class="muted tiny">Score = palier × 400 + division × 100 + LP (Maître = 2 800 + LP)</div></div>` : '';
 
-  const games20 = [...last20].reverse().map(g => `<tr><td>${dateFr(g.date)}</td><td class="l"><img class="ico" src="${icon(g.champion)}" alt="">${esc(g.champion)}</td><td class="muted">${esc(g.opponent)}</td>
+  const games20 = [...last20].reverse().map(g => `<tr><td>${dateFr(g.date)}</td><td class="l"><img class="ico" src="${icon(g.champion)}" alt="">${champ(g.champion)}</td><td class="muted">${champ(g.opponent)}</td>
       <td class="${g.win ? 'ok' : 'red'}">${g.win ? 'V' : 'D'}</td><td>${g.kills}/${g.deaths}/${g.assists}</td><td>${Stats.fmt(Stats.METRICS.KP(g), 'pct')}</td>
       <td>${Stats.fmt(Stats.METRICS['CS/min'](g), 'dec2')}</td><td>${Stats.fmt(Stats.METRICS['Vision/min'](g), 'dec2')}</td><td>${Stats.fmt(g.goldDiff15, 'diff')}</td>
       <td>${g.deaths15 === null ? '—' : g.deaths15}</td><td class="${g.lpDelta > 0 ? 'ok' : g.lpDelta < 0 ? 'red' : 'muted'}">${Stats.fmt(g.lpDelta, 'diff')}</td><td>${g.duration}</td></tr>`).join('');
 
   return `<div class="row"><h1>⚔️ ${esc(p.riotId.toUpperCase())}</h1><span class="spacer"></span>${playerSelect()}
       <label style="margin:0 0 0 8px">Depuis le</label><input type="date" data-change="since" value="${esc(state.since)}">
+      ${p.startDate && state.since !== p.startDate ? `<button class="btn" data-action="since-start" data-id="${p.id}">Depuis le début du coaching</button>` : ''}
+      ${state.since ? `<button class="btn" data-action="since-all">Toutes les parties</button>` : ''}
       <button class="btn" data-action="sync-one" data-id="${p.id}">🔄 Synchroniser</button></div>
     <div class="sub">${esc(p.role)} · SoloQ uniquement · Rang actuel : <b class="gold">${rk ? esc(rk.label) : 'non relevé'}</b> · Départ ${esc(p.rankStart || '?')} → visé ${esc(p.rankTarget || '?')} · ${gs.length} partie(s) prise(s) en compte${ign ? ` · ${ign} hors rôle ignorée(s)` : ''}${p.goal ? ` · 🎯 ${esc(p.goal)}` : ''}</div>
     ${keyBanner()}
@@ -282,7 +290,7 @@ function pageParties() {
   const gs = d.games.filter(g => g.playerId === p.id).sort((a, b) => b.date - a.date);
   const rows = gs.map(g => {
     const counted = g.role === p.role;
-    return `<tr class="editable"><td>${dateTimeFr(g.date)}</td><td class="l"><img class="ico" src="${icon(g.champion)}" alt="">${esc(g.champion)}</td><td class="muted">${esc(g.opponent)}</td>
+    return `<tr class="editable"><td>${dateTimeFr(g.date)}</td><td class="l"><img class="ico" src="${icon(g.champion)}" alt="">${champ(g.champion)}</td><td class="muted">${champ(g.opponent)}</td>
       <td>${esc(g.role)}</td><td class="${g.win ? 'ok' : 'red'}">${g.win ? 'V' : 'D'}</td><td>${g.kills}/${g.deaths}/${g.assists}</td><td>${g.cs}</td><td>${g.vision}</td><td>${Stats.fmt(g.goldDiff15, 'diff')}</td>
       <td><input type="number" style="width:60px" data-game="${esc(g.matchId)}" data-field="lpDelta" value="${g.lpDelta === null || g.lpDelta === undefined ? '' : g.lpDelta}"></td>
       <td><select data-game="${esc(g.matchId)}" data-field="mental"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => opt(n, g.mental)).join('')}</select></td>
@@ -421,6 +429,8 @@ document.addEventListener('click', async e => {
     case 'close-modal': closeModal(); break;
     case 'open-dashboard': state.playerId = id; localStorage.setItem('playerId', id); state.page = 'dashboard'; render(); break;
     case 'sync-one': runSync([id]); break;
+    case 'since-start': state.since = (state.data.players.find(x => x.id === id) || {}).startDate || ''; render(); break;
+    case 'since-all': state.since = ''; render(); break;
     case 'delete-game':
       if (confirm('Retirer cette partie ? Elle ne sera plus réimportée.')) { state.data = await window.api.deleteGame(id, state.playerId); render(); }
       break;

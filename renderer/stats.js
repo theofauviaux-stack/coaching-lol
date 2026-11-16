@@ -45,7 +45,7 @@
     ['Écart XP à 10 min', gs => mean(gs.map(g => g.xpDiff10)), 'diff', 'Écart XP à 10 min'],
     ['Écart or à 15 min', gs => mean(gs.map(g => g.goldDiff15)), 'diff', 'Écart or à 15 min'],
     ['Morts avant 15 min', gs => mean(gs.map(g => g.deaths15)), 'dec1', 'Morts avant 15 min'],
-    ['LP net', gs => sum(gs.map(g => g.lpDelta)), 'diff', 'LP gagnés/perdus'],
+    ['LP net', gs => (gs.some(g => g.lpDelta !== null && g.lpDelta !== undefined) ? sum(gs.map(g => g.lpDelta)) : null), 'diff', 'LP gagnés/perdus'],
     ['Note mentale', gs => mean(gs.map(g => g.mental)), 'dec1', 'Note mentale'],
     ['% objectifs de partie atteints', gs => mean(gs.map(METRICS['Objectif de partie atteint'])), 'pct', 'Objectif de partie atteint'],
     ['Durée moyenne (min)', gs => mean(gs.map(g => g.duration)), 'dec1', 'Durée (min)']
@@ -64,7 +64,7 @@
 
   // Parties qui comptent : celles du joueur, au rôle coaché, depuis la date choisie, triées de la plus ancienne à la plus récente
   function playerGames(data, player, since) {
-    const from = since ? new Date(since).getTime() : (player.startDate ? new Date(player.startDate).getTime() : 0);
+    const from = since ? new Date(since).getTime() : 0;
     return data.games.filter(g => g.playerId === player.id && g.role === player.role && g.date >= from).sort((a, b) => a.date - b.date);
   }
 
@@ -107,7 +107,7 @@
         // moyenne cumulée : plus lisible qu'une suite de 0 et de 1
         let n = 0, t = 0; series = series.map(v => { if (v === null) return null; n++; t += v; return t / n; });
       } else if (label === 'LP net') {
-        let t = 0; series = series.map(v => (t += v || 0));
+        let t = 0; series = value === null ? [] : series.map(v => (t += v || 0));
       }
       return { label, value, v10, format, obj, ok, progress: progress(value, obj), trend, series };
     });

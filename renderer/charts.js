@@ -1,6 +1,6 @@
 // Petits graphiques SVG (aucune dépendance).
 (function (root) {
-  function lineChart({ series, labels = [], height = 180, width = 460, target = null, fmt = v => v.toFixed(1), marker = null }) {
+  function lineChart({ series, labels = [], height = 180, width = 460, target = null, fmt = v => v.toFixed(1), marker = null, markerLabel = 'session' }) {
     const pad = { l: 44, r: 12, t: 12, b: 26 };
     const all = series.flatMap(s => s.values).filter(v => v !== null && v !== undefined && !Number.isNaN(v));
     if (target !== null && target !== undefined) all.push(target);
@@ -19,7 +19,7 @@
     }
     if (marker !== null && marker >= 0) {
       svg += `<line x1="${x(marker)}" x2="${x(marker)}" y1="${pad.t}" y2="${height - pad.b}" stroke="#C8AA6E" stroke-dasharray="4 3"/>`;
-      svg += `<text x="${x(marker) + 4}" y="${pad.t + 10}" fill="#C8AA6E" font-size="10">session</text>`;
+      svg += `<text x="${x(marker) + 4}" y="${pad.t + 10}" fill="#C8AA6E" font-size="10">${markerLabel}</text>`;
     }
     if (target !== null && target !== undefined) {
       svg += `<line x1="${pad.l}" x2="${width - pad.r}" y1="${y(target)}" y2="${y(target)}" stroke="#E84057" stroke-dasharray="5 4"/>`;
