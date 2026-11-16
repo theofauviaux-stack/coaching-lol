@@ -290,6 +290,41 @@ async function captureForTests(dir) {
       fs.writeFileSync(path.join(dir, 'dashboard2.png'), (await win.webContents.capturePage()).toPNG());
     }
   }
+  await win.webContents.executeJavaScript(`document.querySelector('[data-page="joueurs"]').click();`);
+  await wait(400);
+  await win.webContents.executeJavaScript(`document.querySelector('[data-action="new-player"]').click(); const r = document.querySelector('#player-form [name=role]'); if (r) { r.value = 'Jungle'; r.dispatchEvent(new Event('change', { bubbles: true })); }`);
+  await wait(500);
+  fs.writeFileSync(path.join(dir, 'modal-joueur.png'), (await win.webContents.capturePage()).toPNG());
+  await win.webContents.executeJavaScript(`document.querySelector('#modal-box').scrollTop = 10000;`);
+  await wait(300);
+  fs.writeFileSync(path.join(dir, 'modal-joueur2.png'), (await win.webContents.capturePage()).toPNG());
+  // parcours réel au clic : création d'un joueur, modification, puis création d'une session
+  const result = await win.webContents.executeJavaScript(`(async () => {
+    const pause = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    let f = document.querySelector('#player-form');
+    f.querySelector('[name=riotId]').value = 'Test#EUW';
+    const cs = f.querySelector('[data-obj-key="CS/min"]'); cs.value = '7'; cs.dispatchEvent(new Event('input', { bubbles: true }));
+    out.dore = cs.classList.contains('custom');
+    f.querySelector('button[type=submit]').click(); await pause(1500);
+    let p = state.data.players.find(x => x.riotId === 'Test#EUW');
+    out.creation = { cree: !!p, objectifs: p && p.objectives, modaleFermee: document.querySelector('#modal').classList.contains('hidden') };
+    document.querySelector('[data-page="joueurs"]').click(); await pause(300);
+    document.querySelector('[data-action="edit-player"][data-id="' + p.id + '"]').click(); await pause(300);
+    f = document.querySelector('#player-form');
+    out.edition = { csAffiche: f.querySelector('[data-obj-key="CS/min"]').value, kpAffiche: f.querySelector('[data-obj-key="KP"]').value };
+    f.querySelector('[name=goal]').value = 'Passer Diamant'; f.querySelector('button[type=submit]').click(); await pause(800);
+    p = state.data.players.find(x => x.riotId === 'Test#EUW');
+    out.apresEdition = { goal: p.goal, objectifs: p.objectives, nbJoueurs: state.data.players.length };
+    state.playerId = p.id; document.querySelector('[data-page="sessions"]').click(); await pause(300);
+    document.querySelector('[data-action="new-session"]').click(); await pause(300);
+    const sf = document.querySelector('#session-form');
+    const t = sf.querySelector('[name=theme]') || sf.querySelector('input[type=text]'); if (t) t.value = 'Test session';
+    sf.querySelector('button[type=submit]').click(); await pause(800);
+    out.session = { nb: state.data.sessions.filter(s => s.playerId === p.id).length, modaleFermee: document.querySelector('#modal').classList.contains('hidden') };
+    return JSON.stringify(out, null, 1);
+  })()`);
+  fs.writeFileSync(path.join(dir, 'parcours.json'), result);
   app.quit();
 }
 

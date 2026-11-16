@@ -3,7 +3,14 @@ const ROLES = ['Top', 'Jungle', 'Mid', 'ADC', 'Support'];
 const REGIONS = ['euw', 'eune', 'na', 'kr', 'br', 'jp', 'lan', 'las', 'oce', 'tr', 'ru', 'me', 'sg', 'tw', 'vn'];
 const RANGS = ['Fer', 'Bronze', 'Argent', 'Or', 'Platine', 'Émeraude', 'Diamant', 'Maître', 'Grand Maître', 'Challenger'];
 const STATUTS = ['À faire', 'En cours', 'Acquis', 'Abandonné'];
-const OBJ_PERSO = ['Taux de victoire', 'KDA', 'KP', 'CS/min', 'CS à 10 min', 'Vision/min', 'Wards posées', 'Morts avant 15 min', 'Écart or à 15 min', 'Dégâts/min', 'Note mentale'];
+// Objectifs proposés sur la fiche joueur, regroupés par thème
+const OBJ_GROUPS = [
+  ['📈 Résultats', ['Taux de victoire', 'KDA', 'KP', 'Morts moyennes']],
+  ['🌾 Farm & laning', ['CS/min', 'CS à 10 min', 'Or/min', 'Morts avant 15 min', 'Écart or à 10 min', 'Écart XP à 10 min', 'Écart or à 15 min']],
+  ['👁️ Vision', ['Vision/min', 'Wards posées', 'Wards détruites', 'Pinks achetées']],
+  ['⚔️ Combat & mental', ['Dégâts/min', 'Note mentale', '% objectifs de partie atteints', 'LP net']]
+];
+const OBJ_PERSO = OBJ_GROUPS.flatMap(g => g[1]);
 const STATUS_CLASS = { 'Acquis': 'st-ok', 'En cours': 'st-run', 'À faire': 'st-todo', 'Abandonné': 'st-off' };
 function fmtDelta(v, f) {
   if (v === null || v === undefined) return '—';
@@ -89,6 +96,50 @@ function pageJoueurs() {
     <div class="players">${cards}<div class="pcard add-card" data-action="new-player">＋ Ajouter un joueur</div></div>`;
 }
 
+// --- objectifs de la fiche joueur ---
+function roleDefault(k, role) {
+  const d = state.data.settings.objectives[k];
+  return d && role && d[role] !== null && d[role] !== undefined ? d[role] : null;
+}
+function objToInput(k, v) {
+  if (v === null || v === undefined || v === '') return '';
+  return PCT_KEYS.has(k) ? Math.round(Number(v) * 1000) / 10 : Number(v);
+}
+function objFromInput(k, raw) {
+  if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+  const n = Number(String(raw).replace(',', '.'));
+  if (!Number.isFinite(n)) return null;
+  return PCT_KEYS.has(k) ? n / 100 : n;
+}
+const sameNum = (a, b) => a !== null && b !== null && Math.abs(a - b) < 1e-6;
+function objField(k, p, o) {
+  const d = state.data.settings.objectives[k];
+  const sens = d ? d.sens : '≥';
+  const custom = o[k] !== undefined && o[k] !== null && o[k] !== '';
+  const def = roleDefault(k, p.role);
+  const value = custom ? objToInput(k, o[k]) : objToInput(k, def);
+  const ph = p.role ? (def === null ? 'aucun' : '') : 'rôle ?';
+  return `<div class="field"><label>${esc(k)}${PCT_KEYS.has(k) ? ' (%)' : ''} <span class="sens">${sens === '≤' ? 'maxi' : 'mini'}</span></label>
+    <input type="number" step="any" name="obj:${esc(k)}" data-obj-key="${esc(k)}" class="${custom ? 'custom' : ''}" value="${esc(value)}" placeholder="${ph}"></div>`;
+}
+function refreshObjectiveDefaults(form) {
+  const role = form.querySelector('[name=role]').value;
+  form.querySelectorAll('input[data-obj-key]').forEach(i => {
+    if (i.classList.contains('custom')) return; // on garde ce que le coach a personnalisé
+    const def = roleDefault(i.dataset.objKey, role);
+    i.value = objToInput(i.dataset.objKey, def);
+    i.placeholder = role ? (def === null ? 'aucun' : '') : 'rôle ?';
+  });
+  const hint = $('#obj-hint');
+  if (hint) hint.textContent = role ? `Pré-remplis avec les objectifs du rôle ${role}. Change ceux que tu veux adapter à ce joueur (en doré = personnalisé).` : 'Choisis le rôle coaché : les objectifs du rôle se rempliront automatiquement.';
+}
+function markObjectiveInput(i) {
+  const form = i.closest('form');
+  const role = form.querySelector('[name=role]').value;
+  const v = objFromInput(i.dataset.objKey, i.value);
+  i.classList.toggle('custom', v !== null && !sameNum(v, roleDefault(i.dataset.objKey, role)));
+}
+
 function playerForm(p) {
   p = p || { region: 'euw', role: '', objectives: {} };
   const o = p.objectives || {};
@@ -108,8 +159,9 @@ function playerForm(p) {
       <div class="field"><label>Rang visé</label><select name="rankTarget"><option value="">—</option>${RANGS.map(r => opt(r, p.rankTarget)).join('')}</select></div>
     </div>
     <div class="field"><label>Objectif du coaching</label><input name="goal" value="${esc(p.goal || '')}" placeholder="ex. Stabiliser le laning et passer Diamant"></div>
-    <h2>Objectifs personnalisés <span class="muted small" style="text-transform:none">(facultatif · vide = objectif par défaut du rôle)</span></h2>
-    <div class="grid3">${OBJ_PERSO.map(k => `<div class="field"><label>${esc(k)}${PCT_KEYS.has(k) ? ' (%)' : ''}</label><input type="number" step="any" name="obj:${esc(k)}" value="${o[k] === undefined || o[k] === null || o[k] === '' ? '' : (PCT_KEYS.has(k) ? Math.round(o[k] * 100) : o[k])}"></div>`).join('')}</div>
+    <h2>🎯 Objectifs du joueur</h2>
+    <div class="muted small" id="obj-hint">${p.role ? `Pré-remplis avec les objectifs du rôle ${esc(p.role)}. Change ceux que tu veux adapter à ce joueur (en doré = personnalisé).` : 'Choisis le rôle coaché : les objectifs du rôle se rempliront automatiquement, tu pourras ensuite les adapter.'}</div>
+    ${OBJ_GROUPS.map(([title, keys]) => `<div class="obj-group"><div class="obj-title">${title}</div><div class="grid4">${keys.map(k => objField(k, p, o)).join('')}</div></div>`).join('')}
     <div class="actions">
       ${p.id ? `<button type="button" class="btn danger" data-action="delete-player" data-id="${p.id}">Supprimer</button><span class="spacer"></span>` : ''}
       <button type="button" class="btn" data-action="close-modal">Annuler</button>
@@ -123,10 +175,11 @@ async function submitPlayer(form) {
   const riotId = String(f.get('riotId')).trim();
   if (!/^[^#]+#[^#]+$/.test(riotId)) { toast('Le pseudo doit être au format Nom#TAG'); return; }
   if (!f.get('role')) { toast('Choisis le rôle coaché'); return; }
+  // on n'enregistre que les objectifs différents de ceux du rôle (les autres suivent les réglages du rôle)
   const objectives = {};
   for (const k of OBJ_PERSO) {
-    const v = f.get('obj:' + k);
-    if (v !== '' && v !== null) objectives[k] = PCT_KEYS.has(k) ? Number(v) / 100 : Number(v);
+    const v = objFromInput(k, f.get('obj:' + k));
+    if (v !== null && !sameNum(v, roleDefault(k, f.get('role')))) objectives[k] = v;
   }
   const p = { id: f.get('id') || undefined, riotId, region: f.get('region'), role: f.get('role'), startDate: f.get('startDate'),
     rankStart: f.get('rankStart'), rankTarget: f.get('rankTarget'), goal: f.get('goal'), objectives };
@@ -401,8 +454,13 @@ document.addEventListener('click', async e => {
   }
 });
 
+document.addEventListener('input', e => {
+  if (e.target.dataset && e.target.dataset.objKey) markObjectiveInput(e.target);
+});
+
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (el.name === 'role' && el.closest('#player-form')) { refreshObjectiveDefaults(el.closest('#player-form')); return; }
   if (el.dataset.change === 'player') { state.playerId = el.value; localStorage.setItem('playerId', el.value); state.sessionId = null; render(); }
   else if (el.dataset.change === 'since') { state.since = el.value; render(); }
   else if (el.dataset.change === 'card') {
@@ -421,8 +479,10 @@ document.addEventListener('change', async e => {
 
 document.addEventListener('submit', async e => {
   e.preventDefault();
-  if (e.target.id === 'player-form') submitPlayer(e.target);
-  if (e.target.id === 'session-form') {
+  // getAttribute : un champ nommé « id » dans le formulaire masquerait form.id
+  const formId = e.target.getAttribute('id');
+  if (formId === 'player-form') submitPlayer(e.target);
+  if (formId === 'session-form') {
     const f = new FormData(e.target);
     const s = Object.fromEntries(f.entries());
     if (!s.id) delete s.id;
