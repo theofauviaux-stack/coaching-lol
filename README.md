@@ -35,7 +35,7 @@ La clé reste sur ton ordinateur, chiffrée par le système. Elle n'est jamais e
 
 ## Mises à jour
 
-L'application vérifie au lancement puis toutes les 4 heures s'il existe une nouvelle version sur GitHub. Elle la télécharge en arrière-plan sans rien afficher, puis l'installe quand on la quitte (fermer la fenêtre quitte l'app, sur Mac aussi). L'état est visible dans *Paramètres › Général › À propos*.
+L'application vérifie toutes les 30 secondes s'il existe une nouvelle version sur GitHub (petit fichier `latest.yml` / `latest-mac.yml`). Elle la télécharge en arrière-plan sans rien afficher, puis l'installe quand on la quitte (fermer la fenêtre quitte l'app, sur Mac aussi). L'état est visible dans *Paramètres › Général › À propos*.
 
 - **Windows** : via electron-updater.
 - **Mac** (sans certificat Apple) : l'app télécharge le zip de la nouvelle version, vérifie son empreinte SHA-512, puis remplace `Coaching LoL.app` une fois fermée et la relance. Il faut que l'app soit dans Applications (pas lancée depuis le dmg). Si macOS bloque le remplacement, l'app l'indique : il suffit d'activer Coaching LoL dans *Réglages Système* › *Confidentialité et sécurité* › *Gestion des apps*.

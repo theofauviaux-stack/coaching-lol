@@ -691,7 +691,7 @@ function settingsGeneral() {
   const upTxt = up.state === 'ready' ? `La version ${esc(up.version)} est prête : elle s'installera à la fermeture de l'app.`
     : up.state === 'downloading' ? `Téléchargement de la version ${esc(up.version)} en arrière-plan.`
       : up.state === 'error' ? `Dernière vérification impossible : ${esc(up.error)}`
-        : up.state === 'uptodate' ? 'À jour.' : 'Vérification automatique au démarrage puis toutes les 4 heures.';
+                : up.state === 'uptodate' ? 'À jour (vérifié ' + esc(ago(up.checkedAt)) + ').' : 'Vérification automatique toutes les 30 secondes.';
   const objRows = Object.entries(s.objectives).map(([k, o]) => `<tr><td class="l">${esc(k)}</td><td class="muted">${esc(o.sens)}</td>${ROLES.map(r => `<td><input type="number" step="any" style="width:84px" data-tobj="${esc(k)}" data-role="${r}" value="${o[r] === null || o[r] === undefined ? '' : o[r]}"></td>`).join('')}</tr>`).join('');
   return `
     <div class="section"><h3>${icon('crown', 17)} Code coach</h3><div class="muted small">Il ouvre tous les joueurs, ici et sur n'importe quel ordinateur où l'app est installée (en lecture seule ailleurs).</div>

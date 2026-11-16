@@ -258,8 +258,18 @@ const macUpdate = { state: 'idle', version: null, newApp: null, blocked: null };
 const macWorkDir = () => path.join(app.getPath('temp'), 'coaching-lol-maj');
 const pendingFile = () => path.join(app.getPath('userData'), 'maj-en-cours.json');
 
+const UPDATE_EVERY_MS = 30 * 1000; // vérification toutes les 30 secondes (petit fichier de version)
+let checkingUpdates = false;
+
 async function checkUpdates() {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || checkingUpdates) return;
+  // déjà en téléchargement ou prête : rien à faire jusqu'à la fermeture de l'app
+  if (updateInfo.state === 'downloading' || updateInfo.state === 'ready') return;
+  checkingUpdates = true;
+  try { await checkUpdatesNow(); } finally { checkingUpdates = false; }
+}
+
+async function checkUpdatesNow() {
   updateInfo.checkedAt = Date.now();
   if (process.platform === 'darwin') return checkMacUpdate();
   try {
@@ -270,6 +280,7 @@ async function checkUpdates() {
       autoUpdater.autoInstallOnAppQuit = true;
       autoUpdater.on('update-downloaded', info => Object.assign(updateInfo, { state: 'ready', version: info.version }));
       autoUpdater.on('error', e => Object.assign(updateInfo, { state: 'error', error: e.message }));
+      autoUpdater.logger = null;
     }
     const r = await autoUpdater.checkForUpdates();
     if (r && r.updateInfo && mu.compareVersions(r.updateInfo.version, app.getVersion()) > 0) Object.assign(updateInfo, { state: 'downloading', version: r.updateInfo.version });
@@ -503,7 +514,7 @@ app.whenReady().then(() => {
     setInterval(() => schedulePush(1000), 6 * 3600 * 1000);
     checkPreviousUpdate();
     setTimeout(checkUpdates, 5000);
-    setInterval(checkUpdates, 4 * 3600 * 1000);
+    setInterval(checkUpdates, UPDATE_EVERY_MS);
   });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
