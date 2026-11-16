@@ -388,7 +388,8 @@ function pageParametres() {
     <h2>Sauvegarde</h2>
     <div class="row"><button class="btn" data-action="export">💾 Exporter une sauvegarde</button><button class="btn" data-action="import">📂 Restaurer une sauvegarde</button></div>
     <h2>Application</h2>
-    <div class="row"><span>Version ${esc(state.data.appVersion)}</span><button class="btn" data-action="check-updates">Rechercher une mise à jour</button></div>`;
+    <div class="row"><span>Version ${esc(state.data.appVersion)}</span><button class="btn" data-action="check-updates">Rechercher une mise à jour</button></div>
+    <div class="muted small">Les nouvelles versions se téléchargent toutes seules et s'installent quand tu quittes l'app (ou tout de suite avec « Redémarrer maintenant »).</div>`;
 }
 
 // ======================================================================== actions
@@ -505,8 +506,10 @@ window.api.onData(d => {
 });
 window.api.onUpdate(u => {
   const b = $('#update-banner');
-  if (u.status === 'ready') b.innerHTML = `🎉 La version ${esc(u.version)} est prête. <span class="spacer"></span><button class="btn" data-action="install-update">Redémarrer pour l'installer</button>`;
-  else if (u.status === 'manual') b.innerHTML = `⬆️ La version ${esc(u.version)} est disponible. <span class="spacer"></span><button class="btn" data-action="ext" data-url="${esc(u.url)}">Télécharger</button>`;
+  if (u.status === 'progress') b.innerHTML = `⬇️ Téléchargement de la nouvelle version${u.version ? ' ' + esc(u.version) : ''}… ${u.percent >= 0 ? u.percent + ' %' : ''}`;
+  else if (u.status === 'ready') b.innerHTML = `🎉 La version ${esc(u.version)} est prête. Elle s'installera quand tu quitteras l'app. <span class="spacer"></span><button class="btn" data-action="install-update">Redémarrer maintenant</button>`;
+  else if (u.status === 'manual') b.innerHTML = `⬆️ La version ${esc(u.version)} est disponible${u.reason ? ` (mise à jour automatique impossible : ${esc(u.reason)})` : ''}. <span class="spacer"></span><button class="btn" data-action="ext" data-url="${esc(u.url)}">Télécharger</button>`;
+  else if (u.status === 'installed') { toast(`✅ Mise à jour installée : version ${u.version}.`, 6000); return; }
   else return;
   b.classList.remove('hidden');
 });

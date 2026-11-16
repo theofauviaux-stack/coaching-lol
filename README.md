@@ -27,8 +27,11 @@ La clé reste sur ton ordinateur, chiffrée par le système. Elle n'est jamais e
 
 ## Mises à jour
 
-- **Windows** : l'application télécharge la nouvelle version toute seule et propose de redémarrer pour l'installer.
-- **Mac** : un bandeau prévient qu'une nouvelle version existe, avec un bouton pour la télécharger (la mise à jour 100 % automatique sur Mac exige un certificat Apple payant).
+L'application vérifie au lancement puis toutes les 4 heures s'il existe une nouvelle version sur GitHub. Elle la télécharge en arrière-plan, puis l'installe quand on la quitte (ou tout de suite avec « Redémarrer maintenant »).
+
+- **Windows** : via electron-updater.
+- **Mac** (sans certificat Apple) : l'app télécharge le zip de la nouvelle version, vérifie son empreinte SHA-512, puis remplace `Coaching LoL.app` une fois fermée et la relance. Il faut que l'app soit dans Applications (pas lancée depuis le dmg). Si macOS bloque le remplacement, l'app l'indique : il suffit d'activer Coaching LoL dans *Réglages Système* › *Confidentialité et sécurité* › *Gestion des apps*.
+- Les versions 1.0.0 et 1.0.1 sur Mac n'ont pas encore ce système : il faut installer la 1.0.2 à la main une fois.
 
 ### Publier une nouvelle version
 

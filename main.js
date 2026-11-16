@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { Store } = require('./src/store');
 const { RiotClient } = require('./src/riot');
 const { syncPlayer } = require('./src/sync');
+const mu = require('./src/macupdate');
 
 let win = null;
 let store = null;
@@ -100,32 +101,102 @@ async function refreshDDragon() {
 }
 
 // ---------------------------------------------------------------- mises à jour
+// Windows : electron-updater (téléchargement en arrière-plan, installation à la fermeture).
+// Mac : module maison (src/macupdate.js), car electron-updater exige un certificat Apple payant.
+const macUpdate = { state: 'idle', version: null, newApp: null, error: null };
+const macWorkDir = () => path.join(app.getPath('temp'), 'coaching-lol-maj');
+const pendingFile = () => path.join(app.getPath('userData'), 'maj-en-cours.json');
+
 async function checkUpdates(manual) {
   if (!app.isPackaged) return manual ? { status: 'dev', message: 'Mode développement : pas de mise à jour.' } : null;
+  if (process.platform === 'darwin') return checkMacUpdate();
   try {
     const { autoUpdater } = require('electron-updater');
     if (!checkUpdates.ready) {
       checkUpdates.ready = true;
       autoUpdater.autoDownload = true;
+      autoUpdater.on('download-progress', p => send('update:status', { status: 'progress', percent: Math.floor(p.percent || 0) }));
       autoUpdater.on('update-downloaded', info => send('update:status', { status: 'ready', version: info.version }));
       autoUpdater.on('error', async () => {
-        // macOS sans signature Apple : la mise à jour automatique est refusée → on propose le téléchargement
         const latest = await latestRelease();
-        if (latest && latest.version !== app.getVersion()) send('update:status', { status: 'manual', version: latest.version, url: latest.url });
+        if (latest && mu.compareVersions(latest.version, app.getVersion()) > 0) send('update:status', { status: 'manual', version: latest.version, url: latest.url });
       });
     }
     const r = await autoUpdater.checkForUpdates();
-    if (r && r.updateInfo && r.updateInfo.version !== app.getVersion()) return { status: 'downloading', message: 'Version ' + r.updateInfo.version + ' en cours de téléchargement…' };
+    if (r && r.updateInfo && mu.compareVersions(r.updateInfo.version, app.getVersion()) > 0) return { status: 'downloading', message: 'Version ' + r.updateInfo.version + ' en cours de téléchargement…' };
     return { status: 'uptodate', message: 'Tu as la dernière version (' + app.getVersion() + ').' };
   } catch (e) {
     const latest = await latestRelease();
-    if (latest && latest.version !== app.getVersion()) {
+    if (latest && mu.compareVersions(latest.version, app.getVersion()) > 0) {
       send('update:status', { status: 'manual', version: latest.version, url: latest.url });
       return { status: 'manual', message: 'Version ' + latest.version + ' disponible.' };
     }
     return { status: 'error', message: 'Vérification impossible : ' + e.message };
   }
 }
+
+async function checkMacUpdate() {
+  if (macUpdate.state === 'ready') { send('update:status', { status: 'ready', version: macUpdate.version }); return { status: 'ready', message: 'Version ' + macUpdate.version + ' prête.' }; }
+  if (macUpdate.state === 'downloading') return { status: 'downloading', message: 'Version ' + macUpdate.version + ' en cours de téléchargement…' };
+  let info;
+  try {
+    const res = await fetch(`https://github.com/${REPO}/releases/latest/download/latest-mac.yml`, { headers: { 'User-Agent': 'coaching-lol' } });
+    if (!res.ok) throw new Error('réponse ' + res.status);
+    info = mu.parseLatestMacYml(await res.text());
+  } catch (e) { return { status: 'error', message: 'Vérification impossible : ' + e.message }; }
+  if (!info.version || mu.compareVersions(info.version, app.getVersion()) <= 0) return { status: 'uptodate', message: 'Tu as la dernière version (' + app.getVersion() + ').' };
+  const releaseUrl = `https://github.com/${REPO}/releases/latest`;
+  if (macUpdate.blocked && macUpdate.blocked.version === info.version) {
+    send('update:status', { status: 'manual', version: info.version, url: releaseUrl, reason: macUpdate.blocked.reason });
+    return { status: 'manual', message: 'Mise à jour bloquée : ' + macUpdate.blocked.reason + '.' };
+  }
+  const appPath = mu.appBundlePath(process.execPath);
+  const can = mu.canSelfUpdate(appPath);
+  if (!can.ok) {
+    send('update:status', { status: 'manual', version: info.version, url: releaseUrl, reason: can.reason });
+    return { status: 'manual', message: 'Version ' + info.version + ' disponible, mise à jour automatique impossible : ' + can.reason + '.' };
+  }
+  macUpdate.state = 'downloading'; macUpdate.version = info.version;
+  mu.prepareUpdate({ repo: REPO, info, workDir: macWorkDir(), onProgress: pct => send('update:status', { status: 'progress', version: info.version, percent: pct }) })
+    .then(newApp => {
+      macUpdate.state = 'ready'; macUpdate.newApp = newApp;
+      send('update:status', { status: 'ready', version: info.version });
+    })
+    .catch(e => {
+      macUpdate.state = 'idle'; macUpdate.error = e.message;
+      send('update:status', { status: 'manual', version: info.version, url: releaseUrl, reason: 'téléchargement impossible (' + e.message + ')' });
+    });
+  return { status: 'downloading', message: 'Version ' + info.version + ' en cours de téléchargement…' };
+}
+
+// Remplace l'app par la nouvelle version une fois fermée (relaunch = la rouvrir ensuite)
+function installMacUpdate(relaunch) {
+  if (macUpdate.state !== 'ready' || !macUpdate.newApp) return false;
+  macUpdate.state = 'installing';
+  try {
+    fs.writeFileSync(pendingFile(), JSON.stringify({ from: app.getVersion(), to: macUpdate.version, at: Date.now() }));
+    mu.launchSwap({ pid: process.pid, oldApp: mu.appBundlePath(process.execPath), newApp: macUpdate.newApp, workDir: macWorkDir(), relaunch, logPath: path.join(app.getPath('userData'), 'maj.log') });
+    return true;
+  } catch (e) {
+    macUpdate.state = 'ready';
+    return false;
+  }
+}
+
+// Au démarrage : la mise à jour précédente a-t-elle réussi ?
+function reportPreviousUpdate() {
+  let p;
+  try { p = JSON.parse(fs.readFileSync(pendingFile(), 'utf8')); } catch (e) { return; }
+  try { fs.rmSync(pendingFile(), { force: true }); } catch (e) { /* rien */ }
+  if (app.getVersion() === p.to) { send('update:status', { status: 'installed', version: p.to }); return; }
+  let log = '';
+  try { log = fs.readFileSync(path.join(app.getPath('userData'), 'maj.log'), 'utf8'); } catch (e) { /* rien */ }
+  const blocked = /not permitted|non autoris/i.test(log);
+  const reason = blocked ? "macOS a bloqué le remplacement de l'app : ouvre Réglages Système › Confidentialité et sécurité › Gestion des apps, active Coaching LoL, puis redémarre l'app" : "l'installation n'a pas abouti";
+  macUpdate.blocked = { version: p.to, reason }; // pas de nouvel essai avant le prochain lancement
+  send('update:status', { status: 'manual', version: p.to, url: `https://github.com/${REPO}/releases/latest`, reason });
+}
+
 async function latestRelease() {
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { 'User-Agent': 'coaching-lol' } });
@@ -244,6 +315,7 @@ function registerIpc() {
   });
   ipcMain.handle('update:check', () => checkUpdates(true));
   ipcMain.handle('update:install', () => {
+    if (process.platform === 'darwin') { if (installMacUpdate(true)) app.quit(); return; }
     try { require('electron-updater').autoUpdater.quitAndInstall(); } catch (e) { /* rien */ }
   });
 }
@@ -270,7 +342,9 @@ app.whenReady().then(() => {
   win.webContents.once('did-finish-load', () => {
     if (process.env.COACHING_LOL_SHOT) return captureForTests(process.env.COACHING_LOL_SHOT);
     if (getKey() && store.data.players.length) setTimeout(() => runSync(), 3000);
+    reportPreviousUpdate();
     setTimeout(() => checkUpdates(false), 5000);
+    setInterval(() => checkUpdates(false), 4 * 3600 * 1000); // l'app peut rester ouverte longtemps
   });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -327,5 +401,8 @@ async function captureForTests(dir) {
   fs.writeFileSync(path.join(dir, 'parcours.json'), result);
   app.quit();
 }
+
+// Mac : si une mise à jour est prête, elle s'installe quand on quitte l'app (comme sur Windows)
+app.on('will-quit', () => { if (process.platform === 'darwin' && macUpdate.state === 'ready') installMacUpdate(false); });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

@@ -1,0 +1,11 @@
+version: 1.0.1
+files:
+  - url: Coaching-LoL-1.0.1-universal-mac.zip
+    sha512: 8+AdS1jXKvuD0higTX7clKO9aJPzDsramx19olk2i7DCARgYmD5jO94T2yNU4CdNSwKscQhp51z6hlChtNP+eA==
+    size: 174341496
+  - url: Coaching-LoL-1.0.1-universal.dmg
+    sha512: AaEB9M3TUKeXTHUtxqbM7GtQrDAICzyBqLk45u0jAIKPYFzDMYj/U4oHe3U4M6XAlTgSSvduxCrO1tLFFoB3Hg==
+    size: 180087224
+path: Coaching-LoL-1.0.1-universal-mac.zip
+sha512: 8+AdS1jXKvuD0higTX7clKO9aJPzDsramx19olk2i7DCARgYmD5jO94T2yNU4CdNSwKscQhp51z6hlChtNP+eA==
+releaseDate: '2026-11-16T21:01:50.468Z'
