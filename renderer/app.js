@@ -99,6 +99,26 @@ const TIER_SHORT = ['Fer', 'Bronze', 'Argent', 'Or', 'Plat.', 'Émer.', 'Diam.']
 const DIV_TXT = ['IV', 'III', 'II', 'I'];
 // score de rang (palier × 400 + division × 100 + LP ; Maître et plus = 2 800 + LP) → texte lisible
 const scoreText = v => (v >= 2800 ? Math.round(v - 2800) + ' LP' : `${TIER_SHORT[Math.max(0, Math.floor(v / 400))] || '?'} ${DIV_TXT[Math.floor((v % 400) / 100)] || ''}`);
+// LP gagnés sur la période : rang actuel moins le rang au début de la période,
+// ou au moment où le profil a été ajouté si la période commence avant (premier relevé).
+function lpNet(p, gs) {
+  const snaps = ranksOf(p);
+  if (!snaps.length) return null;
+  const start = gs.length ? gs[0].date : Date.now();
+  const before = snaps.filter(s => s.date <= start);
+  const base = before.length ? before[before.length - 1] : snaps[0];
+  return { value: snaps[snaps.length - 1].score - base.score, from: base.date, sinceAdded: !before.length || base === snaps[0] };
+}
+function applyLpNet(p, rows, gs) {
+  const r = rows.find(x => x.label === 'LP net');
+  const n = lpNet(p, gs);
+  if (!r || !n) return;
+  r.value = n.value;
+  r.ok = Stats.status(n.value, r.obj);
+  r.progress = Stats.progress(n.value, r.obj);
+  r.lpFrom = n;
+}
+
 function lpCell(g) {
   if (g.lpDelta === null || g.lpDelta === undefined) return '<span class="faint" data-tip="LP inconnus : partie jouée avant le début du suivi, ou plusieurs parties entre deux relevés de rang.">—</span>';
   const cls = g.lpDelta > 0 ? 'ok' : g.lpDelta < 0 ? 'red' : 'muted';
@@ -318,12 +338,14 @@ function accueilJoueur() {
   const last20 = gs.slice(-20);
   const rk = lastRank(p);
   const wr = winrate(last20);
+  const snapsJ = ranksOf(p);
+  const lpJ = snapsJ.length ? snapsJ[snapsJ.length - 1].score - snapsJ[0].score : null;
   const next = (D().sessions || []).filter(s => s.playerId === p.id && s.next).map(s => s.next).sort().filter(x => x >= isoDay(Date.now()))[0];
   const row = (pg, ico, t, s) => `<div class="row-link" data-action="go" data-page="${pg}"><div class="tile">${icon(ico, 20)}</div><div class="t"><b>${t}</b><span>${s}</span></div><div class="go">${icon('arrow', 18)}</div></div>`;
   return `<h1>Salut ${esc(gameName(p))}</h1>
     <div class="sub">Ton espace de progression · ${esc(p.role)}${p.goal ? ' · objectif : ' + esc(p.goal) : ''}</div>
     <div class="stats-strip">
-      <div class="stat"><div class="tile">${icon('trophy', 22)}</div><div><div class="k">Rang actuel</div><div class="v">${rk ? esc(rk.label.split(' · ')[0]) : '—'}</div><div class="muted small">${rk ? esc(rk.label.split(' · ')[1] || '') : ''}</div></div></div>
+      <div class="stat"><div class="tile">${icon('trophy', 22)}</div><div><div class="k">Rang actuel</div><div class="v">${rk ? esc(rk.label.split(' · ')[0]) : '—'}</div><div class="muted small">${rk ? esc(rk.label.split(' · ')[1] || '') : ''}${lpJ === null ? '' : ` · <span class="${lpJ > 0 ? 'ok' : lpJ < 0 ? 'red' : ''}">${Stats.fmt(lpJ, 'diff')} LP</span> depuis le début`}</div></div></div>
       <div class="stat">${Charts.ring(wr)}<div><div class="k">Victoires (20 dernières)</div><div class="v">${wr === null ? '—' : Math.round(wr * 100) + '%'}</div></div></div>
       <div class="stat"><div><div class="k">Forme récente</div>${dots(gs.slice(-10))}<div class="muted small" style="margin-top:6px">${gs.slice(-10).filter(g => g.win).length} V · ${gs.slice(-10).filter(g => !g.win).length} D</div></div></div>
       <div class="stat"><div class="tile">${icon('calendar', 22)}</div><div><div class="k">Prochaine séance</div><div class="v" style="font-size:18px">${next ? esc(dateLong(next)) : '—'}</div></div></div>
@@ -346,10 +368,11 @@ function pageDashboard() {
   if (!p) return `<h1>Tableau de bord</h1><div class="empty">${isCoach() ? 'Ajoute d\'abord un joueur.' : 'Aucune donnée pour l\'instant.'}</div>`;
   const gs = periodGames(p);
   const rows = Stats.kpiTable(d, p, '', gs);
+  applyLpNet(p, rows, gs);
   const by = Object.fromEntries(rows.map(r => [r.label, r]));
   const rk = lastRank(p);
   const snaps = ranksOf(p);
-  const lpTotal = snaps.length >= 2 ? snaps[snaps.length - 1].score - snaps[0].score : null;
+  const lpTotal = snaps.length ? snaps[snaps.length - 1].score - snaps[0].score : null;
   const cards = settingsOf(p).cards.filter(l => by[l]);
   if (!state.metric || !by[state.metric]) state.metric = cards.find(l => metricOf(l) && metricOf(l) !== 'Victoire') || cards.find(l => metricOf(l)) || 'CS/min';
 
@@ -361,6 +384,7 @@ function pageDashboard() {
       <div class="lab">${esc(l)}</div><div class="trend">${tr}</div>
       <div class="val ${r.ok === false ? 'bad' : ''}">${Stats.fmt(r.value, r.format)}</div>
       <div class="obj">${r.obj.value === null ? 'Pas d\'objectif' : `Objectif ${r.obj.sens} ${Stats.fmt(r.obj.value, r.format)} ${r.ok ? icon('check', 13, 'ok') : icon('alert', 13, 'warn')}`}</div>
+      ${r.lpFrom ? `<div class="tiny faint" style="margin-top:4px">${r.lpFrom.sinceAdded ? 'depuis l\'ajout du profil' : 'depuis le'} (${esc(dateFr(r.lpFrom.from))})</div>` : ''}
       ${pr === null ? '' : `<div class="bar ${r.ok === false ? 'bad' : ''}"><i style="width:${pr}%"></i></div>`}</div>`;
   }).join('');
 
@@ -401,7 +425,7 @@ function pageDashboard() {
   return `<div class="row" style="align-items:flex-start">
       <div><h1>${esc(p.riotId)}</h1>
         <div class="row" style="margin-bottom:24px"><span class="chip">${esc(p.role)}</span>${rk ? `<span class="chip accent">${icon('trophy', 13)} ${esc(rk.label)}</span>` : ''}
-          ${lpTotal === null ? '' : `<span class="chip ${lpTotal > 0 ? 'accent' : lpTotal < 0 ? 'red' : ''}" data-tip="Écart de rang entre le premier relevé (${esc(dateFr(snaps[0].date))}) et aujourd'hui">${icon(lpTotal >= 0 ? 'up' : 'down', 13)} ${Stats.fmt(lpTotal, 'diff')} LP depuis le ${esc(dateFr(snaps[0].date))}</span>`}
+          ${lpTotal === null ? '' : `<span class="chip ${lpTotal > 0 ? 'accent' : lpTotal < 0 ? 'red' : ''}" data-tip="Rang actuel comparé au rang relevé à l'ajout du profil (${esc(dateTimeFr(snaps[0].date))})">${icon(lpTotal >= 0 ? 'up' : 'down', 13)} ${Stats.fmt(lpTotal, 'diff')} LP depuis l'ajout du profil</span>`}
           ${p.rankTarget ? `<span class="chip">${icon('target', 13)} ${esc(p.rankTarget)}</span>` : ''}<span class="muted small">${gs.length} partie${gs.length > 1 ? 's' : ''} prise${gs.length > 1 ? 's' : ''} en compte</span></div></div>
       <span class="spacer"></span>${periodSeg(p)}</div>
     <div class="kpis">${kpis}</div>
@@ -579,6 +603,7 @@ function pageObjectifs() {
   if (!p) return '<h1>Mes objectifs</h1><div class="empty">Aucune donnée.</div>';
   const gs = roleGames(p).slice(-20);
   const rows = Stats.kpiTable(d, p, '', gs);
+  applyLpNet(p, rows, gs);
   const by = Object.fromEntries(rows.map(r => [r.label, r]));
   const groups = OBJ_GROUPS.map(([title, keys]) => {
     const items = keys.map(k => by[k]).filter(r => r && r.obj.value !== null).map(r => {

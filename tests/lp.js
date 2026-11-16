@@ -40,6 +40,14 @@ recordRank(d, p, entry(543, 12, 10), 180 * MIN);
 attributeLp(d, 'p');
 assert.deepStrictEqual(d.games.map(g => g.lpDelta), [22, 22]);
 
+// victoires/défaites incohérentes avec Riot (3 V connues, Riot compte 2 V 1 D) : aucune estimation
+d = { ranks: [], games: [game('X1', 100, true), game('X2', 140, true), game('X3', 180, true)], ignored: [] };
+recordRank(d, p, entry(500, 10, 10), 90 * MIN);
+recordRank(d, p, entry(530, 12, 11), 220 * MIN);
+attributeLp(d, 'p');
+assert.deepStrictEqual(d.games.map(g => g.lpDelta), [null, null, null]);
+assert.deepStrictEqual(lpSince(d, 'p'), { delta: 30, from: 90 * MIN }, 'le total depuis le premier relevé reste exact');
+
 // une partie hors rôle dans l'intervalle : le compte doit correspondre, sinon on n'attribue rien
 d = { ranks: [], games: [game('H', 100, true)], ignored: [{ playerId: 'p', matchId: 'I', date: 140 * MIN, role: 'Top' }] };
 recordRank(d, p, entry(500, 10, 10), 90 * MIN);

@@ -53,6 +53,9 @@ function attributeLp(data, playerId) {
     const inside = games.filter(g => gameEnd(g) > a.date && gameEnd(g) <= b.date);
     const hors = others.filter(g => g.date + 15 * MIN > a.date && g.date <= b.date).length;
     if (inside.length + hors !== count || !inside.length) continue;
+    // les victoires et défaites connues doivent coller avec celles comptées par Riot
+    const w = inside.filter(g => g.win).length, l = inside.length - w;
+    if (w > dW || l > dL || (hors === 0 && (w !== dW || l !== dL))) continue;
     const set = (g, v, estimated) => {
       if (g.lpManual || v === null || !Number.isFinite(v)) return;
       if (!estimated && (g.lpDelta !== v || g.lpEstimated)) { g.lpDelta = v; g.lpEstimated = false; n++; }
