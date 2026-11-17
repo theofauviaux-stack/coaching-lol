@@ -23,6 +23,13 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - Le jour J, le bouton « Démarrer le coaching » s'active 30 min avant : un minuteur de 1 h (2 h si deux créneaux se suivent) s'affiche en haut pour le coach, qui est prévenu 5 min avant la fin. Le joueur voit seulement « En coaching ».
 - Les réservations passent par la base en ligne : l'ordinateur du coach doit y être relié (Paramètres › Général › Serveur en ligne).
 
+## Exercices et fiches de séance
+
+- Séances › Banque d'exercices (coach) : 23 exercices tirés du programme « Jeu individuel » (farm, mécanique, laning, survie, macro, mental, review), chacun avec ses étapes, un schéma, et une cible adaptée au rôle (ex. Mid : 110 CS à 10 min en partie personnalisée). Les modules de LoL Dodge Game (loldodgegame.com) sont inclus.
+- Nouvelle séance : le coach coche les exercices, ajuste la cible et ajoute une consigne.
+- Le joueur retrouve la séance chez lui (rappel « Fiche à remplir » sur son accueil), fait les exercices puis remplit sa fiche : scores, ressenti, ce qu'il retient. Le coach la voit dans la séance et reçoit une notification.
+- Les fiches passent par la base en ligne (table `reports`) : un joueur ne peut écrire que dans ses propres fiches.
+
 ## Installer
 
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :

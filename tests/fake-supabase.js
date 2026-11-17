@@ -9,7 +9,9 @@ const SIG = {
   coach_push: { p_key: 'text', p: 'jsonb' },
   book: { p_token: 'text', p_action: 'text', p_id: 'uuid', p_start: 'timestamptz' },
   bookings_mine: { p_token: 'text' }, coach_bookings: { p_key: 'text' },
-  coach_book: { p_key: 'text', p_action: 'text', p_id: 'uuid', p_start: 'timestamptz', p_player: 'text' }
+  coach_book: { p_key: 'text', p_action: 'text', p_id: 'uuid', p_start: 'timestamptz', p_player: 'text' },
+  report_save: { p_token: 'text', p_session: 'text', p: 'jsonb' }, reports_mine: { p_token: 'text' },
+  coach_reports: { p_key: 'text' }, coach_report_save: { p_key: 'text', p_player: 'text', p_session: 'text', p: 'jsonb' }
 };
 
 async function startFake() {

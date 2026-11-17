@@ -399,6 +399,77 @@ end $$;
 
 -- Droits : login / get_data / logout / coach_push sont ouvertes au public (coach_push exige un jeton enregistré) ;
 -- admin_push est réservée à la clé secrète.
+-- ============================================================ Fiches de séance remplies par les joueurs
+-- Le joueur remplit, chez lui, la fiche d'une séance (résultats des exercices, ressenti). Il ne peut écrire
+-- que dans ses propres fiches, et seulement pour une séance qui lui appartient. L'app du coach les relit.
+create table if not exists public.reports (
+  player_id text not null references public.players(id) on delete cascade,
+  session_id text not null,
+  data jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (player_id, session_id)
+);
+alter table public.reports enable row level security;
+
+create or replace function public._report_save(p_player text, p_session text, p jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_at timestamptz;
+begin
+  if p_player is null then
+    return jsonb_build_object('error', 'session_expiree');
+  end if;
+  if not exists (select 1 from sessions where id = p_session and player_id = p_player) then
+    return jsonb_build_object('error', 'seance_inconnue');
+  end if;
+  if p is null or jsonb_typeof(p) <> 'object' or length(p::text) > 20000 then
+    return jsonb_build_object('error', 'fiche_invalide');
+  end if;
+  insert into reports (player_id, session_id, data, updated_at) values (p_player, p_session, p, now())
+  on conflict (player_id, session_id) do update set data = excluded.data, updated_at = now()
+  returning updated_at into v_at;
+  return jsonb_build_object('ok', true, 'updatedAt', v_at);
+end $$;
+
+create or replace function public.report_save(p_token text, p_session text, p jsonb) returns jsonb
+language sql security definer set search_path = public as $$
+  select public._report_save(public._player_of(p_token), p_session, p)
+$$;
+
+create or replace function public.reports_mine(p_token text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_player text := public._player_of(p_token);
+begin
+  if v_player is null then
+    return jsonb_build_object('error', 'session_expiree');
+  end if;
+  return jsonb_build_object('reports', coalesce((
+    select jsonb_agg(jsonb_build_object('sessionId', session_id, 'data', data, 'updatedAt', updated_at))
+    from reports where player_id = v_player), '[]'::jsonb));
+end $$;
+
+create or replace function public.coach_reports(p_key text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public._coach_ok(p_key) then
+    return jsonb_build_object('error', 'jeton_inconnu');
+  end if;
+  return jsonb_build_object('reports', coalesce((
+    select jsonb_agg(jsonb_build_object('playerId', player_id, 'sessionId', session_id, 'data', data, 'updatedAt', updated_at))
+    from reports), '[]'::jsonb));
+end $$;
+
+-- fiche remplie par un joueur connecté sur l'ordinateur du coach
+create or replace function public.coach_report_save(p_key text, p_player text, p_session text, p jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public._coach_ok(p_key) then
+    return jsonb_build_object('error', 'jeton_inconnu');
+  end if;
+  return public._report_save(p_player, p_session, p);
+end $$;
+
 revoke all on function public.hash_code(text) from public, anon, authenticated;
 revoke all on function public.admin_push(jsonb) from public, anon, authenticated;
 grant execute on function public.admin_push(jsonb) to service_role;
@@ -425,3 +496,12 @@ grant execute on function public.book(text, text, uuid, timestamptz) to anon, au
 grant execute on function public.bookings_mine(text) to anon, authenticated;
 grant execute on function public.coach_bookings(text) to anon, authenticated;
 grant execute on function public.coach_book(text, text, uuid, timestamptz, text) to anon, authenticated;
+revoke all on function public._report_save(text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.report_save(text, text, jsonb) from public;
+revoke all on function public.reports_mine(text) from public;
+revoke all on function public.coach_reports(text) from public;
+revoke all on function public.coach_report_save(text, text, text, jsonb) from public;
+grant execute on function public.report_save(text, text, jsonb) to anon, authenticated;
+grant execute on function public.reports_mine(text) to anon, authenticated;
+grant execute on function public.coach_reports(text) to anon, authenticated;
+grant execute on function public.coach_report_save(text, text, text, jsonb) to anon, authenticated;

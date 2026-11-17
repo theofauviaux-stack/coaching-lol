@@ -23,7 +23,7 @@ function updatePlayer(data, target, patch) {
 
 function deletePlayer(data, id) {
   data.players = data.players.filter(p => p.id !== id);
-  for (const k of ['games', 'ignored', 'ranks', 'sessions']) data[k] = data[k].filter(x => x.playerId !== id);
+  for (const k of ['games', 'ignored', 'ranks', 'sessions', 'reports']) data[k] = (data[k] || []).filter(x => x.playerId !== id);
 }
 
 module.exports = { updatePlayer, deletePlayer, sameAccount };

@@ -374,7 +374,7 @@ function renderTopbar() {
   const p = player();
   const sw = isCoach() && perPlayer && d.players.length && !(state.page === 'parametres' && state.settingsTab === 'general')
     ? `<select class="select-player" data-change="player">${d.players.map(x => opt(x.id, state.playerId, x.riotId)).join('')}</select>` : '';
-  const ro = !canEdit() ? `<span class="chip">${icon('eye', 14)} Lecture seule</span>` : '';
+  const ro = !canEdit() && d.session.role !== 'joueur' ? `<span class="chip">${icon('eye', 14)} Lecture seule</span>` : '';
   const bk = d.bookings;
   let live = '';
   if (bk && bk.coaching && bk.coaching.length) {
@@ -477,9 +477,10 @@ function accueilJoueur() {
     <div class="rows">
       ${row('dashboard', 'dashboard', 'Tableau de bord', 'Tes stats, tes objectifs et ton évolution partie après partie.')}
       ${row('parties', 'games', 'Parties', 'Tes dernières parties classées, en détail.')}
-      ${row('seances', 'sessions', 'Séances', 'Les comptes rendus de tes séances et tes devoirs.')}
+      ${row('seances', 'sessions', 'Séances', 'Tes séances, tes exercices et tes fiches à remplir.')}
       ${row('objectifs', 'target', 'Mes objectifs', 'Ce que ton coach attend de toi, et où tu en es.')}
     </div>
+    ${ficheReminder(p)}
     ${booking}`;
 }
 
@@ -652,7 +653,9 @@ async function setGameField(field, value) {
 // ======================================================================== SÉANCES
 function pageSeances() {
   const d = D(), p = player();
-  if (!p) return `<h1>Séances</h1><div class="empty">Aucune donnée pour l'instant.</div>`;
+  const tabs = canEdit() ? `<div class="seg"><button class="${state.seancesTab !== 'banque' ? 'on' : ''}" data-action="seances-tab" data-v="seances">Séances du joueur</button><button class="${state.seancesTab === 'banque' ? 'on' : ''}" data-action="seances-tab" data-v="banque">${icon('book', 14)} Banque d'exercices</button></div>` : '';
+  if (canEdit() && state.seancesTab === 'banque') return pageBanque(tabs);
+  if (!p) return `<div class="row"><h1>Séances</h1><span class="spacer"></span>${tabs}</div><div class="empty">Aucune donnée pour l'instant.</div>`;
   const list = (d.sessions || []).filter(s => s.playerId === p.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const n = list.length;
   const cards = list.map((s, i) => {
@@ -669,14 +672,15 @@ function pageSeances() {
         <div class="grid3">
           <div><label>Points abordés</label><div class="note">${esc(s.points) || '—'}</div></div>
           <div><label>Constats</label><div class="note">${esc(s.findings) || '—'}</div></div>
-          <div><label>Devoirs et exercices</label><div class="note">${esc(s.homework) || '—'}</div></div></div>
+          <div><label>Devoirs</label><div class="note">${esc(s.homework) || '—'}</div></div></div>
+        ${sessionExercises(s, p)}
         ${s.kpi ? `<label>${esc(s.kpi)}, partie par partie</label>${Charts.lineChart({ points: pts, target: s.target === '' || s.target === undefined ? null : Number(s.target), fmt: axisFmt(f), marker: gs.findIndex(g => g.date >= t), markerLabel: 'séance', targetLabel: 'cible' })}` : ''}
         ${canEdit() ? `<div class="actions"><button class="btn danger" data-action="delete-session" data-id="${s.id}">${icon('trash', 15)} Supprimer</button><button class="btn" data-action="edit-session" data-id="${s.id}">${icon('edit', 15)} Modifier</button></div>` : ''}</div>`;
     }
     const better = r.delta === null ? '' : (r.delta > 0) === (r.sens !== '≤') ? 'ok' : 'red';
     return `<div class="scard" data-action="toggle-session" data-id="${s.id}">
       <div class="head"><span class="num">#${n - i}</span><b>${esc(dateLong(s.date))}</b><span class="muted">${esc(s.axis || '')}${s.axis2 ? ' · ' + esc(s.axis2) : ''}</span><span class="spacer"></span>
-        ${s.status ? `<span class="chip ${STATUT_CHIP[s.status] || ''}">${esc(s.status)}</span>` : ''}${icon(open ? 'chevronDown' : 'chevron', 16, 'faint')}</div>
+        ${ficheChip(s, p)}${s.status ? `<span class="chip ${STATUT_CHIP[s.status] || ''}">${esc(s.status)}</span>` : ''}${icon(open ? 'chevronDown' : 'chevron', 16, 'faint')}</div>
       <div class="metrics">
         <div class="metric"><span>Indicateur suivi</span><b>${esc(s.kpi || '—')}</b></div>
         <div class="metric"><span>Cible</span><b>${s.target === '' || s.target === undefined ? '—' : Stats.fmt(Number(s.target), f)}</b></div>
@@ -684,8 +688,8 @@ function pageSeances() {
         <div class="metric"><span>Évolution</span><b class="${better}">${fmtDelta(r.delta, f)}</b></div>
       </div>${detail}</div>`;
   }).join('');
-  return `<div class="row"><h1>Séances</h1><span class="spacer"></span>${canEdit() ? `<button class="btn primary" data-action="new-session">${icon('plus', 16)} Nouvelle séance</button>` : ''}</div>
-    <div class="sub">Pour chaque séance : l'axe travaillé, un indicateur à suivre et une cible. L'app compare la moyenne avant et depuis la séance.</div>
+  return `<div class="row"><h1>Séances</h1><span class="spacer"></span>${tabs}${canEdit() ? `<button class="btn primary" data-action="new-session">${icon('plus', 16)} Nouvelle séance</button>` : ''}</div>
+    <div class="sub">${canEdit() ? 'Pour chaque séance : l\'axe travaillé, les exercices, un indicateur à suivre et une cible. Le joueur remplit sa fiche une fois les exercices faits.' : 'Tes séances, les exercices à faire et ta fiche à remplir une fois qu\'ils sont faits.'}</div>
     ${cards || `<div class="empty">${canEdit() ? 'Aucune séance pour ce joueur. Crée la première après votre prochain échange.' : 'Pas encore de séance.'}</div>`}`;
 }
 function fmtDelta(v, f) {
@@ -713,13 +717,156 @@ function sessionForm(s) {
     </div>
     <div class="field"><label>Points abordés</label><textarea name="points" rows="2">${esc(s.points || '')}</textarea></div>
     <div class="field"><label>Constats</label><textarea name="findings" rows="2">${esc(s.findings || '')}</textarea></div>
-    <div class="field"><label>Devoirs et exercices</label><textarea name="homework" rows="2">${esc(s.homework || '')}</textarea></div>
+    <div class="field"><label>Devoirs (texte libre)</label><textarea name="homework" rows="2">${esc(s.homework || '')}</textarea></div>
+    ${exercisePicker(s, p)}
     <div class="grid2">
       <div class="field"><label>Indicateur suivi</label><select name="kpi"><option value="">—</option>${kpis.map(k => opt(k, s.kpi)).join('')}</select></div>
       <div class="field"><label>Cible (pourcentages en décimal : 0,55 = 55 %)</label><input name="target" type="number" step="any" value="${esc(s.target === undefined ? '' : s.target)}"></div>
     </div>
     <div class="actions"><button type="button" class="btn ghost" data-action="close-modal">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div>
   </form>`;
+}
+
+// ======================================================================== EXERCICES ET FICHES DE SÉANCE
+const reportOf = (s, p) => (D().reports || []).find(r => r.sessionId === s.id && r.playerId === (p ? p.id : s.playerId)) || null;
+const themeOf = ex => Exercises.THEMES.find(t => t.id === ex.theme) || { t: '', icon: 'target' };
+const sessionExs = s => (s.exercises || []).map(e => ({ e, ex: Exercises.byId(e.id) })).filter(x => x.ex);
+const targetText = (ex, target) => (ex.target && target !== '' && target !== undefined && target !== null ? `${ex.target.label} ${ex.target.sens} ${String(target).replace('.', ',')}` : '');
+
+function ficheChip(s, p) {
+  if (!sessionExs(s).length) return '';
+  return reportOf(s, p) ? `<span class="chip accent">${icon('check', 13)} Fiche remplie</span>` : `<span class="chip amber">Fiche à remplir</span>`;
+}
+
+// moyenne mesurée automatiquement sur les parties classées jouées depuis la séance
+function autoMeasure(ex, p, since) {
+  if (!ex.kpi || !p || !Stats.METRICS[ex.kpi]) return '';
+  const t = new Date(since).getTime();
+  const vals = roleGames(p).filter(g => g.date >= t).map(Stats.METRICS[ex.kpi]).filter(v => v !== null && v !== undefined && !isNaN(v));
+  if (!vals.length) return `<div class="exauto">${icon('sync', 14)} ${esc(ex.kpi)} : mesuré automatiquement sur les parties classées jouées après la séance.</div>`;
+  const f = Stats.METRIC_FMT[ex.kpi] || 'dec2';
+  return `<div class="exauto">${icon('sync', 14)} Depuis la séance : <b>${esc(ex.kpi)} ${Stats.fmt(Stats.mean(vals), f)}</b> en moyenne sur ${vals.length} partie${vals.length > 1 ? 's' : ''} classée${vals.length > 1 ? 's' : ''}.</div>`;
+}
+
+// un exercice détaillé : consigne du coach, étapes, lien, schéma
+function exerciseCard(ex, o = {}) {
+  const th = themeOf(ex);
+  const target = o.target !== undefined && o.target !== '' ? o.target : Exercises.targetFor(ex, o.role);
+  const tt = targetText(ex, target);
+  const head = `<div class="exhead" ${o.toggle ? `data-action="ex-toggle" data-id="${ex.id}"` : ''}><div class="tile">${icon(th.icon, 18)}</div>
+    <div class="t"><b>${esc(ex.title)}</b><span>${esc(th.t)} · ${esc(ex.where)} · ${esc(ex.duration)}</span></div>
+    ${tt ? `<span class="chip accent">${esc(tt)}</span>` : ''}${o.toggle ? icon(o.open ? 'chevronDown' : 'chevron', 16, 'faint') : ''}</div>`;
+  if (o.toggle && !o.open) return `<div class="excard">${head}</div>`;
+  return `<div class="excard open">${head}
+    <div class="exbody">
+      <div class="muted">${esc(ex.why)}</div>
+      ${o.note ? `<div class="exnote">${icon('send', 14)} <span><b>Consigne du coach :</b> ${esc(o.note)}</span></div>` : ''}
+      <ol class="exsteps">${ex.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+      ${ex.link ? `<button class="btn" data-action="ext" data-url="${esc(ex.link.url)}">${icon('external', 15)} ${esc(ex.link.label)}</button>` : ''}
+      ${Schemas.render(ex.schema, { target })}
+      ${o.since ? autoMeasure(ex, o.player, o.since) : ''}
+    </div></div>`;
+}
+
+// exercices d'une séance, puis la fiche du joueur
+function sessionExercises(s, p) {
+  const list = sessionExs(s);
+  if (!list.length) return '';
+  const rep = reportOf(s, p);
+  const isPlayer = D().session.role === 'joueur';
+  const cards = list.map(({ e, ex }) => exerciseCard(ex, { target: e.target, note: e.note, role: p && p.role, since: s.date, player: p })).join('');
+  let fiche;
+  if (rep) fiche = reportView(s, rep) + (isPlayer ? `<div class="actions"><button class="btn" data-action="report-open" data-id="${s.id}">${icon('edit', 15)} Modifier ma fiche</button></div>` : '');
+  else if (isPlayer) fiche = `<div class="bk-alert">${icon('edit', 16)}<span><b>Ta fiche est à remplir</b> une fois les exercices faits : tes scores, ton ressenti, ce que tu retiens.</span><span class="spacer"></span><button class="btn primary" data-action="report-open" data-id="${s.id}">Remplir ma fiche</button></div>`;
+  else fiche = `<div class="bk-alert muted-alert">${icon('clock', 16)}<span>Le joueur n'a pas encore rempli sa fiche. Tu seras prévenu dès qu'il l'envoie.</span></div>`;
+  return `<h3 class="exh">${icon('target', 15)} Exercices (${list.length})</h3>${cards}<h3 class="exh">${icon('edit', 15)} ${isPlayer ? 'Ma fiche' : 'Fiche du joueur'}</h3>${fiche}`;
+}
+
+const fmtVal = (fd, v) => (v === undefined || v === null || v === '' ? '—' : fd.type === 'score' ? v + ' / 5' : fd.type === 'yesno' ? (v === 'oui' ? 'Oui' : 'Non') : String(v).replace('.', ','));
+function reportView(s, rep) {
+  const d = rep.data || {};
+  const blocks = sessionExs(s).map(({ e, ex }) => {
+    const vals = (d.ex || {})[ex.id] || {};
+    const target = e.target !== '' && e.target !== undefined ? e.target : '';
+    const rows = ex.fields.map(fd => {
+      const v = vals[fd.k];
+      const ok = fd.target ? Exercises.meets(ex, v, target) : null;
+      return `<div class="rv"><span>${esc(fd.label)}</span><b class="${ok === true ? 'ok' : ok === false ? 'red' : ''}">${fd.type === 'text' ? `<span class="note">${esc(fmtVal(fd, v))}</span>` : esc(fmtVal(fd, v))}${ok === null ? '' : ' ' + icon(ok ? 'check' : 'alert', 13)}</b></div>`;
+    }).join('');
+    return `<div class="rvblock"><div class="rvt">${esc(ex.title)}${target !== '' ? ` <span class="muted small">· cible ${esc(targetText(ex, target))}</span>` : ''}</div>${rows}</div>`;
+  }).join('');
+  const general = `<div class="rvblock"><div class="rvt">Bilan</div>
+    <div class="rv"><span>Ressenti global</span><b>${d.ressenti ? d.ressenti + ' / 5' : '—'}</b></div>
+    <div class="rv"><span>Ce qui a été difficile</span><b><span class="note">${esc(d.difficile || '—')}</span></b></div>
+    <div class="rv"><span>Ce que je retiens</span><b><span class="note">${esc(d.retiens || '—')}</span></b></div></div>`;
+  return `<div class="report"><div class="muted small">Remplie le ${esc(new Date(rep.updatedAt).toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }))}</div>${blocks}${general}</div>`;
+}
+
+// champ de fiche selon son type
+function ficheInput(name, fd, v) {
+  if (fd.type === 'text') return `<textarea name="${name}" rows="2" maxlength="1000">${esc(v || '')}</textarea>`;
+  if (fd.type === 'score') return `<div class="pick">${[1, 2, 3, 4, 5].map(n => `<label><input type="radio" name="${name}" value="${n}" ${Number(v) === n ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div>`;
+  if (fd.type === 'yesno') return `<div class="pick">${['oui', 'non'].map(n => `<label><input type="radio" name="${name}" value="${n}" ${v === n ? 'checked' : ''}><span>${n === 'oui' ? 'Oui' : 'Non'}</span></label>`).join('')}</div>`;
+  if (fd.type === 'time') return `<input name="${name}" placeholder="ex. 3:25" value="${esc(v || '')}" style="max-width:160px">`;
+  return `<input name="${name}" type="number" step="any" min="0" value="${esc(v === undefined ? '' : v)}" style="max-width:160px">`;
+}
+function reportForm(s) {
+  const p = player();
+  const d = (reportOf(s, p) || {}).data || {};
+  const exs = sessionExs(s).map(({ e, ex }) => {
+    const vals = (d.ex || {})[ex.id] || {};
+    const target = e.target !== '' && e.target !== undefined ? e.target : '';
+    return `<div class="rfex"><div class="rvt">${esc(ex.title)}${target !== '' ? ` <span class="chip accent">${esc(targetText(ex, target))}</span>` : ''}</div>
+      ${ex.fields.map(fd => `<div class="field"><label>${esc(fd.label)}${fd.target && target !== '' ? ` <span class="sens">(cible ${esc(ex.target.sens)} ${esc(String(target).replace('.', ','))})</span>` : ''}</label>${ficheInput(`f|${ex.id}|${fd.k}`, fd, vals[fd.k])}</div>`).join('')}</div>`;
+  }).join('');
+  return `<h1>Ma fiche de séance</h1><div class="muted">Séance du ${esc(dateLong(s.date))}${s.axis ? ' · ' + esc(s.axis) : ''}. Remplis-la une fois les exercices faits : ton coach la verra.</div>
+  <form id="report-form"><input type="hidden" name="sid" value="${esc(s.id)}">
+    ${exs}
+    <div class="rfex"><div class="rvt">Bilan</div>
+      <div class="field"><label>Ressenti global (1 = difficile, 5 = très bien)</label>${ficheInput('g|ressenti', { type: 'score' }, d.ressenti)}</div>
+      <div class="field"><label>Ce qui a été difficile</label>${ficheInput('g|difficile', { type: 'text' }, d.difficile)}</div>
+      <div class="field"><label>Ce que je retiens</label>${ficheInput('g|retiens', { type: 'text' }, d.retiens)}</div></div>
+    <div class="actions"><button type="button" class="btn ghost" data-action="close-modal">Annuler</button><button type="submit" class="btn primary">${icon('send', 15)} Envoyer ma fiche</button></div>
+  </form>`;
+}
+
+// choix des exercices dans le formulaire de séance (rôle du joueur)
+function exercisePicker(s, p) {
+  const role = p && p.role;
+  const chosen = Object.fromEntries((s.exercises || []).map(e => [e.id, e]));
+  const groups = Exercises.THEMES.map(th => {
+    const items = Exercises.LIST.filter(x => x.theme === th.id && (!x.roles || !role || x.roles.includes(role) || chosen[x.id]));
+    if (!items.length) return '';
+    return `<div class="pkgroup"><div class="pkt">${icon(th.icon, 14)} ${esc(th.t)}</div>${items.map(x => {
+      const c = chosen[x.id];
+      const target = c ? c.target : Exercises.targetFor(x, role);
+      return `<div class="exitem"><label class="exrow"><input type="checkbox" name="ex|${x.id}" ${c ? 'checked' : ''}><span><b>${esc(x.title)}</b><span class="muted small"> · ${esc(x.where)}</span></span></label>
+        <div class="exmore">${x.target ? `<div class="field"><label>${esc(x.target.label)} <span class="sens">${esc(x.target.sens)}</span></label><input name="ext|${x.id}" value="${esc(target)}" ${x.target.type === 'time' ? 'placeholder="3:30"' : ''}></div>` : ''}
+          <div class="field" style="grid-column: span ${x.target ? 1 : 2}"><label>Consigne pour le joueur (facultatif)</label><input name="exn|${x.id}" value="${esc(c ? c.note : '')}" placeholder="ex. champion, combo, nombre de parties…"></div></div></div>`;
+    }).join('')}</div>`;
+  }).join('');
+  return `<div class="field"><label>Exercices de la séance <span class="sens">${role ? '(adaptés au rôle ' + esc(role) + ')' : ''}</span></label><div class="picker">${groups}</div></div>`;
+}
+
+// rappel sur l'accueil du joueur
+function ficheReminder(p) {
+  const todo = (D().sessions || []).filter(s => s.playerId === p.id && sessionExs(s).length && !reportOf(s, p)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (!todo.length) return '';
+  return `<h2>${icon('edit', 18)} Fiches à remplir</h2><div class="bk-list">${todo.map(s => `<div class="bk-alert">${icon('target', 16)}<span><b>Séance du ${esc(dateLong(s.date))}</b> · ${sessionExs(s).length} exercice${sessionExs(s).length > 1 ? 's' : ''}${s.axis ? ' · ' + esc(s.axis) : ''}</span><span class="spacer"></span><button class="btn primary" data-action="open-session" data-id="${s.id}">Voir les exercices</button></div>`).join('')}</div>`;
+}
+
+// banque d'exercices (coach)
+function pageBanque(tabs) {
+  const p = player();
+  const role = p && !state.exAllRoles ? p.role : null;
+  const theme = state.exTheme || 'all';
+  const list = Exercises.LIST.filter(x => (theme === 'all' || x.theme === theme) && (!role || !x.roles || x.roles.includes(role)));
+  const chips = [{ id: 'all', t: 'Tous' }].concat(Exercises.THEMES).map(t => `<button class="${theme === t.id ? 'on' : ''}" data-action="ex-theme" data-v="${t.id}">${esc(t.t)}</button>`).join('');
+  return `<div class="row"><h1>Séances</h1><span class="spacer"></span>${tabs}</div>
+    <div class="sub">${Exercises.LIST.length} exercices tirés de ton programme, avec leur schéma. Choisis-les dans une séance (« Nouvelle séance ») : le joueur les retrouve chez lui et remplit sa fiche.</div>
+    <div class="row" style="margin-bottom:14px"><div class="chips">${chips}</div><span class="spacer"></span>
+      ${p ? `<button class="btn ghost" data-action="ex-roles">${state.exAllRoles ? 'Tous les rôles' : 'Rôle ' + esc(p.role)} ${icon('filter', 14)}</button>` : ''}</div>
+    ${list.map(x => exerciseCard(x, { role: p && p.role, toggle: true, open: state.exOpen === x.id })).join('') || '<div class="empty">Aucun exercice pour ce filtre.</div>'}`;
 }
 
 // ======================================================================== MES OBJECTIFS (joueur)
@@ -1001,8 +1148,18 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'toggle-session': state.sessionOpen = state.sessionOpen === id ? null : id; render(); break;
-    case 'new-session': openModal(sessionForm()); break;
-    case 'edit-session': openModal(sessionForm(D().sessions.find(s => s.id === id))); break;
+    case 'new-session': openModal(sessionForm()); $('#modal-box').style.width = '880px'; break;
+    case 'edit-session': openModal(sessionForm(D().sessions.find(s => s.id === id))); $('#modal-box').style.width = '880px'; break;
+    case 'seances-tab': state.seancesTab = el.dataset.v; render(); break;
+    case 'ex-theme': state.exTheme = el.dataset.v; render(); break;
+    case 'ex-roles': state.exAllRoles = !state.exAllRoles; render(); break;
+    case 'ex-toggle': state.exOpen = state.exOpen === id ? null : id; render(); break;
+    case 'report-open': {
+      const s = D().sessions.find(x => x.id === id);
+      if (s) { openModal(reportForm(s)); $('#modal-box').style.width = '760px'; }
+      break;
+    }
+    case 'open-session': state.page = 'seances'; state.seancesTab = 'seances'; state.sessionOpen = id; render(); break;
     case 'delete-session': if (confirm('Supprimer cette séance ?')) apply(await window.api.deleteSession(id), 'Séance supprimée.'); break;
     case 'new-player': openModal(playerForm()); break;
     case 'edit-player': openModal(playerForm(D().players.find(x => x.id === id))); break;
@@ -1133,10 +1290,40 @@ document.addEventListener('submit', async e => {
       apply(r, isNew ? 'Joueur ajouté : ses parties arrivent dans un instant.' : 'Joueur enregistré.');
     } else toast(r ? r.message : 'Erreur', 'err', 5000);
   }
+  if (formId === 'report-form') {
+    const data = { ex: {} };
+    for (const [k, v] of Object.entries(f)) {
+      const [kind, a, b] = k.split('|');
+      if (kind === 'g') data[a] = v;
+      if (kind === 'f') (data.ex[a] = data.ex[a] || {})[b] = v;
+    }
+    // nombres et temps
+    for (const [exId, vals] of Object.entries(data.ex)) {
+      const ex = Exercises.byId(exId);
+      for (const fd of (ex ? ex.fields : [])) {
+        const v = vals[fd.k];
+        if (v === undefined || v === '') { delete vals[fd.k]; continue; }
+        if (fd.type === 'number' || fd.type === 'score') vals[fd.k] = Number(String(v).replace(',', '.'));
+        if (fd.type === 'time' && Exercises.secs(v) === null) return toast('« ' + fd.label + ' » : écris un temps comme 3:25.', 'err');
+      }
+    }
+    if (data.ressenti !== undefined && data.ressenti !== '') data.ressenti = Number(data.ressenti);
+    const r = await window.api.saveReport(f.sid, data);
+    if (r && r.ok) { closeModal(); apply(r, 'Fiche enregistrée : ton coach la verra.'); } else toast(r ? r.message : 'Erreur', 'err', 5000);
+    return;
+  }
   if (formId === 'session-form') {
-    const s = Object.assign({}, f, { playerId: state.playerId });
+    const s = { playerId: state.playerId };
+    for (const [k, v] of Object.entries(f)) if (!k.includes('|')) s[k] = v;
     s.id = f.sid || undefined;
     delete s.sid;
+    s.exercises = Exercises.LIST.filter(x => f['ex|' + x.id]).map(x => {
+      let target = String(f['ext|' + x.id] === undefined ? '' : f['ext|' + x.id]).trim().replace(',', '.');
+      if (target !== '' && !(x.target && x.target.type === 'time') && !isNaN(Number(target))) target = Number(target);
+      return { id: x.id, target, note: String(f['exn|' + x.id] || '').trim() };
+    });
+    const badTime = s.exercises.find(e => { const x = Exercises.byId(e.id); return x.target && x.target.type === 'time' && e.target !== '' && Exercises.secs(e.target) === null; });
+    if (badTime) return toast('Cible de « ' + Exercises.byId(badTime.id).title + ' » : écris un temps comme 3:30.', 'err');
     s.target = s.target === '' ? '' : Number(s.target);
     const r = await window.api.saveSession(s);
     if (r && r.ok) { closeModal(); apply(r, 'Séance enregistrée.'); } else toast(r ? r.message : 'Erreur', 'err');

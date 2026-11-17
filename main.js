@@ -85,6 +85,7 @@ function viewData() {
   for (const k of SECRET_FIELDS) delete d.settings[k];
   d.session = { role: session.role, playerId: session.playerId, source: session.source, readOnly: !canEdit() };
   d.bookings = bookingsView();
+  if (session.source === 'cloud') d.reports = session.role === 'joueur' ? reports.mine.map(r => Object.assign({ playerId: session.playerId }, r)) : [];
   if (canEdit()) {
     const k = getSecret('apiKey');
     d.coach = {
@@ -142,6 +143,7 @@ async function login(code) {
     remoteData = cloudMod.dataFromCloud(remote, store.data);
     startRemoteRefresh();
     await refreshBookings();
+    await refreshReports();
     return { ok: true, data: viewData() };
   } catch (e) {
     if (e.code === 'code_inconnu') limiter.fail();
@@ -154,6 +156,7 @@ function logout() {
   session = null;
   remoteData = null;
   bookings.mine = []; bookings.busy = [];
+  reports.mine = [];
   if (remoteTimer) clearInterval(remoteTimer);
   return viewData();
 }
@@ -253,6 +256,68 @@ async function refreshBookings() {
     bookings.error = e.message;
   }
   if (session && JSON.stringify([bookings.all, bookings.mine, bookings.busy, bookings.error]) !== before) refreshView();
+}
+
+// ---------------------------------------------------------------- fiches de séance remplies par les joueurs
+// Ordinateur d'un joueur : il remplit sa fiche, envoyée au serveur. Ordinateur du coach : les fiches du serveur
+// sont recopiées ici (store.data.reports) ; une fiche remplie sur cet ordinateur part au serveur dès que possible.
+const reports = { mine: [], loaded: false };
+const sameReport = (a, b) => a.playerId === b.playerId && a.sessionId === b.sessionId;
+function cleanReport(data) {
+  const d = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const json = JSON.stringify(d);
+  if (json.length > 20000) throw new Error('Fiche trop longue.');
+  return JSON.parse(json);
+}
+async function refreshReports() {
+  if (!cloud || !session) return;
+  let dirty = false;
+  try {
+    if (isCoachMachine()) {
+      const key = getPushToken();
+      for (const r of store.data.reports.filter(x => x.pending)) {
+        const res = await cloud.coachReportSave(key, r.playerId, r.sessionId, r.data);
+        r.updatedAt = res.updatedAt || r.updatedAt;
+        delete r.pending;
+        dirty = true;
+      }
+      const res = await cloud.coachReports(key);
+      for (const r of res.reports || []) {
+        const cur = store.data.reports.find(x => sameReport(x, r));
+        if (cur && (cur.pending || new Date(r.updatedAt) <= new Date(cur.updatedAt))) continue;
+        if (cur) Object.assign(cur, r); else store.data.reports.push(r);
+        dirty = true;
+        const s = store.data.sessions.find(x => x.id === r.sessionId);
+        if (reports.loaded) notifyCoach('Fiche de séance remplie', playerName(r.playerId) + (cur ? ' a modifié sa fiche' : ' a rempli sa fiche') + (s && s.date ? ' (séance du ' + new Date(s.date).toLocaleDateString('fr-FR') + ').' : '.'));
+      }
+      reports.loaded = true;
+      if (dirty) store.save();
+    } else if (session.source === 'cloud' && session.role === 'joueur') {
+      const res = await cloud.reportsMine(session.token);
+      const next = res.reports || [];
+      dirty = JSON.stringify(next) !== JSON.stringify(reports.mine);
+      reports.mine = next;
+    }
+  } catch (e) { /* serveur injoignable : on réessaie au prochain passage */ }
+  if (dirty) refreshView();
+}
+async function saveReport({ sessionId, data }) {
+  if (!session || session.role !== 'joueur') throw new Error('La fiche se remplit depuis l\'espace du joueur.');
+  const clean = cleanReport(data);
+  if (session.source === 'cloud') {
+    if (!(remoteData.sessions || []).some(s => s.id === sessionId)) throw new Error('Cette séance n\'existe plus.');
+    await cloud.reportSave(session.token, sessionId, clean);
+    const res = await cloud.reportsMine(session.token);
+    reports.mine = res.reports || [];
+    return viewData();
+  }
+  if (!store.data.sessions.some(s => s.id === sessionId && s.playerId === session.playerId)) throw new Error('Cette séance n\'existe plus.');
+  const r = { playerId: session.playerId, sessionId, data: clean, updatedAt: new Date().toISOString(), pending: true };
+  const cur = store.data.reports.find(x => sameReport(x, r));
+  if (cur) Object.assign(cur, r); else store.data.reports.push(r);
+  store.save();
+  refreshReports(); // envoi au serveur en arrière-plan
+  return viewData();
 }
 
 // séances en cours, par joueur (un créneau accepté qui suit immédiatement est inclus : 2 h)
@@ -661,6 +726,7 @@ function registerIpc() {
   });
 
   handle('booking:action', arg => bookingAction(arg || {}));
+  handle('report:save', async r => ({ ok: true, data: await saveReport(r || {}) }));
   handle('booking:refresh', async () => { await refreshBookings(); return { ok: true, data: viewData() }; });
 
   handle('open:external', url => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { ok: true }; });
@@ -739,6 +805,9 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
 }
 
+// tests : chaque instance a son propre dossier Chromium (plusieurs apps lancées en même temps)
+if (process.env.COACHING_LOL_TEST && process.env.COACHING_LOL_DATA) app.setPath('userData', path.join(process.env.COACHING_LOL_DATA, 'chromium'));
+
 app.whenReady().then(async () => {
   store = new Store(process.env.COACHING_LOL_DATA || app.getPath('userData'));
   await restoreSession();
@@ -754,6 +823,7 @@ app.whenReady().then(async () => {
       if (FAST) {
         schedulePush(1000);
         setInterval(refreshBookings, 1500);
+        setInterval(refreshReports, 1500);
         setInterval(watchCoaching, 1000);
       }
       return require(process.env.COACHING_LOL_TEST)({ app, win, store, fs, path });
@@ -769,6 +839,8 @@ app.whenReady().then(async () => {
     setInterval(maybeRestartForUpdate, 15 * 1000);
     setTimeout(refreshBookings, FAST ? 500 : 4000);
     setInterval(refreshBookings, FAST ? 2000 : 20 * 1000);
+    setTimeout(refreshReports, FAST ? 700 : 6000);
+    setInterval(refreshReports, FAST ? 2000 : 30 * 1000);
     setInterval(watchCoaching, FAST ? 1000 : 5 * 1000);
   });
   if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement

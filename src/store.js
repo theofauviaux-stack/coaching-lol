@@ -52,7 +52,8 @@ function emptyData() {
     games: [],
     ignored: [],
     ranks: [],
-    sessions: []
+    sessions: [],
+    reports: []
   };
 }
 
@@ -71,7 +72,7 @@ class Store {
       const base = emptyData();
       // compléter les champs ajoutés dans une version ultérieure
       d.settings = Object.assign(base.settings, d.settings || {});
-      for (const k of ['players', 'games', 'ignored', 'ranks', 'sessions']) if (!Array.isArray(d[k])) d[k] = [];
+      for (const k of ['players', 'games', 'ignored', 'ranks', 'sessions', 'reports']) if (!Array.isArray(d[k])) d[k] = [];
       for (const [k, v] of Object.entries(DEFAULT_OBJECTIVES)) if (!d.settings.objectives[k]) d.settings.objectives[k] = v;
       return d;
     } catch (e) {
@@ -93,7 +94,7 @@ class Store {
   replaceAll(d) {
     const base = emptyData();
     d.settings = Object.assign(base.settings, d.settings || {});
-    for (const k of ['players', 'games', 'ignored', 'ranks', 'sessions']) if (!Array.isArray(d[k])) d[k] = [];
+    for (const k of ['players', 'games', 'ignored', 'ranks', 'sessions', 'reports']) if (!Array.isArray(d[k])) d[k] = [];
     this.data = d;
     this.save();
   }

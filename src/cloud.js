@@ -14,7 +14,9 @@ const ERREURS = {
   trop_de_reservations: 'Trop de réservations en attente : attends les réponses avant d\'en demander d\'autres.',
   reservation_inconnue: 'Réservation introuvable.',
   action_impossible: 'Action impossible pour cette réservation (elle a peut-être changé entre-temps).',
-  trop_tot: 'Le coaching peut démarrer au plus tôt 30 minutes avant le créneau, et jusqu\'à sa fin.'
+  trop_tot: 'Le coaching peut démarrer au plus tôt 30 minutes avant le créneau, et jusqu\'à sa fin.',
+  seance_inconnue: 'Cette séance n\'existe plus.',
+  fiche_invalide: 'Fiche trop longue ou invalide.'
 };
 
 // Adresse du projet et clé publique : publiques par conception (les tables sont fermées, seules
@@ -71,6 +73,11 @@ class CloudClient {
   book(token, action, id, start) { return this.rpc('book', { p_token: token, p_action: action, p_id: id || null, p_start: start || null }); }
   bookingsMine(token) { return this.rpc('bookings_mine', { p_token: token }); }
   coachBookings(key) { return this.rpc('coach_bookings', { p_key: key }); }
+  // fiches de séance remplies par les joueurs
+  reportSave(token, sessionId, data) { return this.rpc('report_save', { p_token: token, p_session: sessionId, p: data }); }
+  reportsMine(token) { return this.rpc('reports_mine', { p_token: token }); }
+  coachReports(key) { return this.rpc('coach_reports', { p_key: key }); }
+  coachReportSave(key, playerId, sessionId, data) { return this.rpc('coach_report_save', { p_key: key, p_player: playerId, p_session: sessionId, p: data }); }
   coachBook(key, action, id, start, player) { return this.rpc('coach_book', { p_key: key, p_action: action, p_id: id || null, p_start: start || null, p_player: player || null }); }
   // envoi avec le jeton propre à l'ordinateur du coach (clé publique + jeton enregistré dans la base)
   pushWithToken(snapshot, token) { return this.rpc('coach_push', { p_key: token, p: snapshot }); }

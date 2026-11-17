@@ -36,6 +36,7 @@ function filterForSession(data, session) {
   d.ignored = d.ignored.filter(g => g.playerId === id);
   d.ranks = d.ranks.filter(r => r.playerId === id);
   d.sessions = d.sessions.filter(s => s.playerId === id);
+  d.reports = (d.reports || []).filter(r => r.playerId === id).map(({ pending, ...r }) => r); // eslint-disable-line no-unused-vars
   return d;
 }
 
