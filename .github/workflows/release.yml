@@ -13,7 +13,7 @@ on:
       plateforme:
         description: 'Plateforme à (re)compiler'
         type: choice
-        options: [mac, windows, les deux]
+        options: [mac, mac-intel, windows, les deux]
         default: les deux
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event.inputs.plateforme == 'mac' && '["macos-15"]' || github.event.inputs.plateforme == 'windows' && '["windows-latest"]' || '["macos-15","windows-latest"]') }}
+        os: ${{ fromJSON(github.event.inputs.plateforme == 'mac' && '["macos-15"]' || github.event.inputs.plateforme == 'mac-intel' && '["macos-15-intel"]' || github.event.inputs.plateforme == 'windows' && '["windows-latest"]' || '["macos-15","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
