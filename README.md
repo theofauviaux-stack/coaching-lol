@@ -16,6 +16,13 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - `src/cloud-config.json` contient l'adresse du projet et sa clé **publique** (publiques par conception). La clé secrète n'est jamais dans ce dépôt.
 - Le plan gratuit de Supabase met la base en pause après 7 jours sans activité : l'app du coach la réveille à chaque envoi (au démarrage et toutes les 6 heures).
 
+## Réservations de coaching
+
+- Le joueur réserve depuis son accueil : créneaux d'1 h, de 17 h à minuit (heure de Paris), 2 h maximum par jour, jusqu'à 30 jours à l'avance.
+- Le coach voit la demande sous la ligne du joueur (et reçoit une notification) : il accepte, ou propose un autre horaire que le joueur accepte ou refuse.
+- Le jour J, le bouton « Démarrer le coaching » s'active 30 min avant : un minuteur de 1 h (2 h si deux créneaux se suivent) s'affiche en haut pour le coach, qui est prévenu 5 min avant la fin. Le joueur voit seulement « En coaching ».
+- Les réservations passent par la base en ligne : l'ordinateur du coach doit y être relié (Paramètres › Général › Serveur en ligne).
+
 ## Installer
 
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :

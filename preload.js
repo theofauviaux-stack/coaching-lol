@@ -23,5 +23,8 @@ contextBridge.exposeInMainWorld('api', {
   importBackup: () => call('backup:import'),
   openExternal: url => call('open:external', url),
   uiState: ui => ipcRenderer.send('ui:state', ui),
+  booking: (action, id, start) => call('booking:action', { action, id, start }),
+  refreshBookings: () => call('booking:refresh'),
+  onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))
 });

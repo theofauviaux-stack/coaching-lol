@@ -101,6 +101,68 @@ function apply(r, okMsg) {
   return false;
 }
 
+// ======================================================================== créneaux de coaching (heure de Paris)
+const TZ = 'Europe/Paris';
+const HOURS = [17, 18, 19, 20, 21, 22, 23];
+const BOOK_DAYS = 14;
+function parisParts(date) {
+  const o = {};
+  for (const p of new Intl.DateTimeFormat('en-GB', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(date)) o[p.type] = Number(p.value);
+  return o;
+}
+function parisOffsetMin(date) {
+  const part = new Intl.DateTimeFormat('en-US', { timeZone: TZ, timeZoneName: 'longOffset' }).formatToParts(date).find(p => p.type === 'timeZoneName');
+  const m = part && part.value.match(/GMT([+-])(\d{2}):?(\d{2})?/);
+  return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0)) : 0;
+}
+// créneau « jour J (0 = aujourd'hui, à Paris), heure h » → instant exact
+function slotTime(dayOffset, h) {
+  const t = parisParts(new Date());
+  const guess = Date.UTC(t.year, t.month - 1, t.day + dayOffset, h);
+  return guess - parisOffsetMin(new Date(guess)) * 60000;
+}
+const dayLabel = ms => new Date(ms).toLocaleDateString('fr-FR', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' });
+const dayLong = ms => new Date(ms).toLocaleDateString('fr-FR', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' });
+const hourOf = ms => parisParts(new Date(ms)).hour;
+const slotText = ms => `${dayLong(ms)}, ${hourOf(ms)} h – ${(hourOf(ms) + 1) % 24} h`;
+const parisDay = ms => { const p = parisParts(new Date(ms)); return p.year + '-' + p.month + '-' + p.day; };
+const ACTIVE = ['en_attente', 'proposee', 'acceptee', 'en_cours'];
+const bSlot = b => new Date(b.status === 'proposee' ? b.proposed : b.start).getTime();
+const BK_LABEL = { en_attente: 'En attente de réponse', proposee: 'Nouvel horaire proposé', acceptee: 'Confirmé', en_cours: 'En coaching', terminee: 'Terminé', annulee: 'Annulé', refusee: 'Refusé', expiree: 'Sans réponse' };
+const BK_CHIP = { en_attente: 'amber', proposee: 'blue', acceptee: 'accent', en_cours: 'accent', terminee: '', annulee: '', refusee: 'red', expiree: '' };
+const BK = () => D().bookings;
+const fmtClock = ms => { const s = Math.max(0, Math.round(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+
+// grille de créneaux. mode « joueur » : ses réservations ; mode « proposer » : le coach choisit un horaire pour une demande
+function slotGrid({ mode, playerId, bookingId }) {
+  const bk = BK();
+  const week = state.bookWeek || 0;
+  const days = Array.from({ length: 7 }, (_, i) => i + week * 7);
+  let mine = [], busy = [];
+  if (mode === 'joueur') { mine = bk.mine || []; busy = (bk.busy || []).map(x => new Date(x).getTime()); }
+  else { const all = (bk.all || []).filter(b => b.id !== bookingId && ACTIVE.includes(b.status)); mine = all.filter(b => b.playerId === playerId); busy = all.filter(b => b.playerId !== playerId).map(bSlot); }
+  const mineActive = mine.filter(b => ACTIVE.includes(b.status));
+  const perDay = {};
+  for (const b of mineActive) perDay[parisDay(bSlot(b))] = (perDay[parisDay(bSlot(b))] || 0) + 1;
+  const now = Date.now();
+  const head = days.map(d => `<th>${esc(dayLabel(slotTime(d, 17)))}</th>`).join('');
+  const rows = HOURS.map(h => `<tr><td class="l muted">${h} h</td>${days.map(d => {
+    const t = slotTime(d, h);
+    const own = mineActive.find(b => bSlot(b) === t);
+    if (own) return `<td><button class="slot mine ${own.status}" data-action="slot-mine" data-id="${own.id}">${own.status === 'acceptee' || own.status === 'en_cours' ? 'Confirmé' : own.status === 'proposee' ? 'Proposé' : 'Demandé'}</button></td>`;
+    if (t <= now) return '<td><span class="slot past"></span></td>';
+    if (busy.includes(t)) return '<td><span class="slot busy">Pris</span></td>';
+    if (t > now + 30 * 864e5) return '<td><span class="slot past"></span></td>';
+    if ((perDay[parisDay(t)] || 0) >= 2) return '<td><span class="slot full" data-tip="2 h maximum par jour">—</span></td>';
+    return `<td><button class="slot free" data-action="${mode === 'joueur' ? 'slot-free' : 'slot-propose'}" data-t="${t}" ${bookingId ? `data-id="${bookingId}"` : ''}>Libre</button></td>`;
+  }).join('')}</tr>`).join('');
+  return `<div class="row" style="margin:6px 0 10px"><div class="seg">
+      <button class="${week === 0 ? 'on' : ''}" data-action="book-week" data-v="0">Cette semaine</button>
+      <button class="${week === 1 ? 'on' : ''}" data-action="book-week" data-v="1">Semaine suivante</button></div>
+      <span class="muted small">Créneaux d'1 h, de 17 h à minuit (heure de Paris). 2 h maximum par jour.</span></div>
+    <table class="table slots"><tr><th class="l"></th>${head}</tr>${rows}</table>`;
+}
+
 // ======================================================================== statistiques par période
 function roleGames(p) { return Stats.playerGames(D(), p, ''); }
 function periodGames(p) {
@@ -313,8 +375,18 @@ function renderTopbar() {
   const sw = isCoach() && perPlayer && d.players.length && !(state.page === 'parametres' && state.settingsTab === 'general')
     ? `<select class="select-player" data-change="player">${d.players.map(x => opt(x.id, state.playerId, x.riotId)).join('')}</select>` : '';
   const ro = !canEdit() ? `<span class="chip">${icon('eye', 14)} Lecture seule</span>` : '';
+  const bk = d.bookings;
+  let live = '';
+  if (bk && bk.coaching && bk.coaching.length) {
+    const g = bk.coaching[0];
+    const who = (d.players.find(x => x.id === g.playerId) || {}).riotId || '';
+    live = `<div class="live ${g.endsAt - Date.now() <= 5 * 60000 ? 'warn' : ''}" id="live" data-ends="${g.endsAt}"><span class="pulse"></span>En coaching avec <b>${esc(String(who).split('#')[0])}</b>
+      <span class="clock" id="live-clock">${fmtClock(g.endsAt - Date.now())}</span><button class="btn" data-action="bk" data-act="terminer" data-id="${g.id}">Terminer</button></div>`;
+  } else if (bk && (bk.mine || []).some(b => b.status === 'en_cours')) {
+    live = '<div class="live"><span class="pulse"></span>En coaching</div>';
+  }
   $('#topbar').innerHTML = `<div class="crumbs">Coaching LoL ${icon('chevron', 14)} <b>${esc(pg ? pg.label : '')}</b>${perPlayer && p && isCoach() ? ` ${icon('chevron', 14)} ${esc(p.riotId)}` : ''}</div>
-    <span class="spacer"></span>${ro}${sw}`;
+    <span class="spacer"></span>${live}${ro}${sw}`;
 }
 
 // ======================================================================== ACCUEIL
@@ -335,21 +407,40 @@ function playerRow(p) {
     <div class="go">${icon('arrow', 18)}</div></div>`;
 }
 
+// demandes et coachings d'un joueur, affichés sous sa ligne sur l'accueil du coach
+function bookingAlerts(p) {
+  const bk = BK();
+  if (!bk || !bk.all) return '';
+  const now = Date.now();
+  const list = bk.all.filter(b => b.playerId === p.id && (ACTIVE.includes(b.status))).sort((a, b) => bSlot(a) - bSlot(b));
+  return list.map(b => {
+    const t = bSlot(b);
+    if (b.status === 'en_attente') return `<div class="bk-alert">${icon('calendar', 16)}<span><b>Demande de coaching</b> · ${esc(slotText(t))}</span><span class="spacer"></span>
+      <button class="btn primary" data-action="bk" data-act="accepter" data-id="${b.id}">${icon('check', 15)} Accepter</button>
+      <button class="btn" data-action="bk-propose" data-id="${b.id}">Proposer un autre horaire</button></div>`;
+    if (b.status === 'proposee') return `<div class="bk-alert muted-alert">${icon('clock', 16)}<span>Tu as proposé ${esc(slotText(t))} · en attente de sa réponse</span><span class="spacer"></span>
+      <button class="btn ghost" data-action="bk" data-act="annuler" data-id="${b.id}">Annuler</button></div>`;
+    if (b.status === 'acceptee') {
+      const canStart = now >= t - 30 * 60000 && now <= t + 60 * 60000;
+      return `<div class="bk-alert ok-alert">${icon('calendar', 16)}<span><b>Coaching prévu</b> · ${esc(slotText(t))}</span><span class="spacer"></span>
+        ${canStart ? `<button class="btn primary" data-action="bk" data-act="demarrer" data-id="${b.id}">${icon('clock', 15)} Démarrer le coaching</button>` : '<span class="muted small">« Démarrer » s\'active 30 min avant</span>'}
+        <button class="btn" data-action="bk-propose" data-id="${b.id}">Déplacer</button><button class="btn ghost" data-action="bk" data-act="annuler" data-id="${b.id}">Annuler</button></div>`;
+    }
+    return '';
+  }).join('');
+}
+
 function accueilCoach() {
   const d = D();
   const n = d.players.length;
-  const rows = d.players.map(playerRow).join('');
+  const bk = BK();
+  const rows = d.players.map(p => playerRow(p) + bookingAlerts(p)).join('');
+  const bkNote = !bk ? '' : !bk.linked || bk.error
+    ? `<div class="bk-alert muted-alert">${icon('cloud', 16)}<span>Réservations indisponibles : ${esc(bk.error || 'relie d\'abord cet ordinateur au serveur')} (Paramètres › Général › Serveur en ligne).</span></div>` : '';
   const add = canEdit() ? `<div class="row-link" data-action="new-player"><div class="tile">${icon('plus', 20)}</div><div class="t"><b>Ajouter un joueur</b><span>Son pseudo Riot, son rôle : ses parties arrivent toutes seules.</span></div><div class="go">${icon('arrow', 18)}</div></div>` : '';
-  const shortcut = (pg, ico, t, s) => `<div class="row-link" data-action="go" data-page="${pg}"><div class="tile">${icon(ico, 20)}</div><div class="t"><b>${t}</b><span>${s}</span></div><div class="go">${icon('arrow', 18)}</div></div>`;
   return `<h1>Bonjour coach</h1>
     <div class="sub">${n ? n + ' joueur' + (n > 1 ? 's' : '') + ' suivi' + (n > 1 ? 's' : '') + '. Les parties arrivent automatiquement.' : 'Ajoute ton premier joueur pour commencer.'}</div>
-    <div class="rows">${rows}${add}</div>
-    <h2>Raccourcis</h2>
-    <div class="rows">
-      ${shortcut('dashboard', 'dashboard', 'Tableau de bord', 'Stats, objectifs et évolution du joueur sélectionné.')}
-      ${shortcut('seances', 'sessions', 'Séances', 'Comptes rendus, axes de travail et devoirs.')}
-      ${canEdit() ? shortcut('parametres', 'settings', 'Paramètres', 'Objectifs, cartes et codes d\'accès de chaque joueur.') : ''}
-    </div>`;
+    ${bkNote}<div class="rows">${rows}${add}</div>`;
 }
 
 function accueilJoueur() {
@@ -363,20 +454,33 @@ function accueilJoueur() {
   const lpJ = snapsJ.length ? snapsJ[snapsJ.length - 1].score - snapsJ[0].score : null;
   const next = (D().sessions || []).filter(s => s.playerId === p.id && s.next).map(s => s.next).sort().filter(x => x >= isoDay(Date.now()))[0];
   const row = (pg, ico, t, s) => `<div class="row-link" data-action="go" data-page="${pg}"><div class="tile">${icon(ico, 20)}</div><div class="t"><b>${t}</b><span>${s}</span></div><div class="go">${icon('arrow', 18)}</div></div>`;
-  return `<h1>Salut ${esc(gameName(p))}</h1>
+  const bk = BK();
+  const live = bk && (bk.mine || []).some(b => b.status === 'en_cours');
+  const myList = bk ? (bk.mine || []).filter(b => ['en_attente', 'proposee', 'acceptee'].includes(b.status) || (['annulee', 'refusee'].includes(b.status) && bSlot(b) > Date.now())).sort((a, b) => bSlot(a) - bSlot(b)) : [];
+  const nextBk = bk ? (bk.mine || []).filter(b => b.status === 'acceptee' && bSlot(b) + 36e5 > Date.now()).sort((a, b) => bSlot(a) - bSlot(b))[0] : null;
+  const booking = !bk ? '' : `<h2>${icon('calendar', 18)} Réserver un coaching</h2>
+    ${bk.error ? `<div class="bk-alert muted-alert">${icon('alert', 16)}<span>${esc(bk.error)}</span></div>` : ''}
+    ${myList.length ? `<div class="bk-list">${myList.map(b => `<div class="bk-alert ${b.status === 'proposee' ? '' : 'muted-alert'}">${icon('calendar', 16)}
+        <span><b>${esc(slotText(bSlot(b)))}</b>${b.status === 'proposee' ? ` · ton coach propose cet horaire à la place de ${esc(hourOf(new Date(b.start).getTime()) + ' h')}` : ''}</span><span class="spacer"></span>
+        <span class="chip ${BK_CHIP[b.status] || ''}">${esc(BK_LABEL[b.status] || b.status)}</span>
+        ${b.status === 'proposee' ? `<button class="btn primary" data-action="bk" data-act="accepter_proposition" data-id="${b.id}">Accepter</button><button class="btn" data-action="bk" data-act="refuser_proposition" data-id="${b.id}">Refuser</button>` : ''}
+        ${b.status === 'en_attente' || b.status === 'acceptee' ? `<button class="btn ghost" data-action="bk" data-act="annuler" data-id="${b.id}">Annuler</button>` : ''}</div>`).join('')}</div>` : ''}
+    ${slotGrid({ mode: 'joueur' })}`;
+  return `${live ? `<div class="live-banner"><span class="pulse"></span>En coaching</div>` : ''}<h1>Salut ${esc(gameName(p))}</h1>
     <div class="sub">Ton espace de progression · ${esc(p.role)}${p.goal ? ' · objectif : ' + esc(p.goal) : ''}</div>
     <div class="stats-strip">
       <div class="stat"><div class="tile">${icon('trophy', 22)}</div><div><div class="k">Rang actuel</div><div class="v">${rk ? esc(rk.label.split(' · ')[0]) : '—'}</div><div class="muted small">${rk ? esc(rk.label.split(' · ')[1] || '') : ''}${lpJ === null ? '' : ` · <span class="${lpJ > 0 ? 'ok' : lpJ < 0 ? 'red' : ''}">${Stats.fmt(lpJ, 'diff')} LP</span> depuis le début`}</div></div></div>
       <div class="stat">${Charts.ring(wr)}<div><div class="k">Victoires (20 dernières)</div><div class="v">${wr === null ? '—' : Math.round(wr * 100) + '%'}</div></div></div>
       <div class="stat"><div><div class="k">Forme récente</div>${dots(gs.slice(-10))}<div class="muted small" style="margin-top:6px">${gs.slice(-10).filter(g => g.win).length} V · ${gs.slice(-10).filter(g => !g.win).length} D</div></div></div>
-      <div class="stat"><div class="tile">${icon('calendar', 22)}</div><div><div class="k">Prochaine séance</div><div class="v" style="font-size:18px">${next ? esc(dateLong(next)) : '—'}</div></div></div>
+      <div class="stat"><div class="tile">${icon('calendar', 22)}</div><div><div class="k">Prochaine séance</div><div class="v" style="font-size:18px">${nextBk ? esc(slotText(bSlot(nextBk))) : next ? esc(dateLong(next)) : '—'}</div></div></div>
     </div>
     <div class="rows">
       ${row('dashboard', 'dashboard', 'Tableau de bord', 'Tes stats, tes objectifs et ton évolution partie après partie.')}
       ${row('parties', 'games', 'Parties', 'Tes dernières parties classées, en détail.')}
       ${row('seances', 'sessions', 'Séances', 'Les comptes rendus de tes séances et tes devoirs.')}
       ${row('objectifs', 'target', 'Mes objectifs', 'Ce que ton coach attend de toi, et où tu en es.')}
-    </div>`;
+    </div>
+    ${booking}`;
 }
 
 // ======================================================================== TABLEAU DE BORD
@@ -801,9 +905,32 @@ function settingsGeneral() {
 
 const PAGES = { accueil: pageAccueil, dashboard: pageDashboard, parties: pageParties, seances: pageSeances, objectifs: pageObjectifs, joueurs: pageJoueurs, parametres: pageParametres };
 
+// le coach refuse un horaire en en proposant un autre
+function openProposeModal(bookingId) {
+  const b = (BK().all || []).find(x => x.id === bookingId);
+  if (!b) return;
+  state.proposing = bookingId;
+  const who = (D().players.find(x => x.id === b.playerId) || {}).riotId || '';
+  openModal(`<h1>Proposer un autre horaire</h1>
+    <div class="muted" style="margin:6px 0 4px">${esc(who)} a demandé ${esc(slotText(bSlot(b)))}. Choisis un créneau libre : il recevra ta proposition et pourra l'accepter.</div>
+    ${slotGrid({ mode: 'proposer', playerId: b.playerId, bookingId })}
+    <div class="actions"><button class="btn ghost" data-action="close-modal">Fermer</button></div>`);
+  $('#modal-box').style.width = '920px';
+}
+
 // ======================================================================== modale
 function openModal(html) { $('#modal-box').innerHTML = html; $('#modal').classList.remove('hidden'); hookImages(); }
-function closeModal() { $('#modal').classList.add('hidden'); $('#modal-box').innerHTML = ''; }
+function closeModal() { $('#modal').classList.add('hidden'); $('#modal-box').innerHTML = ''; $('#modal-box').style.width = ''; state.proposing = null; }
+
+// minuteur du coaching : mis à jour chaque seconde sans redessiner la page
+setInterval(() => {
+  const live = document.getElementById('live');
+  if (!live || !live.dataset.ends) return;
+  const left = Number(live.dataset.ends) - Date.now();
+  const c = document.getElementById('live-clock');
+  if (c) c.textContent = fmtClock(left);
+  live.classList.toggle('warn', left <= 5 * 60000);
+}, 1000);
 
 // ======================================================================== infobulles
 function showTip(el, e) {
@@ -910,6 +1037,41 @@ document.addEventListener('click', async e => {
     case 'invite': { const ip = D().players.find(x => x.id === id); if (ip) copyText(inviteText(ip), 'Invitation copiée : colle-la à ' + gameName(ip) + ' (Discord, SMS…).'); break; }
     case 'copy-links': copyText(linksText(), 'Liens de téléchargement copiés.'); break;
     case 'ext': window.api.openExternal(el.dataset.url); break;
+    case 'book-week': state.bookWeek = Number(el.dataset.v); if (!$('#modal').classList.contains('hidden') && state.proposing) openProposeModal(state.proposing); else render(); break;
+    case 'slot-free': {
+      const t = Number(el.dataset.t);
+      openModal(`<h1>Réserver ce créneau ?</h1><div class="sub" style="margin:8px 0 0">${esc(slotText(t))} (1 h, heure de Paris).</div>
+        <div class="muted small">Ton coach doit accepter : tu verras sa réponse ici. S'il n'est pas disponible, il te proposera un autre horaire.</div>
+        <div class="actions"><button class="btn ghost" data-action="close-modal">Annuler</button><button class="btn primary" data-action="bk" data-act="demander" data-t="${t}">${icon('calendar', 15)} Demander ce créneau</button></div>`);
+      break;
+    }
+    case 'slot-mine': {
+      const b = (BK().mine || []).find(x => x.id === id);
+      if (!b) break;
+      openModal(`<h1>${esc(slotText(bSlot(b)))}</h1><div class="row" style="margin:10px 0"><span class="chip ${BK_CHIP[b.status] || ''}">${esc(BK_LABEL[b.status])}</span></div>
+        <div class="actions">${b.status === 'proposee' ? `<button class="btn" data-action="bk" data-act="refuser_proposition" data-id="${b.id}">Refuser</button><button class="btn primary" data-action="bk" data-act="accepter_proposition" data-id="${b.id}">Accepter cet horaire</button>`
+          : `<button class="btn ghost" data-action="close-modal">Fermer</button>${b.status === 'en_attente' || b.status === 'acceptee' ? `<button class="btn danger" data-action="bk" data-act="annuler" data-id="${b.id}">Annuler la réservation</button>` : ''}`}</div>`);
+      break;
+    }
+    case 'bk-propose': state.bookWeek = 0; openProposeModal(id); break;
+    case 'slot-propose': {
+      const t = Number(el.dataset.t);
+      state.proposing = null;
+      closeModal();
+      apply(await window.api.booking('proposer', id, new Date(t).toISOString()), 'Nouvel horaire proposé : ' + slotText(t) + '.');
+      break;
+    }
+    case 'bk': {
+      const act = el.dataset.act;
+      const start = el.dataset.t ? new Date(Number(el.dataset.t)).toISOString() : undefined;
+      if (act === 'annuler' && !confirm('Annuler cette réservation ?')) break;
+      if (act === 'terminer' && !confirm('Terminer le coaching maintenant ?')) break;
+      el.disabled = true;
+      const msg = { demander: 'Demande envoyée à ton coach.', accepter: 'Créneau accepté.', annuler: 'Réservation annulée.', accepter_proposition: 'Horaire accepté.', refuser_proposition: 'Horaire refusé : tu peux choisir un autre créneau.', demarrer: 'Coaching démarré.', terminer: 'Coaching terminé.' }[act];
+      closeModal();
+      apply(await window.api.booking(act, id, start), msg);
+      break;
+    }
     case 'export': { const r = await window.api.exportBackup(); if (r.ok) toast(r.message); break; }
     case 'import': if (confirm('Remplacer toutes les données par la sauvegarde ?')) apply(await window.api.importBackup()); break;
   }
@@ -992,6 +1154,7 @@ document.addEventListener('keydown', e => {
 
 // nouvelles données venues du processus principal (synchro, serveur) : rafraîchir sans gêner la saisie
 document.addEventListener('focusout', () => { if (state.pending) setTimeout(() => { if (!isTyping() && state.pending) { state.pending = false; render(); } }, 50); });
+window.api.onAlert(a => toast(a.title + ' — ' + a.body, 'ok', 9000));
 window.api.onData(d => {
   state.data = d;
   if (isTyping() || !$('#modal').classList.contains('hidden')) { state.pending = true; return; }

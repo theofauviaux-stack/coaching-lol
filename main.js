@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, powerMonitor, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -84,6 +84,7 @@ function viewData() {
   }
   for (const k of SECRET_FIELDS) delete d.settings[k];
   d.session = { role: session.role, playerId: session.playerId, source: session.source, readOnly: !canEdit() };
+  d.bookings = bookingsView();
   if (canEdit()) {
     const k = getSecret('apiKey');
     d.coach = {
@@ -140,6 +141,7 @@ async function login(code) {
     session = { role: r.role, playerId: r.playerId, source: 'cloud', token: r.token };
     remoteData = cloudMod.dataFromCloud(remote, store.data);
     startRemoteRefresh();
+    await refreshBookings();
     return { ok: true, data: viewData() };
   } catch (e) {
     if (e.code === 'code_inconnu') limiter.fail();
@@ -151,6 +153,7 @@ function logout() {
   if (session && session.token && cloud) cloud.logout(session.token);
   session = null;
   remoteData = null;
+  bookings.mine = []; bookings.busy = [];
   if (remoteTimer) clearInterval(remoteTimer);
   return viewData();
 }
@@ -195,6 +198,126 @@ async function pushNow() {
   } finally {
     if (canEdit()) refreshView();
   }
+}
+
+// ---------------------------------------------------------------- réservations de coaching
+// Elles vivent sur le serveur (les joueurs réservent depuis leur ordinateur). L'app du coach les lit avec
+// le jeton d'envoi de son ordinateur ; l'app d'un joueur avec son jeton de session.
+const FAST = !!process.env.COACHING_LOL_FAST; // tests : rafraîchissements rapides
+const ACTIVE = ['en_attente', 'proposee', 'acceptee', 'en_cours'];
+const bookings = { all: [], mine: [], busy: [], loaded: false, error: '' };
+const notifiedRequests = new Set();
+const warnedEnds = new Set();
+let bookingsKey = '';
+const slotOf = b => (b.status === 'proposee' ? b.proposed : b.start);
+const playerName = id => ((store.data.players.find(p => p.id === id) || {}).riotId || 'Un joueur').split('#')[0];
+const fmtSlot = iso => {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris', weekday: 'long', day: 'numeric', month: 'long' });
+  const h = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' }).format(d), 10);
+  return day + ', ' + h + ' h – ' + ((h + 1) % 24) + ' h';
+};
+
+function notifyCoach(title, body) {
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title, body });
+      n.on('click', () => { if (win) { win.show(); win.focus(); } });
+      n.show();
+    }
+  } catch (e) { /* notifications indisponibles */ }
+  send('coach:alert', { title, body });
+}
+
+async function refreshBookings() {
+  if (!cloud) return;
+  const before = JSON.stringify([bookings.all, bookings.mine, bookings.busy, bookings.error]);
+  try {
+    if (isCoachMachine()) {
+      const r = await cloud.coachBookings(getPushToken());
+      bookings.all = r.all || [];
+      for (const b of bookings.all) {
+        if (b.status === 'en_attente' && !notifiedRequests.has(b.id)) {
+          notifiedRequests.add(b.id);
+          if (bookings.loaded) notifyCoach('Nouvelle demande de coaching', playerName(b.playerId) + ' : ' + fmtSlot(b.start));
+        }
+      }
+      bookings.loaded = true;
+    } else if (session && session.source === 'cloud' && session.role === 'joueur') {
+      const r = await cloud.bookingsMine(session.token);
+      bookings.mine = r.mine || [];
+      bookings.busy = r.busy || [];
+    }
+    bookings.error = '';
+  } catch (e) {
+    bookings.error = e.message;
+  }
+  if (session && JSON.stringify([bookings.all, bookings.mine, bookings.busy, bookings.error]) !== before) refreshView();
+}
+
+// séances en cours, par joueur (un créneau accepté qui suit immédiatement est inclus : 2 h)
+function coachingNow() {
+  const groups = {};
+  for (const b of bookings.all) {
+    if (b.status !== 'en_cours' || !b.startedAt) continue;
+    const g = groups[b.playerId] || (groups[b.playerId] = { playerId: b.playerId, id: b.id, startedAt: new Date(b.startedAt).getTime(), minutes: 0 });
+    g.minutes += b.duration || 60;
+  }
+  return Object.values(groups).map(g => Object.assign(g, { endsAt: g.startedAt + g.minutes * 60000 }));
+}
+
+// timer du coach : prévenir 5 minutes avant la fin, puis terminer la séance à l'heure
+async function watchCoaching() {
+  if (!isCoachMachine()) return;
+  for (const g of coachingNow()) {
+    const left = g.endsAt - Date.now();
+    const key = g.playerId + ':' + g.startedAt;
+    if (left <= 5 * 60000 && left > 0 && !warnedEnds.has(key)) {
+      warnedEnds.add(key);
+      notifyCoach('Coaching : plus que 5 minutes', 'Séance avec ' + playerName(g.playerId) + ', fin à ' + new Date(g.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '.');
+    }
+    if (left <= 0) {
+      try { await cloud.coachBook(getPushToken(), 'terminer', g.id); } catch (e) { /* nouvel essai au prochain passage */ }
+      notifyCoach('Coaching terminé', 'Fin de la séance avec ' + playerName(g.playerId) + '.');
+      await refreshBookings();
+    }
+  }
+}
+
+function bookingsView() {
+  if (!session || !cloud) return null;
+  const linked = isCoachMachine() ? !!store.data.settings.lastPush && !store.data.settings.pushError : session.source === 'cloud';
+  if (session.role === 'coach') {
+    if (session.source !== 'local') return null;
+    return { linked, all: bookings.all, coaching: coachingNow(), error: bookings.error };
+  }
+  if (session.source === 'local') {
+    const id = session.playerId;
+    return {
+      linked, mine: bookings.all.filter(b => b.playerId === id).map(({ playerId, ...b }) => b), // eslint-disable-line no-unused-vars
+      busy: bookings.all.filter(b => b.playerId !== id && ACTIVE.includes(b.status)).map(slotOf), error: bookings.error
+    };
+  }
+  return { linked, mine: bookings.mine, busy: bookings.busy, error: bookings.error };
+}
+
+async function bookingAction({ action, id, start }) {
+  if (!session) throw new Error('Session fermée.');
+  if (!cloud) throw new Error('Serveur non configuré.');
+  const playerActions = ['demander', 'annuler', 'accepter_proposition', 'refuser_proposition'];
+  const coachActions = ['accepter', 'proposer', 'annuler', 'demarrer', 'terminer'];
+  if (session.role === 'joueur') {
+    if (!playerActions.includes(action)) throw new Error('Action réservée au coach.');
+    if (session.source === 'cloud') await cloud.book(session.token, action, id, start);
+    else await cloud.coachBook(getPushToken(), action === 'annuler' ? 'annuler_joueur' : action, id, start, session.playerId);
+  } else {
+    if (!canEdit()) throw new Error('Action réservée au coach, sur son ordinateur.');
+    if (!coachActions.includes(action)) throw new Error('Action inconnue.');
+    await cloud.coachBook(getPushToken(), action, id, start);
+    if (action === 'demarrer') warnedEnds.clear();
+  }
+  await refreshBookings();
+  return { ok: true, data: viewData() };
 }
 
 // ---------------------------------------------------------------- synchro Riot (silencieuse, ordinateur du coach)
@@ -537,6 +660,9 @@ function registerIpc() {
     return { ok: true, message: 'Sauvegarde restaurée.', data: changed(1000) };
   });
 
+  handle('booking:action', arg => bookingAction(arg || {}));
+  handle('booking:refresh', async () => { await refreshBookings(); return { ok: true, data: viewData() }; });
+
   handle('open:external', url => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { ok: true }; });
 }
 
@@ -624,16 +750,26 @@ app.whenReady().then(async () => {
   refreshDDragon();
   scheduleAutoSync();
   win.webContents.once('did-finish-load', () => {
-    if (process.env.COACHING_LOL_TEST) return require(process.env.COACHING_LOL_TEST)({ app, win, store, fs, path });
+    if (process.env.COACHING_LOL_TEST) {
+      if (FAST) {
+        schedulePush(1000);
+        setInterval(refreshBookings, 1500);
+        setInterval(watchCoaching, 1000);
+      }
+      return require(process.env.COACHING_LOL_TEST)({ app, win, store, fs, path });
+    }
     if (getSecret('apiKey') && store.data.players.length) setTimeout(() => runSync(), 3000);
     setTimeout(pollRanks, 20000);
     setInterval(pollRanks, 5 * 60 * 1000);
-    schedulePush(15000); // garde aussi le serveur éveillé (le plan gratuit se met en pause après 7 jours sans activité)
+    schedulePush(FAST ? 1000 : 15000); // garde aussi le serveur éveillé (le plan gratuit se met en pause après 7 jours sans activité)
     setInterval(() => schedulePush(1000), 6 * 3600 * 1000);
     checkPreviousUpdate();
     setTimeout(checkUpdates, 5000);
     setInterval(checkUpdates, UPDATE_EVERY_MS);
     setInterval(maybeRestartForUpdate, 15 * 1000);
+    setTimeout(refreshBookings, FAST ? 500 : 4000);
+    setInterval(refreshBookings, FAST ? 2000 : 20 * 1000);
+    setInterval(watchCoaching, FAST ? 1000 : 5 * 1000);
   });
   if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

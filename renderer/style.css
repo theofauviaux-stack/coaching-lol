@@ -276,3 +276,33 @@ label { display: block; color: var(--muted); font-size: 12px; font-weight: 600; 
 .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; align-items: center; }
 .tooltip { position: fixed; z-index: 50; pointer-events: none; background: #0b0d0f; border: 1px solid var(--line-2); border-radius: 9px; padding: 9px 11px; font-size: 12.5px; white-space: pre-line; max-width: 260px; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); }
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line-2); padding: 10px 16px; border-radius: 10px; z-index: 60; display: flex; gap: 8px; align-items: center; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); animation: rise .25s var(--ease); }
+
+/* ------------------------------------------------------------------ réservations de coaching */
+.bk-alert { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; margin: 6px 0 6px 58px; border-radius: 10px; border: 1px solid rgba(220, 182, 122, .45); background: rgba(220, 182, 122, .08); color: var(--text); font-size: 13.5px; animation: rise .3s var(--ease); }
+.bk-alert > .i:first-child { color: var(--amber); }
+.bk-alert.ok-alert { border-color: rgba(195, 236, 127, .4); background: var(--accent-dim); }
+.bk-alert.ok-alert > .i:first-child { color: var(--accent); }
+.bk-alert.muted-alert { border-color: var(--line-2); background: var(--panel); color: var(--muted); }
+.bk-alert.muted-alert > .i:first-child { color: var(--muted); }
+.bk-alert .btn { padding: 6px 11px; font-size: 12.5px; }
+.bk-list .bk-alert { margin-left: 0; }
+.slots th, .slots td { text-align: center; padding: 5px 4px; }
+.slots th { text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--muted); }
+.slot { display: block; width: 100%; min-width: 84px; padding: 9px 4px; border-radius: 8px; font: 600 12px 'DM Sans', sans-serif; border: 1px solid var(--line); background: none; color: var(--faint); }
+.slot.free { cursor: pointer; color: var(--text); border-color: var(--line-2); background: var(--panel); transition: background .12s, border-color .12s, transform .1s; }
+.slot.free:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); transform: translateY(-1px); }
+.slot.busy { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255, 255, 255, .03) 6px 12px); }
+.slot.past { border-color: transparent; min-height: 34px; }
+.slot.full { color: var(--faint); }
+.slot.mine { cursor: pointer; border-color: rgba(220, 182, 122, .6); color: var(--amber); background: rgba(220, 182, 122, .08); }
+.slot.mine.acceptee, .slot.mine.en_cours { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
+.slot.mine.proposee { border-color: var(--blue); color: var(--blue); background: rgba(105, 195, 216, .08); }
+.live { display: flex; align-items: center; gap: 9px; padding: 6px 8px 6px 12px; border-radius: 999px; border: 1px solid rgba(195, 236, 127, .45); background: var(--accent-dim); color: var(--text); font-size: 13px; white-space: nowrap; }
+.live .clock { font: 800 15px Manrope, sans-serif; color: var(--accent); min-width: 54px; text-align: right; font-variant-numeric: tabular-nums; }
+.live .btn { padding: 5px 10px; font-size: 12px; }
+.live.warn { border-color: var(--amber); background: rgba(220, 182, 122, .14); animation: glow 1.4s ease-in-out infinite; }
+.live.warn .clock { color: var(--amber); }
+@keyframes glow { 50% { box-shadow: 0 0 0 5px rgba(220, 182, 122, .15); } }
+.pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 0 rgba(239, 141, 145, .6); animation: pulse 1.6s infinite; flex: none; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 8px rgba(239, 141, 145, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 141, 145, 0); } }
+.live-banner { display: inline-flex; align-items: center; gap: 10px; padding: 9px 16px; margin-bottom: 18px; border-radius: 999px; border: 1px solid rgba(239, 141, 145, .4); background: rgba(239, 141, 145, .08); font: 700 14px Manrope, sans-serif; }

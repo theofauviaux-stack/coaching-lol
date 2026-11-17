@@ -7,7 +7,14 @@ const ERREURS = {
   code_inconnu: 'Code inconnu.',
   trop_essais: 'Trop d\'essais. Réessaie dans 15 minutes.',
   session_expiree: 'Session expirée : entre à nouveau ton code.',
-  jeton_inconnu: 'Cet ordinateur n\'est pas encore enregistré sur le serveur.'
+  jeton_inconnu: 'Cet ordinateur n\'est pas encore enregistré sur le serveur.',
+  creneau_invalide: 'Ce créneau n\'est pas réservable (entre 17 h et minuit, à l\'heure pile, dans les 30 jours).',
+  creneau_pris: 'Ce créneau vient d\'être pris.',
+  max_jour: '2 h maximum par jour et par joueur.',
+  trop_de_reservations: 'Trop de réservations en attente : attends les réponses avant d\'en demander d\'autres.',
+  reservation_inconnue: 'Réservation introuvable.',
+  action_impossible: 'Action impossible pour cette réservation (elle a peut-être changé entre-temps).',
+  trop_tot: 'Le coaching peut démarrer au plus tôt 30 minutes avant le créneau, et jusqu\'à sa fin.'
 };
 
 // Adresse du projet et clé publique : publiques par conception (les tables sont fermées, seules
@@ -60,6 +67,11 @@ class CloudClient {
   getData(token) { return this.rpc('get_data', { p_token: token }); }
   logout(token) { return this.rpc('logout', { p_token: token }).catch(() => null); }
   push(snapshot, secretKey) { return this.rpc('admin_push', { p: snapshot }, secretKey); }
+  // réservations de coaching
+  book(token, action, id, start) { return this.rpc('book', { p_token: token, p_action: action, p_id: id || null, p_start: start || null }); }
+  bookingsMine(token) { return this.rpc('bookings_mine', { p_token: token }); }
+  coachBookings(key) { return this.rpc('coach_bookings', { p_key: key }); }
+  coachBook(key, action, id, start, player) { return this.rpc('coach_book', { p_key: key, p_action: action, p_id: id || null, p_start: start || null, p_player: player || null }); }
   // envoi avec le jeton propre à l'ordinateur du coach (clé publique + jeton enregistré dans la base)
   pushWithToken(snapshot, token) { return this.rpc('coach_push', { p_key: token, p: snapshot }); }
 }
