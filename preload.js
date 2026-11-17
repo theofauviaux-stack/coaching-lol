@@ -22,5 +22,6 @@ contextBridge.exposeInMainWorld('api', {
   exportBackup: () => call('backup:export'),
   importBackup: () => call('backup:import'),
   openExternal: url => call('open:external', url),
+  uiState: ui => ipcRenderer.send('ui:state', ui),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))
 });

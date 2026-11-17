@@ -15,6 +15,26 @@ const OBJ_GROUPS = [
 ];
 const OBJ_KEYS = OBJ_GROUPS.flatMap(g => g[1]);
 const PCT_KEYS = new Set(['Taux de victoire', 'KP', '% objectifs de partie atteints']);
+const DL = {
+  mac: 'https://github.com/theofauviaux-stack/coaching-lol/releases/latest/download/Coaching-LoL-Mac.dmg',
+  win: 'https://github.com/theofauviaux-stack/coaching-lol/releases/latest/download/Coaching-LoL-Windows.exe',
+  page: 'https://github.com/theofauviaux-stack/coaching-lol/releases/latest'
+};
+const linksText = () => `Mac : ${DL.mac}\nWindows : ${DL.win}`;
+const inviteText = p => `Salut ${gameName(p)} ! Voici ton espace de coaching LoL.
+
+1. Télécharge l'app :
+   Mac : ${DL.mac}
+   Windows : ${DL.win}
+2. Installe-la et ouvre-la.
+   Mac : glisse l'app dans Applications ; si macOS la bloque, va dans Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+   Windows : si « Windows a protégé votre ordinateur » s'affiche, clique sur « Informations complémentaires » puis « Exécuter quand même ».
+3. Entre ton code à 4 chiffres : ${p.code || '????'}
+
+Tu y retrouves tes stats, tes parties, tes objectifs et nos séances. L'app se met à jour toute seule.`;
+async function copyText(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg); } catch (e) { toast('Copie impossible : ' + e.message, 'err'); }
+}
 const PERIODS = [['10', '10 dernières'], ['20', '20 dernières'], ['all', 'Toutes'], ['coach', 'Depuis le coaching']];
 
 const state = {
@@ -154,6 +174,7 @@ function render() {
   renderTopbar();
   const focus = rememberFocus();
   $('#page').innerHTML = `<div class="wrap">${PAGES[state.page]()}</div>`;
+  window.api.uiState({ page: state.page, playerId: state.playerId, settingsTab: state.settingsTab, period: state.period });
   restoreFocus(focus);
   if (state.drawer) renderDrawer();
   hookImages();
@@ -639,10 +660,12 @@ function pageJoueurs() {
         <button class="btn" data-action="edit-player" data-id="${p.id}">${icon('edit', 15)} Modifier</button>
         <button class="btn danger" data-action="delete-player" data-id="${p.id}">${icon('trash', 15)} Supprimer</button>
         <span class="spacer"></span>
+        <button class="icon-btn" data-action="invite" data-id="${p.id}" title="Copier l'invitation (lien de l'app + code)">${icon('send', 16)}</button>
         <button class="icon-btn" data-action="player-settings" data-id="${p.id}" title="Paramètres du joueur">${icon('settings', 16)}</button>
       </div></div>`;
   }).join('');
   return `<h1>Joueurs</h1><div class="sub">Chaque joueur a son code à 4 chiffres pour ouvrir son espace dans l'app, sur son ordinateur.</div>
+    ${pinnedLinks()}
     <div class="players">${cards}<div class="pcard add" data-action="new-player">${icon('plus', 26)}<b>Ajouter un joueur</b></div></div>`;
 }
 
@@ -660,6 +683,16 @@ function profileFields(p) {
       <div class="field"><label>Rang visé</label><select name="rankTarget"><option value="">—</option>${RANGS.map(r => opt(r, p.rankTarget)).join('')}</select></div>
     </div>
     <div class="field"><label>Objectif du coaching</label><input name="goal" value="${esc(p.goal || '')}" placeholder="ex. Passer Grand Maître"></div>`;
+}
+
+// Liens de téléchargement épinglés (toujours la dernière version)
+function pinnedLinks() {
+  return `<div class="section" style="margin-bottom:22px"><h3>${icon('link', 17)} Télécharger l'app</h3>
+    <div class="muted small">Liens fixes : ils donnent toujours la dernière version. Le bouton ${icon('send', 13)} d'un joueur copie une invitation complète (liens + son code).</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" data-action="ext" data-url="${DL.mac}">${icon('download', 15)} Mac</button>
+      <button class="btn" data-action="ext" data-url="${DL.win}">${icon('download', 15)} Windows</button>
+      <button class="btn ghost" data-action="copy-links">${icon('copy', 15)} Copier les liens</button></div></div>`;
 }
 
 function playerForm(p) {
@@ -716,7 +749,8 @@ function settingsJoueur(p) {
         <div class="actions"><button type="submit" class="btn primary">Enregistrer le profil</button></div></form></div>
     <div class="section"><h3>${icon('key', 17)} Code d'accès</h3><div class="muted small">À donner au joueur : il ouvre uniquement son espace, en lecture seule, dans l'app installée chez lui.</div>
       <div class="row" style="margin-top:12px"><input id="pcode" inputmode="numeric" maxlength="4" value="${esc(p.code || '')}" style="width:150px;letter-spacing:.3em;font:800 18px Manrope">
-        <button class="btn" data-action="gen-pcode">${icon('dice', 15)} Générer</button><button class="btn primary" data-action="save-pcode">Enregistrer le code</button></div></div>
+        <button class="btn" data-action="gen-pcode">${icon('dice', 15)} Générer</button><button class="btn primary" data-action="save-pcode">Enregistrer le code</button>
+        <span class="spacer"></span><button class="btn" data-action="invite" data-id="${p.id}">${icon('send', 15)} Copier l'invitation</button></div></div>
     <div class="section"><h3>${icon('target', 17)} Objectifs</h3><div class="muted small">Pré-remplis avec les objectifs du rôle ${esc(p.role)}. Ceux que tu changes passent en vert : ils deviennent propres à ce joueur. Enregistré automatiquement.</div>
       ${groups}<div class="actions"><button class="btn ghost" data-action="reset-objectives">Revenir aux objectifs du rôle</button></div></div>
     <div class="section"><h3>${icon('dashboard', 17)} Cartes du tableau de bord</h3><div class="muted small">Les 8 indicateurs affichés en haut de son tableau de bord.</div>
@@ -761,6 +795,7 @@ function settingsGeneral() {
     <div class="section"><h3>${icon('sessions', 17)} Axes de travail par défaut</h3><textarea id="axes" rows="6" style="width:100%;margin-top:8px">${esc(s.axes.join('\n'))}</textarea>
       <div class="actions"><button class="btn primary" data-action="save-axes">Enregistrer</button></div></div>
     <div class="section"><h3>${icon('download', 17)} Sauvegarde</h3><div class="row" style="margin-top:8px"><button class="btn" data-action="export">${icon('download', 15)} Exporter</button><button class="btn" data-action="import">${icon('upload', 15)} Restaurer</button></div></div>
+    ${pinnedLinks()}
     <div class="section"><h3>${icon('info', 17)} À propos</h3><div class="muted small">Version ${esc(d.appVersion)}. ${upTxt}</div></div>`;
 }
 
@@ -872,6 +907,9 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'save-axes': apply(await window.api.saveSettings({ axes: $('#axes').value.split('\n').map(x => x.trim()).filter(Boolean) }), 'Axes par défaut enregistrés.'); break;
+    case 'invite': { const ip = D().players.find(x => x.id === id); if (ip) copyText(inviteText(ip), 'Invitation copiée : colle-la à ' + gameName(ip) + ' (Discord, SMS…).'); break; }
+    case 'copy-links': copyText(linksText(), 'Liens de téléchargement copiés.'); break;
+    case 'ext': window.api.openExternal(el.dataset.url); break;
     case 'export': { const r = await window.api.exportBackup(); if (r.ok) toast(r.message); break; }
     case 'import': if (confirm('Remplacer toutes les données par la sauvegarde ?')) apply(await window.api.importBackup()); break;
   }
@@ -962,6 +1000,9 @@ window.api.onData(d => {
 
 (async function init() {
   state.data = await window.api.getData();
+  // redémarrage après une mise à jour : on rouvre la même page
+  const ui = state.data && state.data.resumeUi;
+  if (ui) Object.assign(state, { page: ui.page || 'accueil', playerId: ui.playerId || null, settingsTab: ui.settingsTab || 'joueur', period: ui.period || '20' });
   render();
   // décompte quand l'écran de code est bloqué après trop d'essais
   setInterval(async () => { if (D() && D().locked && D().blockedMs) { state.data = await window.api.getData(); renderLogin(); } }, 1000);

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -388,7 +388,12 @@ function registerIpc() {
     try { return await fn(arg); } catch (err) { return { ok: false, message: err.message }; }
   });
 
-  handle('data:get', () => viewData());
+  handle('data:get', () => {
+    const v = viewData();
+    if (resumeUi && !v.locked) { v.resumeUi = resumeUi; resumeUi = null; }
+    return v;
+  });
+  ipcMain.on('ui:state', (e, ui) => { if (ui && typeof ui === 'object') lastUi = { page: String(ui.page || ''), playerId: ui.playerId || null, settingsTab: ui.settingsTab || 'joueur', period: ui.period || '20' }; });
   handle('auth:login', code => login(code));
   handle('auth:logout', () => logout());
   // Première ouverture sur l'ordinateur du coach : création du code coach
@@ -535,6 +540,64 @@ function registerIpc() {
   handle('open:external', url => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { ok: true }; });
 }
 
+// ---------------------------------------------------------------- redémarrage automatique pour les mises à jour
+// Quand une mise à jour est prête, l'app redémarre toute seule à un moment qui ne gêne pas :
+// tout de suite sur l'écran de code, sinon après 1 minute sans activité sur l'ordinateur ou 2 minutes
+// en arrière-plan, jamais pendant une récupération de parties. La session et la page en cours sont
+// reprises au redémarrage (fichier chiffré, valable 5 minutes, effacé dès sa lecture).
+let lastUi = null;      // page affichée, envoyée par l'interface
+let resumeUi = null;    // page à rouvrir après un redémarrage
+let blurredAt = null;
+let restarting = false;
+const resumeFile = () => path.join(app.getPath('userData'), 'reprise.json');
+
+function writeResume() {
+  if (!session) return;
+  const payload = JSON.stringify({ session, ui: lastUi, at: Date.now() });
+  const enc = safeStorage.isEncryptionAvailable();
+  fs.writeFileSync(resumeFile(), JSON.stringify({ enc, data: enc ? safeStorage.encryptString(payload).toString('base64') : payload }));
+}
+
+async function restoreSession() {
+  let r;
+  try {
+    const raw = JSON.parse(fs.readFileSync(resumeFile(), 'utf8'));
+    r = JSON.parse(raw.enc ? safeStorage.decryptString(Buffer.from(raw.data, 'base64')) : raw.data);
+  } catch (e) { r = null; }
+  try { fs.rmSync(resumeFile(), { force: true }); } catch (e) { /* rien */ }
+  if (!r || !r.session || Date.now() - r.at > 5 * 60 * 1000) return;
+  const s = r.session;
+  if (s.source === 'local') {
+    const ok = s.role === 'coach' ? isCoachMachine() : store.data.players.some(p => p.id === s.playerId);
+    if (ok) session = { role: s.role, playerId: s.playerId, source: 'local' };
+  } else if (s.source === 'cloud' && cloud && s.token) {
+    try {
+      remoteData = cloudMod.dataFromCloud(await cloud.getData(s.token), store.data);
+      session = { role: s.role, playerId: s.playerId, source: 'cloud', token: s.token };
+      startRemoteRefresh();
+    } catch (e) { /* session expirée : écran de code */ }
+  }
+  if (session) resumeUi = r.ui || null;
+}
+
+const updateReady = () => (process.platform === 'darwin' ? macUpdate.state === 'ready' : updateInfo.state === 'ready');
+function restartForUpdate() {
+  if (restarting) return;
+  restarting = true;
+  try { writeResume(); } catch (e) { /* tant pis : le code sera redemandé */ }
+  if (process.platform === 'darwin') {
+    if (installMacUpdate(true)) app.quit(); else restarting = false;
+  } else {
+    try { require('electron-updater').autoUpdater.quitAndInstall(true, true); } catch (e) { restarting = false; }
+  }
+}
+function maybeRestartForUpdate() {
+  if (!app.isPackaged || restarting || syncing || polling || !updateReady()) return;
+  const idle = powerMonitor.getSystemIdleTime();
+  const away = blurredAt && Date.now() - blurredAt > 2 * 60 * 1000;
+  if (!session || idle >= 60 || away) restartForUpdate();
+}
+
 // ---------------------------------------------------------------- fenêtre
 function createWindow() {
   win = new BrowserWindow({
@@ -545,11 +608,14 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.on('blur', () => { blurredAt = Date.now(); });
+  win.on('focus', () => { blurredAt = null; });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   store = new Store(process.env.COACHING_LOL_DATA || app.getPath('userData'));
+  await restoreSession();
   if (isCoachMachine()) ensurePlayerCodes();
   // LP des parties déjà connues, à partir des relevés de rang existants
   if (store.data.players.reduce((n, p) => n + lpMod.attributeLp(store.data, p.id), 0)) store.save();
@@ -567,7 +633,9 @@ app.whenReady().then(() => {
     checkPreviousUpdate();
     setTimeout(checkUpdates, 5000);
     setInterval(checkUpdates, UPDATE_EVERY_MS);
+    setInterval(maybeRestartForUpdate, 15 * 1000);
   });
+  if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 

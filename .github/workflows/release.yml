@@ -69,6 +69,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Liens de téléchargement fixes (toujours la dernière version)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p fixes && cd fixes
+          gh release download "v$VERSION" -p "Coaching-LoL-*-universal.dmg" -p "Coaching-LoL-Setup-*.exe" --clobber
+          for f in Coaching-LoL-*-universal.dmg; do [ -e "$f" ] && mv "$f" Coaching-LoL-Mac.dmg; done
+          for f in Coaching-LoL-Setup-*.exe; do [ -e "$f" ] && mv "$f" Coaching-LoL-Windows.exe; done
+          ls -la
+          gh release upload "v$VERSION" Coaching-LoL-Mac.dmg Coaching-LoL-Windows.exe --clobber
       - name: Publier la release quand Mac et Windows sont prêts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
