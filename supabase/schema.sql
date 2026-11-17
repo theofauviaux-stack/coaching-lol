@@ -408,6 +408,9 @@ grant execute on function public.logout(text) to anon, authenticated;
 revoke all on function public.coach_push(text, jsonb) from public;
 grant execute on function public.coach_push(text, jsonb) to anon, authenticated;
 -- réservations : seules les fonctions publiques sont ouvertes ; les fonctions internes (_…) restent fermées
+revoke all on function public._slot(public.bookings) from public, anon, authenticated;
+revoke all on function public._slot_ok(timestamptz) from public, anon, authenticated;
+revoke all on function public._booking_json(public.bookings, boolean) from public, anon, authenticated;
 revoke all on function public._slot_free(timestamptz, uuid) from public, anon, authenticated;
 revoke all on function public._day_hours(text, timestamptz, uuid) from public, anon, authenticated;
 revoke all on function public._bookings_tidy() from public, anon, authenticated;
