@@ -207,8 +207,13 @@ async function runSync(playerIds) {
   try {
     for (const p of players) {
       try {
-        const r = await syncPlayer(store.data, client, p, { maxGames: store.data.settings.maxGamesPerSync || 30 });
-        if (r.remaining) p.statusText += ' · ' + r.remaining + ' plus ancienne(s) à la prochaine synchro';
+        // lots de 30 parties, enregistrés au fur et à mesure, jusqu'à ce que tout l'historique soit vérifié
+        let r, guard = 0;
+        do {
+          r = await syncPlayer(store.data, client, p, { maxGames: store.data.settings.maxGamesPerSync || 30 });
+          store.save();
+          if (session && session.source === 'local') refreshView();
+        } while (r.remaining > 0 && ++guard < 20);
       } catch (e) {
         p.status = 'error';
         p.statusText = e.message;

@@ -426,7 +426,7 @@ function pageDashboard() {
       <div><h1>${esc(p.riotId)}</h1>
         <div class="row" style="margin-bottom:24px"><span class="chip">${esc(p.role)}</span>${rk ? `<span class="chip accent">${icon('trophy', 13)} ${esc(rk.label)}</span>` : ''}
           ${lpTotal === null ? '' : `<span class="chip ${lpTotal > 0 ? 'accent' : lpTotal < 0 ? 'red' : ''}" data-tip="Rang actuel comparé au rang relevé à l'ajout du profil (${esc(dateTimeFr(snaps[0].date))})">${icon(lpTotal >= 0 ? 'up' : 'down', 13)} ${Stats.fmt(lpTotal, 'diff')} LP depuis l'ajout du profil</span>`}
-          ${p.rankTarget ? `<span class="chip">${icon('target', 13)} ${esc(p.rankTarget)}</span>` : ''}<span class="muted small">${gs.length} partie${gs.length > 1 ? 's' : ''} prise${gs.length > 1 ? 's' : ''} en compte</span></div></div>
+          ${p.rankTarget ? `<span class="chip">${icon('target', 13)} ${esc(p.rankTarget)}</span>` : ''}<span class="muted small">${gs.length} partie${gs.length > 1 ? 's' : ''} prise${gs.length > 1 ? 's' : ''} en compte${/^Récupération/.test(p.statusText || '') ? ' · historique en cours de chargement' : ''}</span></div></div>
       <span class="spacer"></span>${periodSeg(p)}</div>
     <div class="kpis">${kpis}</div>
     <h2>Évolution partie par partie</h2>
@@ -633,7 +633,7 @@ function pageJoueurs() {
       ${p.goal ? `<div class="small muted">${icon('target', 13)} ${esc(p.goal)}</div>` : ''}
       <div class="row small"><span class="muted">Code d'accès</span><span class="code">${shown ? esc(p.code || '—') : '••••'}</span>
         <button class="icon-btn" data-action="toggle-code" data-id="${p.id}" title="${shown ? 'Masquer' : 'Afficher'}">${icon(shown ? 'eyeOff' : 'eye', 15)}</button></div>
-      ${p.status === 'error' ? `<div class="small red">${icon('alert', 13)} ${esc(p.statusText)}</div>` : ''}
+      ${p.status === 'error' ? `<div class="small red">${icon('alert', 13)} ${esc(p.statusText)}</div>` : /^Récupération/.test(p.statusText || '') ? `<div class="small muted"><span class="spinner" style="width:12px;height:12px"></span> ${esc(p.statusText)}</div>` : ''}
       <div class="row" style="margin-top:auto">
         <button class="btn primary" data-action="open-player" data-id="${p.id}">${icon('dashboard', 15)} Tableau de bord</button>
         <button class="btn" data-action="edit-player" data-id="${p.id}">${icon('edit', 15)} Modifier</button>

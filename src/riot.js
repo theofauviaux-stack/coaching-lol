@@ -68,9 +68,9 @@ class RiotClient {
     return this.get(`https://${account}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`);
   }
 
-  async matchIds(puuid, region, { queue = 420, count = 100, startTime } = {}) {
+  async matchIds(puuid, region, { queue = 420, count = 100, start = 0, startTime } = {}) {
     const { regional } = this.routes(region);
-    let url = `https://${regional}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${queue}&start=0&count=${count}`;
+    let url = `https://${regional}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${queue}&start=${start}&count=${count}`;
     if (startTime) url += `&startTime=${Math.floor(startTime / 1000)}`;
     return (await this.get(url)) || [];
   }

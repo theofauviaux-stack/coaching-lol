@@ -74,7 +74,14 @@ async function syncPlayer(data, client, player, opts = {}) {
 
   onProgress('Liste des parties SoloQ…');
   // On récupère aussi les parties d'avant le début du coaching : elles servent de point de comparaison.
-  const ids = await client.matchIds(player.puuid, player.region, { queue: 420, count: 100 });
+  // historique : jusqu'aux 300 dernières parties classées solo (3 pages de 100)
+  const historyMax = opts.historyMax || 300;
+  let ids = [];
+  for (let start = 0; start < historyMax; start += 100) {
+    const page = await client.matchIds(player.puuid, player.region, { queue: 420, count: 100, start });
+    ids = ids.concat(page);
+    if (page.length < 100) break;
+  }
   const known = new Set(data.games.filter(g => g.playerId === player.id).map(g => g.matchId)
     .concat(data.ignored.filter(g => g.playerId === player.id).map(g => g.matchId)));
   const num = id => Number(String(id).split('_')[1] || 0);
@@ -110,8 +117,9 @@ async function syncPlayer(data, client, player, opts = {}) {
   lp.attributeLp(data, player.id);
   player.lastSync = Date.now();
   player.status = 'ok';
-  player.statusText = added.length + ' nouvelle(s) partie(s)' + (ignored ? ' · ' + ignored + ' hors rôle' : '');
-  return { added: added.length, ignored, remaining: Math.max(0, todo.length - batch.length) };
+  const remaining = Math.max(0, todo.length - batch.length);
+  player.statusText = remaining ? 'Récupération de l\'historique : encore ' + remaining + ' partie(s) à vérifier' : 'À jour';
+  return { added: added.length, ignored, remaining };
 }
 
 module.exports = { syncPlayer, gameFromMatch, rankScore, rankLabel, POSTES, TIERS_FR };
