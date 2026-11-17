@@ -62,8 +62,9 @@ const path = require('path');
   // démarrage : trop tôt, puis à l'heure (on avance le créneau dans le temps pour le test)
   assert.strictEqual((await coach('demarrer', b19.id)).error, 'trop_tot');
   await db.query(`update bookings set start_at = date_trunc('hour', now()) - interval '1 day' where id = $1`, [b19.id]);
-  await db.query(`update bookings set start_at = now() - interval '10 minutes' where id = $1`, [b19.id]);
-  const suite = (await one(`insert into bookings (player_id, start_at, status) values ('p1', now() + interval '50 minutes', 'acceptee') returning id`)).id;
+  const t0 = (await one(`select date_trunc('minute', now()) - interval '10 minutes' as t`)).t; // une seule heure de référence
+  await db.query(`update bookings set start_at = $2::timestamptz where id = $1`, [b19.id, t0.toISOString()]);
+  const suite = (await one(`insert into bookings (player_id, start_at, status) values ('p1', $1::timestamptz + interval '1 hour', 'acceptee') returning id`, [t0.toISOString()])).id;
   const st = await coach('demarrer', b19.id);
   assert.strictEqual(st.status, 'en_cours');
   assert.strictEqual((await one(`select status from bookings where id = $1`, [suite])).status, 'en_cours', 'créneau suivant inclus : séance de 2 h');
