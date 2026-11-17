@@ -205,11 +205,11 @@ const Exercises = (() => {
       schema: { type: 'flow', caption: 'Le moment exact dépend de ta lane : vérifie-le une fois en partie perso.', nodes: [{ t: '1re vague : farm propre' }, { t: '2e vague : prends l\'XP en premier', k: 'info' }, { t: 'Niveau 2 : nouveau sort', k: 'ok' }, { t: 'Trade tout de suite', k: 'ok' }] }
     },
     {
-      id: 'jungler-315', theme: 'lane', title: 'Où est le jungler adverse à 3:15 ?', where: 'Parties classées + review', duration: 'Toute la semaine',
+      id: 'jungler-255', theme: 'lane', title: 'Où est le jungler adverse à 2:55 ?', where: 'Parties classées + review', duration: 'Toute la semaine',
       why: 'La plupart des morts en début de partie viennent d\'un jungler qu\'on n\'a pas suivi.',
       steps: [
         'Au début de la partie, regarde de quel côté le jungler adverse a commencé (buff vu, laisse, ward).',
-        'À 3:15, écris ou dis où il est probablement : côté top, côté bot, ou en train de reset.',
+        'À 2:55, le carapateur apparaît : écris ou dis où est le jungler adverse (côté top, côté bot, sur un carapateur ou en train de reset).',
         'Joue en conséquence : si il arrive de ton côté, pas de trade loin de ta tour.',
         'En review, vérifie si ta prédiction était juste.'
       ],
@@ -219,13 +219,13 @@ const Exercises = (() => {
       ],
       kpi: 'Morts avant 15 min',
       schema: {
-        type: 'map', caption: 'Exemple : il commence au buff bleu adverse (côté bot) et finit son premier clear côté top vers 3:15. S\'il commence côté top, inverse.',
+        type: 'map', caption: 'Exemple : il commence au buff bleu adverse (côté bot) et finit son premier clear côté top vers 2:55, quand le carapateur apparaît. S\'il commence côté top, inverse.',
         paths: [{ pts: ['rBleu', 'rGromp', 'rLoups', 'rRaptors', 'rRouge', 'rKrugs'], k: 'stop', dash: true }],
         zones: [{ at: [21, 37], r: 12, k: 'stop' }],
         markers: [
           { at: 'rBleu', t: 'Départ vu ici (buff bleu adverse)', k: 'stop' },
-          { at: 'rKrugs', t: 'Vers 3:15 : fin de son clear côté top', k: 'stop' },
-          { at: [21, 37], t: 'Zone dangereuse : top, mid et crabe du haut', k: 'stop' }
+          { at: 'rKrugs', t: 'Vers 2:55 : fin de son clear côté top', k: 'stop' },
+          { at: [21, 37], t: 'Zone dangereuse : carapateur du haut, top et mid', k: 'stop' }
         ]
       }
     },

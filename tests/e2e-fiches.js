@@ -55,7 +55,7 @@ function launch(phase, dataDir, url) {
   assert.ok(rc.banque >= 15, 'banque filtrée sur le rôle Jungle');
   assert.ok(rc.choixRole.includes('jungle-clear') && !rc.choixRole.includes('cs10-perso'), 'exercices adaptés au rôle');
   const ex = JSON.parse(rc.seance);
-  assert.deepStrictEqual(ex.map(e => e.id), ['jungle-clear', 'dodging', 'jungler-315']);
+  assert.deepStrictEqual(ex.map(e => e.id), ['jungle-clear', 'dodging', 'jungler-255']);
   assert.strictEqual(ex[0].target, '3:20');
   assert.strictEqual(ex[1].note, '5 essais avant chaque session de classées');
   assert.strictEqual(rj.rappel, true, 'rappel « fiche à remplir » sur l\'accueil du joueur');

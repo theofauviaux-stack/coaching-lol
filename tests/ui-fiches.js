@@ -20,7 +20,7 @@ module.exports = async function ({ app, win, fs, path }) {
       await js(`state.page = 'seances'; state.playerId = state.data.players[0].id; state.seancesTab = 'banque'; render(); 0`);
       await wait(400);
       out.banque = await js(`document.querySelectorAll('.excard').length`);
-      await js(`document.querySelector('.excard [data-action="ex-toggle"][data-id="jungler-315"]').click()`);
+      await js(`document.querySelector('.excard [data-action="ex-toggle"][data-id="jungler-255"]').click()`);
       await wait(300);
       await shot('f1-banque');
       // nouvelle séance avec 3 exercices
@@ -32,7 +32,7 @@ module.exports = async function ({ app, win, fs, path }) {
       await js(`(() => {
         const f = document.getElementById('session-form');
         f.querySelector('[name="axis"]').selectedIndex = 1;
-        for (const id of ['jungle-clear', 'dodging', 'jungler-315']) f.querySelector('[name="ex|' + id + '"]').checked = true;
+        for (const id of ['jungle-clear', 'dodging', 'jungler-255']) f.querySelector('[name="ex|' + id + '"]').checked = true;
         f.querySelector('[name="ext|jungle-clear"]').value = '3:20';
         f.querySelector('[name="exn|dodging"]').value = '5 essais avant chaque session de classées';
         f.querySelector('[name="points"]').value = 'Tracking du jungler adverse et premier clear';
@@ -76,11 +76,11 @@ module.exports = async function ({ app, win, fs, path }) {
         f.querySelector('[name="f|jungle-clear|temps"]').value = '3:12';
         f.querySelector('[name="f|jungle-clear|pv"]').value = '62';
         f.querySelector('[name="f|dodging|score"]').value = '48';
-        f.querySelector('[name="f|jungler-315|parties"]').value = '8';
-        f.querySelector('[name="f|jungler-315|justes"]').value = '5';
+        f.querySelector('[name="f|jungler-255|parties"]').value = '8';
+        f.querySelector('[name="f|jungler-255|justes"]').value = '5';
         f.querySelector('[name="g|ressenti"][value="4"]').checked = true;
         f.querySelector('[name="g|difficile"]').value = 'Suivre le jungler quand il passe par la rivière';
-        f.querySelector('[name="g|retiens"]').value = 'À 3:15 je regarde de quel côté il a fini';
+        f.querySelector('[name="g|retiens"]').value = 'À 2:55 je regarde de quel côté il a fini';
         return 0; })()`);
       await shot('f5b-fiche-joueur');
       await js(`document.querySelector('#report-form [type=submit]').click()`);
