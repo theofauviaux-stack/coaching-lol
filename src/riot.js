@@ -18,8 +18,11 @@ class RiotClient {
     this.fetch = opts.fetch || globalThis.fetch;
     this.delayMs = opts.delayMs !== undefined ? opts.delayMs : 1300;
     this.sleep = opts.sleep || (ms => new Promise(r => setTimeout(r, ms)));
+    this.base = opts.base || null; // tests : faux serveur Riot local
     this.last = 0;
   }
+
+  url(host, p) { return (this.base || `https://${host}.api.riotgames.com`) + p; }
 
   async get(url) {
     if (!this.apiKey) throw new RiotError('Clé API Riot absente : va dans Paramètres pour la renseigner.', 'NO_KEY');
@@ -65,34 +68,40 @@ class RiotClient {
 
   async account(gameName, tagLine, region) {
     const { account } = this.routes(region);
-    return this.get(`https://${account}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`);
+    return this.get(this.url(account, `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`));
   }
 
   async matchIds(puuid, region, { queue = 420, count = 100, start = 0, startTime } = {}) {
     const { regional } = this.routes(region);
-    let url = `https://${regional}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${queue}&start=${start}&count=${count}`;
+    let url = this.url(regional, `/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${queue}&start=${start}&count=${count}`);
     if (startTime) url += `&startTime=${Math.floor(startTime / 1000)}`;
     return (await this.get(url)) || [];
   }
 
   async match(id, region) {
     const { regional } = this.routes(region);
-    return this.get(`https://${regional}.api.riotgames.com/lol/match/v5/matches/${id}`);
+    return this.get(this.url(regional, `/lol/match/v5/matches/${id}`));
   }
 
   async timeline(id, region) {
     const { regional } = this.routes(region);
-    return this.get(`https://${regional}.api.riotgames.com/lol/match/v5/matches/${id}/timeline`);
+    return this.get(this.url(regional, `/lol/match/v5/matches/${id}/timeline`));
   }
 
   async leagues(puuid, region) {
     const { platform } = this.routes(region);
-    return (await this.get(`https://${platform}.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`)) || [];
+    return (await this.get(this.url(platform, `/lol/league/v4/entries/by-puuid/${puuid}`))) || [];
+  }
+
+  // Partie en cours (null si le joueur n'est pas en partie)
+  async activeGame(puuid, region) {
+    const { platform } = this.routes(region);
+    return this.get(this.url(platform, `/lol/spectator/v5/active-games/by-summoner/${puuid}`));
   }
 
   async status(region) {
     const { platform } = this.routes(region || 'euw');
-    return this.get(`https://${platform}.api.riotgames.com/lol/status/v4/platform-data`);
+    return this.get(this.url(platform, '/lol/status/v4/platform-data'));
   }
 }
 

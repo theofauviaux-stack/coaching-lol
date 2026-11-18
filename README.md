@@ -30,6 +30,13 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - Le joueur retrouve la séance chez lui (rappel « Fiche à remplir » sur son accueil), fait les exercices puis remplit sa fiche : scores, ressenti, ce qu'il retient. Le coach la voit dans la séance et reçoit une notification.
 - Les fiches passent par la base en ligne (table `reports`) : un joueur ne peut écrire que dans ses propres fiches.
 
+## En direct (parties classées en cours)
+
+- Page « En direct » (coach, sur son ordinateur) : chaque minute, l'app demande à l'API Riot (spectator-v5) si un joueur suivi est en partie. Seules les classées Solo/Duo (file 420) sont affichées, avec les deux équipes : champions, pseudos, rang Solo/Duo (gardé 30 min), sorts, runes, bans et chrono.
+- Pastille « En partie » sur l'accueil, compteur dans le menu, notification quand une partie commence. Quand elle se termine, le rang est relevé 2 min plus tard (LP de la partie au plus juste).
+- « Regarder » lance League of Legends en mode spectateur avec la clé d'observation donnée par Riot (`spectator.<plateforme>.lol.pvp.net:8080`), 3 min de retard comme toujours en classée. Le jeu doit être installé et à jour : il est cherché dans Applications (Mac) ou C:\Riot Games (Windows), sinon à l'emplacement indiqué dans Paramètres › Général › Mode spectateur.
+- Les joueurs ne voient pas cette page : la clé API Riot reste sur l'ordinateur du coach.
+
 ## Installer
 
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :

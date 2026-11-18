@@ -1,0 +1,137 @@
+// Test de bout en bout des parties en direct : faux serveur Riot (spectator-v5 + league-v4) + app du coach.
+// Usage : node tests/e2e-live.js
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const { spawn } = require('child_process');
+const { emptyData } = require('../src/store');
+
+const DIR = '/tmp/e2e-live';
+const NOW = Date.now();
+
+// ---------------------------------------------------------------- faux serveur Riot
+const part = (puuid, teamId, championId, riotId, spells = [4, 11], perks = [8112, 8139]) => ({
+  puuid, teamId, championId, riotId, spell1Id: spells[0], spell2Id: spells[1], bot: false, profileIconId: 1,
+  perks: { perkIds: perks, perkStyle: 8100, perkSubStyle: perks[0] === 8010 ? 8400 : 8300 }
+});
+const GAMES = {
+  partie1: { gameId: 7300000001, platformId: 'EUW1', gameQueueConfigId: 420, gameMode: 'CLASSIC', gameType: 'MATCHED', mapId: 11, gameStartTime: NOW - 14 * 60000 - 23000, gameLength: 860,
+    observers: { encryptionKey: 'k8Jd2+PqZ0aB/cDeF1gHiJ2kLmN3oPq4' },
+    bannedChampions: [{ championId: 157, teamId: 100, pickTurn: 1 }, { championId: 238, teamId: 100, pickTurn: 2 }, { championId: 555, teamId: 100, pickTurn: 3 }, { championId: 11, teamId: 100, pickTurn: 4 }, { championId: 84, teamId: 100, pickTurn: 5 },
+      { championId: 145, teamId: 200, pickTurn: 6 }, { championId: 117, teamId: 200, pickTurn: 7 }, { championId: 350, teamId: 200, pickTurn: 8 }, { championId: -1, teamId: 200, pickTurn: 9 }, { championId: 875, teamId: 200, pickTurn: 10 }],
+    participants: [
+      part('A-TOP', 100, 122, 'Mordekaiser Main#EUW', [12, 4], [8010, 9111]), part('P-KIOGA', 100, 64, 'UCE Kioga#EUWWW', [11, 4], [8010, 9111]), part('A-MID', 100, 103, 'Foxfire#EUW', [4, 14], [8112, 8139]),
+      part('A-ADC', 100, 222, 'Get Excited#JINX', [4, 7], [8008, 9101]), part('P-HAVEHOPE', 100, 412, 'HaveHope#305', [4, 14], [8439, 8446]),
+      part('E-TOP', 200, 86, 'Demacia#FR1', [12, 4], [8010, 9111]), part('E-JGL', 200, 121, 'Void Bug#EUW', [11, 4], [8112, 8139]), part(null, 200, 7, '', [4, 12], [8112, 8139]),
+      part('E-ADC', 200, 51, 'Piltover Sniper#EUW', [4, 7], [8008, 9101]), part('E-SUP', 200, 53, 'Steam Golem#EUW', [4, 14], [8439, 8446])
+    ] },
+  partie2: { gameId: 7300000002, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: 0, gameLength: 40,
+    observers: { encryptionKey: 'Zx9+YwVu8/TsRq7PoNm6LkJi5HgFe4Dc' },
+    bannedChampions: [],
+    participants: [
+      part('B-1', 100, 266, 'Darkin Blade#EUW'), part('B-2', 100, 254, 'Enforcer#EUW'), part('B-3', 100, 99, 'Lady Light#EUW'), part('B-4', 100, 145, 'Void Hunter#EUW'), part('B-5', 100, 89, 'Leona#SUN'),
+      part('C-1', 200, 24, 'Weapon Master#EUW'), part('C-2', 200, 59, 'Exemplar#EUW'), part('P-KASKET', 200, 4, 'UCE KasKet#BOMBA'), part('C-4', 200, 236, 'Purifier#EUW'), part('C-5', 200, 432, 'Wanderer#EUW')
+    ] },
+  aram: { gameId: 7300000003, platformId: 'EUW1', gameQueueConfigId: 450, gameStartTime: NOW - 5 * 60000, gameLength: 300, observers: { encryptionKey: 'aramKEYaramKEYaramKEY' }, bannedChampions: [],
+    participants: [part('P-QUEST', 100, 22, 'UCE Questinou#000')] },
+  partie3: { gameId: 7300000004, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: NOW, gameLength: 0, observers: { encryptionKey: 'NeWkEyNeWkEyNeWkEyNeWk' }, bannedChampions: [],
+    participants: [part('P-UAWAWA', 100, 17, 'UCE Uawawa#000'), part('D-2', 200, 1, 'Annie Bot#EUW')] }
+};
+const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram' };
+const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
+const calls = { spectator: {}, league: {} };
+function rankFor(puuid) {
+  if (puuid === 'E-JGL') return []; // non classé
+  if (puuid === 'P-KIOGA') return [{ queueType: 'RANKED_SOLO_5x5', tier: 'EMERALD', rank: 'II', leaguePoints: 47, wins: 61, losses: 52 }];
+  const h = [...puuid].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const tier = TIERS[3 + (h % 4)];
+  return [{ queueType: 'RANKED_SOLO_5x5', tier, rank: ['I', 'II', 'III', 'IV'][h % 4], leaguePoints: h % 100, wins: 40 + (h % 30), losses: 38 + (h % 25) },
+    { queueType: 'RANKED_FLEX_SR', tier: 'IRON', rank: 'IV', leaguePoints: 0, wins: 1, losses: 9 }];
+}
+function startRiot() {
+  const srv = http.createServer((req, res) => {
+    const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
+    let m;
+    if (req.url === '/__fin') { delete where['P-KIOGA']; delete where['P-HAVEHOPE']; return send(200, {}); }
+    if (req.url === '/__nouvelle') { where['P-UAWAWA'] = 'partie3'; return send(200, {}); }
+    if (req.url === '/__plus-rien') { for (const k of Object.keys(where)) delete where[k]; return send(200, {}); }
+    if ((m = req.url.match(/\/lol\/spectator\/v5\/active-games\/by-summoner\/([^/?]+)/))) {
+      calls.spectator[m[1]] = (calls.spectator[m[1]] || 0) + 1;
+      return where[m[1]] ? send(200, GAMES[where[m[1]]]) : send(404, { status: { message: 'Data not found', status_code: 404 } });
+    }
+    if ((m = req.url.match(/\/lol\/league\/v4\/entries\/by-puuid\/([^/?]+)/))) {
+      calls.league[m[1]] = (calls.league[m[1]] || 0) + 1;
+      return send(200, rankFor(m[1]));
+    }
+    return send(404, {});
+  });
+  return new Promise(r => srv.listen(0, '127.0.0.1', () => r({ url: 'http://127.0.0.1:' + srv.address().port, close: () => srv.close() })));
+}
+
+(async () => {
+  fs.rmSync(DIR, { recursive: true, force: true });
+  fs.mkdirSync(path.join(DIR, 'coach'), { recursive: true });
+  // fausse installation de League of Legends (organisation Mac)
+  const app = path.join(DIR, 'Jeux', 'League of Legends.app');
+  fs.mkdirSync(path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS'), { recursive: true });
+  fs.mkdirSync(path.join(app, 'Contents/LoL/Config'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(app, 'Contents/LoL/Config/LeagueClientSettings.yaml'), 'install:\n    globals:\n        locale: "fr_FR"\n        region: "EUW"\n');
+
+  const d = emptyData();
+  const roles = { 'UCE Uawawa#000': 'Top', 'UCE Kioga#EUWWW': 'Jungle', 'UCE KasKet#BOMBA': 'Mid', 'UCE Questinou#000': 'ADC', 'HaveHope#305': 'Support' };
+  const puuids = { 'UCE Uawawa#000': 'P-UAWAWA', 'UCE Kioga#EUWWW': 'P-KIOGA', 'UCE KasKet#BOMBA': 'P-KASKET', 'UCE Questinou#000': 'P-QUEST', 'HaveHope#305': 'P-HAVEHOPE' };
+  let n = 0;
+  for (const [riotId, role] of Object.entries(roles)) d.players.push({ id: 'p' + (++n), riotId, region: 'euw', role, puuid: puuids[riotId], code: String(5100 + n), objectives: {}, createdAt: NOW });
+  Object.assign(d.settings, JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'ddragon.json'), 'utf8')));
+  d.settings.coachCode = '4821';
+  d.settings.apiKey = 'RGAPI-test-en-direct';
+  d.settings.lolPath = path.join(DIR, 'Jeux');
+  fs.writeFileSync(path.join(DIR, 'coach', 'coaching-data.json'), JSON.stringify(d));
+
+  const riot = await startRiot();
+  await new Promise(resolve => {
+    const p = spawn('xvfb-run', ['-a', '-s', '-screen 0 1440x900x24', path.join(__dirname, '..', 'node_modules/.bin/electron'), path.join(__dirname, '..'), '--no-sandbox'], {
+      env: Object.assign({}, process.env, { SYNC_DIR: DIR, COACHING_LOL_DATA: path.join(DIR, 'coach'), COACHING_LOL_FAST: '1', COACHING_LOL_TEST: path.join(__dirname, 'ui-live.js'),
+        COACHING_LOL_RIOT: riot.url, COACHING_LOL_CLOUD: JSON.stringify({ url: riot.url, publicKey: 'cle-publique-test' }) }),
+      stdio: 'ignore'
+    });
+    p.on('exit', resolve);
+  });
+  riot.close();
+  const r = JSON.parse(fs.readFileSync(path.join(DIR, 'resultat.json'), 'utf8'));
+  assert.ok(!r.exception, r.exception);
+  assert.strictEqual(r.parties, 2, 'deux parties classées : l\'ARAM de Questinou est ignorée');
+  assert.deepStrictEqual(r.pastilles.sort(), ['HaveHope#305', 'UCE KasKet#BOMBA', 'UCE Kioga#EUWWW'], 'pastille « En partie » sur l\'accueil');
+  assert.strictEqual(r.badge, '2');
+  assert.strictEqual(r.cartes.length, 2);
+  assert.ok(/UCE Kioga et HaveHope/.test(r.cartes[0].titre), r.cartes[0].titre);
+  assert.strictEqual(r.cartes[0].lignes, 10);
+  assert.strictEqual(r.cartes[0].nous, 2, 'Kioga et HaveHope surlignés');
+  assert.ok(r.cartes[0].texte.includes('Émeraude II 47 LP'), 'rang Solo/Duo de Kioga');
+  assert.ok(r.cartes[0].texte.includes('Non classé'));
+  assert.ok(r.cartes[0].texte.includes('Joueur masqué'));
+  assert.ok(r.cartes[0].texte.includes('Lee Sin') && r.cartes[0].texte.includes("Kha'Zix"), 'noms français des champions');
+  assert.strictEqual(r.cartes[0].bans, 9, 'bans affichés (le « pas de ban » est ignoré)');
+  assert.ok(/^1[45]:\d\d$/.test(r.cartes[0].chrono), 'chrono de la partie : ' + r.cartes[0].chrono);
+  assert.ok(/écran de chargement/.test(r.cartes[1].texte), 'partie encore au chargement');
+  assert.ok(/Adversaires/.test(r.cartes[1].texte));
+  // Regarder
+  assert.deepStrictEqual(r.spectateur.args, ['spectator spectator.euw1.lol.pvp.net:8080 k8Jd2+PqZ0aB/cDeF1gHiJ2kLmN3oPq4 7300000001 EUW1', '-UseRads', '-Locale=fr_FR']);
+  assert.ok(r.spectateur.exe.endsWith('League of Legends.app/Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends'));
+  assert.ok(r.spectateur.cwd.endsWith('League of Legends.app/Contents/LoL/Game'));
+  assert.ok(/mode spectateur/.test(r.toastRegarder), r.toastRegarder);
+  assert.ok(/introuvable/.test(r.toastIntrouvable), r.toastIntrouvable);
+  assert.ok(/League of Legends trouvé/.test(r.reglage), r.reglage);
+  // fin de partie, nouvelle partie, plus rien
+  assert.strictEqual(r.apresFin, 1);
+  assert.ok(/Partie classée en cours/.test(r.notification) && /UCE Uawawa/.test(r.notification), r.notification);
+  assert.ok(/Aucun de tes joueurs/.test(r.vide), r.vide);
+  // rangs gardés en mémoire : une seule demande par joueur malgré les vérifications toutes les 2 s
+  assert.ok(Object.keys(calls.league).filter(k => !k.startsWith('P-')).every(k => calls.league[k] === 1), JSON.stringify(calls.league));
+  assert.ok(calls.spectator['P-UAWAWA'] >= 3, 'vérification régulière');
+  console.log(JSON.stringify(r, null, 1));
+  console.log('✅ Parties en direct de bout en bout : OK');
+  process.exit(0);
+})().catch(e => { console.error(e); process.exit(1); });

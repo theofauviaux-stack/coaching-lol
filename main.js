@@ -10,6 +10,8 @@ const cloudMod = require('./src/cloud');
 const access = require('./src/access');
 const playersMod = require('./src/players');
 const lpMod = require('./src/lp');
+const liveMod = require('./src/live');
+const { spawn } = require('child_process');
 
 const REPO = 'theofauviaux-stack/coaching-lol';
 let win = null;
@@ -97,8 +99,10 @@ function viewData() {
         linked: !!store.data.settings.lastPush && !store.data.settings.pushError,
         keyHash: pushKeyHash()
       },
-      update: updateInfo
+      update: updateInfo,
+      lol: lolInstallView()
     };
+    d.live = { enabled: !!k, games: live.games, checkedAt: live.checkedAt, error: live.error, checking: live.checking };
   }
   return Object.assign(base, d, { locked: false });
 }
@@ -128,6 +132,7 @@ async function login(code) {
   if (local) {
     limiter.ok();
     session = Object.assign(local, { source: 'local' });
+    if (canEdit()) setTimeout(pollLive, 1500);
     return { ok: true, data: viewData() };
   }
   // Ordinateur du coach : tous les codes sont connus ici, inutile d'interroger le serveur
@@ -158,6 +163,7 @@ function logout() {
   bookings.mine = []; bookings.busy = [];
   reports.mine = [];
   if (remoteTimer) clearInterval(remoteTimer);
+  Object.assign(live, { games: [], checkedAt: null, error: '', first: true });
   return viewData();
 }
 
@@ -390,7 +396,7 @@ async function runSync(playerIds) {
   const key = getSecret('apiKey');
   if (syncing || polling || !key) return;
   syncing = true;
-  const client = new RiotClient(key);
+  const client = new RiotClient(key, { base: RIOT_BASE });
   const players = store.data.players.filter(p => !playerIds || playerIds.includes(p.id));
   try {
     for (const p of players) {
@@ -427,7 +433,7 @@ async function pollRanks() {
   const key = getSecret('apiKey');
   if (!key || syncing || polling || !store.data.players.length) return;
   polling = true;
-  const client = new RiotClient(key, { delayMs: 300 });
+  const client = new RiotClient(key, { delayMs: 300, base: RIOT_BASE });
   const newGames = [];
   let changedAny = false;
   try {
@@ -453,6 +459,108 @@ async function pollRanks() {
   }
 }
 
+// ---------------------------------------------------------------- parties en direct (ordinateur du coach)
+// Toutes les minutes : partie en cours de chaque joueur suivi (classée Solo/Duo uniquement), avec les
+// 10 participants et leur rang (rangs gardés 30 min). Notification quand une partie commence ; quand elle
+// se termine, relevé de rang 2 minutes plus tard (LP de la partie au plus juste).
+const live = { games: [], checkedAt: null, error: '', checking: false, first: true };
+const rankCache = new Map();
+const RIOT_BASE = process.env.COACHING_LOL_TEST ? process.env.COACHING_LOL_RIOT : undefined;
+const champName = id => { const c = id && store.data.settings.champs && store.data.settings.champs[id.toLowerCase()]; return c ? c[1] : id || '?'; };
+
+async function pollLive() {
+  const key = getSecret('apiKey');
+  if (!canEdit() || !key || live.checking) return;
+  live.checking = true;
+  const client = new RiotClient(key, { delayMs: 250, base: RIOT_BASE });
+  const found = new Map();
+  let error = '';
+  try {
+    const seen = new Set();
+    for (const p of store.data.players) {
+      if (!p.puuid || seen.has(p.puuid)) continue;
+      seen.add(p.puuid);
+      // déjà vu dans une partie trouvée (deux joueurs suivis dans la même partie) : inutile de redemander
+      if ([...found.values()].some(f => (f.raw.participants || []).some(x => x.puuid === p.puuid))) continue;
+      try {
+        const raw = await client.activeGame(p.puuid, p.region);
+        if (raw && raw.gameQueueConfigId === liveMod.QUEUE_SOLO && !found.has(raw.gameId)) found.set(raw.gameId, { raw, region: p.region });
+      } catch (e) {
+        error = e.message;
+        if (e.code === 'KEY' || e.code === 'NO_KEY') break;
+      }
+    }
+    const games = [];
+    for (const [, f] of found) {
+      const ranks = {};
+      for (const x of f.raw.participants || []) {
+        if (!x.puuid) continue;
+        const c = rankCache.get(x.puuid);
+        if (c && Date.now() - c.at < 30 * 60 * 1000) { ranks[x.puuid] = c.rank; continue; }
+        try {
+          const rk = liveMod.soloRank(await client.leagues(x.puuid, f.region));
+          rankCache.set(x.puuid, { at: Date.now(), rank: rk });
+          ranks[x.puuid] = rk;
+        } catch (e) { if (e.code === 'KEY') break; }
+      }
+      games.push(liveMod.buildGame(f.raw, store.data.players, ranks, store.data.settings.champKeys || {}));
+    }
+    const before = new Set(live.games.map(g => g.gameId));
+    const after = new Set(games.map(g => g.gameId));
+    if (!live.first && isCoach()) {
+      for (const g of games.filter(x => !before.has(x.gameId))) {
+        const who = g.allies.concat(g.enemies).filter(x => x.playerId).map(x => (x.gameName || playerName(x.playerId)) + ' (' + champName(x.champion) + ')');
+        notifyCoach('Partie classée en cours', who.join(', ') + ' · ouvre « En direct » pour la regarder');
+      }
+    }
+    if (live.games.some(g => !after.has(g.gameId))) setTimeout(pollRanks, FAST ? 2000 : 2 * 60 * 1000);
+    const sig = JSON.stringify([games.map(g => g.gameId + ':' + g.allies.concat(g.enemies).map(x => x.rank ? x.rank.lp : '').join()), error]);
+    const changed = sig !== live.sig || live.first;
+    Object.assign(live, { games, checkedAt: Date.now(), error, first: false, sig });
+    if (changed && session && session.source === 'local') refreshView();
+  } finally {
+    live.checking = false;
+  }
+}
+
+// Emplacement de League of Legends (relu au plus toutes les 20 s)
+const LOL_OS = process.platform;
+const fsIo = { exists: f => { try { return fs.existsSync(f); } catch (e) { return false; } }, read: f => fs.readFileSync(f, 'utf8') };
+let lolCache = null;
+function lolInstall() {
+  if (lolCache && Date.now() - lolCache.at < 20000 && lolCache.custom === (store.data.settings.lolPath || '')) return lolCache.value;
+  const value = liveMod.findInstall(LOL_OS, fsIo, store.data.settings.lolPath || '', { HOME: process.env.HOME });
+  lolCache = { at: Date.now(), custom: store.data.settings.lolPath || '', value };
+  return value;
+}
+const lolInstallView = () => { const i = lolInstall(); return { found: !!i, path: i ? i.base : '', custom: store.data.settings.lolPath || '' }; };
+
+// Bouton « Regarder » : lance League of Legends en mode spectateur sur la partie
+async function watchGame(gameId) {
+  requireEdit();
+  const g = live.games.find(x => String(x.gameId) === String(gameId));
+  if (!g) throw new Error('Cette partie est terminée.');
+  const bad = liveMod.checkGame(g);
+  if (bad) throw new Error(bad);
+  const ins = lolInstall();
+  if (!ins) throw new Error('League of Legends est introuvable sur cet ordinateur. Indique son emplacement dans Paramètres › Général › Mode spectateur.');
+  let locale = '';
+  try { locale = liveMod.readLocale(fs.readFileSync(ins.config, 'utf8')); } catch (e) { /* langue par défaut du jeu */ }
+  const args = liveMod.spectateArgs(g, LOL_OS, locale);
+  if (process.env.COACHING_LOL_TEST) {
+    fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'spectateur.json'), JSON.stringify({ exe: ins.exe, cwd: ins.gameDir, args }));
+  } else {
+    if (LOL_OS === 'darwin') { try { fs.chmodSync(ins.exe, 0o755); } catch (e) { /* déjà exécutable */ } }
+    await new Promise((resolve, reject) => {
+      const child = spawn(ins.exe, args, { cwd: ins.gameDir, detached: true, stdio: 'ignore', env: Object.assign({}, process.env, { riot_launched: 'true' }) });
+      child.once('error', e => reject(new Error('Impossible de lancer League of Legends (' + e.message + ').')));
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
+  }
+  const wait = Math.max(0, 180 - liveMod.elapsed(g));
+  return { ok: true, message: 'League of Legends s\'ouvre en mode spectateur' + (wait > 30 ? ' : la partie s\'affichera dans environ ' + Math.ceil(wait / 60) + ' min (3 min de retard en classée).' : ' (3 min de retard en classée).') };
+}
+
 function scheduleAutoSync() {
   if (syncTimer) clearInterval(syncTimer);
   const min = Number(store.data.settings.autoSyncMinutes) || 30;
@@ -464,14 +572,28 @@ async function refreshDDragon() {
     const res = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
     const v = (await res.json())[0];
     const s = store.data.settings;
-    if (v && (v !== s.ddVersion || !s.champs)) {
+    if (v && (v !== s.ddVersion || !s.champs || !s.champKeys || !s.spellKeys || !s.perkIcons)) {
       // noms français des champions (l'API Riot donne « MonkeyKing », « JarvanIV »… : on affiche « Wukong », « Jarvan IV »)
       try {
         const cj = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/champion.json`)).json();
         const champs = {};
-        for (const c of Object.values(cj.data || {})) champs[c.id.toLowerCase()] = [c.id, c.name];
-        if (Object.keys(champs).length) s.champs = champs;
+        const keys = {};
+        for (const c of Object.values(cj.data || {})) { champs[c.id.toLowerCase()] = [c.id, c.name]; keys[c.key] = c.id; }
+        if (Object.keys(champs).length) { s.champs = champs; s.champKeys = keys; }
       } catch (e) { /* on garde les noms bruts */ }
+      // parties en direct : sorts d'invocateur (numéro → image) et runes (numéro → image)
+      try {
+        const sj = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/summoner.json`)).json();
+        const sp = {};
+        for (const x of Object.values(sj.data || {})) sp[x.key] = [x.id, x.name];
+        if (Object.keys(sp).length) s.spellKeys = sp;
+      } catch (e) { /* sans images de sorts */ }
+      try {
+        const rj = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/runesReforged.json`)).json();
+        const pk = {};
+        for (const st of rj || []) { pk[st.id] = [st.icon, st.name]; for (const sl of st.slots || []) for (const ru of sl.runes || []) pk[ru.id] = [ru.icon, ru.name]; }
+        if (Object.keys(pk).length) s.perkIcons = pk;
+      } catch (e) { /* sans images de runes */ }
       s.ddVersion = v; store.save(); if (session) refreshView();
     }
   } catch (e) { /* hors ligne : on garde la version connue */ }
@@ -662,7 +784,7 @@ function registerIpc() {
   handle('settings:save', patch => {
     requireEdit();
     const s = store.data.settings;
-    for (const k of ['autoSyncMinutes', 'maxGamesPerSync', 'cards', 'objectives', 'axes']) if (k in patch) s[k] = patch[k];
+    for (const k of ['autoSyncMinutes', 'maxGamesPerSync', 'cards', 'objectives', 'axes', 'lolPath']) if (k in patch) s[k] = k === 'lolPath' ? String(patch[k] || '').trim().slice(0, 400) : patch[k];
     scheduleAutoSync();
     return { ok: true, data: changed() };
   });
@@ -728,6 +850,9 @@ function registerIpc() {
   handle('booking:action', arg => bookingAction(arg || {}));
   handle('report:save', async r => ({ ok: true, data: await saveReport(r || {}) }));
   handle('booking:refresh', async () => { await refreshBookings(); return { ok: true, data: viewData() }; });
+
+  handle('live:refresh', async () => { requireEdit(); await pollLive(); return { ok: true, data: viewData() }; });
+  handle('live:watch', gameId => watchGame(gameId));
 
   handle('open:external', url => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { ok: true }; });
 }
@@ -821,6 +946,7 @@ app.whenReady().then(async () => {
   win.webContents.once('did-finish-load', () => {
     if (process.env.COACHING_LOL_TEST) {
       if (FAST) {
+        setInterval(pollLive, 2000);
         schedulePush(1000);
         setInterval(refreshBookings, 1500);
         setInterval(refreshReports, 1500);
@@ -842,6 +968,7 @@ app.whenReady().then(async () => {
     setTimeout(refreshReports, FAST ? 700 : 6000);
     setInterval(refreshReports, FAST ? 2000 : 30 * 1000);
     setInterval(watchCoaching, FAST ? 1000 : 5 * 1000);
+    setInterval(pollLive, FAST ? 2000 : 60 * 1000);
   });
   if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -339,6 +339,7 @@ function pages() {
     { id: 'parties', label: 'Parties', ico: 'games', sec: 'Espace' },
     { id: 'seances', label: 'Séances', ico: 'sessions', sec: 'Espace' }
   ];
+  if (coach && canEdit()) list.splice(1, 0, { id: 'direct', label: 'En direct', ico: 'radio', sec: 'Espace', badge: liveGames().length });
   if (!coach) list.push({ id: 'objectifs', label: 'Mes objectifs', ico: 'target', sec: 'Espace' });
   if (coach && canEdit()) list.push({ id: 'joueurs', label: 'Joueurs', ico: 'players', sec: 'Coach' }, { id: 'parametres', label: 'Paramètres', ico: 'settings', sec: 'Coach' });
   return list;
@@ -351,7 +352,7 @@ function renderSidebar() {
   const nav = pages().map(x => {
     const head = x.sec !== sec ? `<div class="nav-label">${x.sec}</div>` : '';
     sec = x.sec;
-    return head + `<button class="nav ${state.page === x.id ? 'active' : ''}" data-action="go" data-page="${x.id}" title="${esc(x.label)}">${icon(x.ico, 18)}<span>${esc(x.label)}</span></button>`;
+    return head + `<button class="nav ${state.page === x.id ? 'active' : ''}" data-action="go" data-page="${x.id}" title="${esc(x.label)}">${icon(x.ico, 18)}<span>${esc(x.label)}</span>${x.badge ? `<i class="nav-badge">${x.badge}</i>` : ''}</button>`;
   }).join('');
   const me = coach ? null : player();
   const who = coach
@@ -403,7 +404,7 @@ function playerRow(p) {
   return `<div class="row-link" data-action="open-player" data-id="${p.id}">
     <div class="tile">${main && champImg(main.name) ? `<img src="${champImg(main.name)}" alt="">` : `<b>${esc(initials(gameName(p)))}</b>`}</div>
     <div class="t"><b>${esc(p.riotId)}</b><span>${esc(p.role || '?')} · ${rk ? esc(rk.label) : 'rang non relevé'}${wr === null ? '' : ' · ' + Math.round(wr * 100) + '% de victoires sur ' + last.length}</span></div>
-    ${dots(gs.slice(-8))}
+    ${liveChip(p)}${dots(gs.slice(-8))}
     <div class="go">${icon('arrow', 18)}</div></div>`;
 }
 
@@ -1029,6 +1030,10 @@ function settingsGeneral() {
     <div class="section"><h3>${icon('key', 17)} Clé API Riot</h3>
       <div class="status-line"><span class="dot ${c.hasKey ? 'on' : 'err'}"></span>${c.hasKey ? 'Clé enregistrée (' + esc(c.keyPreview) + '). Les parties arrivent automatiquement.' : 'Aucune clé : les parties ne peuvent pas être récupérées.'}</div>
       <div class="row" style="margin-top:12px"><input id="key" style="width:420px" placeholder="Remplacer la clé : RGAPI-…"><button class="btn" data-action="save-key">Tester et enregistrer</button></div></div>
+    <div class="section" id="spectateur"><h3>${icon('play', 17)} Mode spectateur (bouton Regarder)</h3>
+      <div class="status-line"><span class="dot ${(c.lol || {}).found ? 'on' : 'err'}"></span>${(c.lol || {}).found ? 'League of Legends trouvé : ' + esc(c.lol.path) : 'League of Legends introuvable sur cet ordinateur.'}</div>
+      <div class="muted small" style="margin-top:8px">Laisse vide pour le chercher tout seul (dossier Applications sur Mac, C:\\Riot Games sur Windows). S'il est ailleurs, colle ici le dossier où il est installé.</div>
+      <div class="row" style="margin-top:10px"><input id="lolpath" style="width:420px" placeholder="/Applications/League of Legends.app" value="${esc((c.lol || {}).custom || '')}"><button class="btn" data-action="save-lolpath">Enregistrer</button></div></div>
     <div class="section"><h3>${icon('cloud', 17)} Serveur en ligne (espaces joueurs)</h3>
       ${cl.linked
         ? `<div class="status-line"><span class="dot on"></span>Relié. Dernier envoi ${esc(ago(cl.lastPush))}. Tes joueurs peuvent ouvrir leur espace chez eux avec leur code.</div>`
@@ -1050,7 +1055,74 @@ function settingsGeneral() {
     <div class="section"><h3>${icon('info', 17)} À propos</h3><div class="muted small">Version ${esc(d.appVersion)}. ${upTxt}</div></div>`;
 }
 
-const PAGES = { accueil: pageAccueil, dashboard: pageDashboard, parties: pageParties, seances: pageSeances, objectifs: pageObjectifs, joueurs: pageJoueurs, parametres: pageParametres };
+// ======================================================================== EN DIRECT (coach, sur son ordinateur)
+const LIVE = () => (D() && D().live) || null;
+const liveGames = () => (LIVE() && LIVE().games) || [];
+const liveOf = pid => liveGames().find(g => g.playerIds.includes(pid)) || null;
+const gameSecs = (start, len, at) => (start ? Math.max(0, Math.round((Date.now() - start) / 1000)) : Math.max(0, Math.round(len + (Date.now() - at) / 1000)));
+const fmtGame = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+const clockAttrs = g => `data-gstart="${g.startTime || ''}" data-glen="${g.length}" data-gat="${g.fetchedAt}"`;
+function spellImg(id) {
+  const s = D().settings, sp = s.spellKeys && s.spellKeys[id];
+  return sp && s.ddVersion ? `<img class="lv-spell" src="https://ddragon.leagueoflegends.com/cdn/${s.ddVersion}/img/spell/${sp[0]}.png" alt="" data-tip="${esc(sp[1])}">` : '<span class="lv-spell"></span>';
+}
+function perkImg(id, cls) {
+  const pk = D().settings.perkIcons && D().settings.perkIcons[id];
+  return pk ? `<img class="${cls}" src="https://ddragon.leagueoflegends.com/cdn/img/${pk[0]}" alt="" data-tip="${esc(pk[1])}">` : '';
+}
+function liveChip(p) {
+  const g = isCoach() && canEdit() ? liveOf(p.id) : null;
+  return g ? `<span class="live-chip" data-action="go" data-page="direct" data-tip="Partie classée en cours : clique pour la voir"><span class="pulse"></span>En partie <span class="lv-tick" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</span></span>` : '';
+}
+function liveRow(x) {
+  const games = x.rank ? x.rank.wins + x.rank.losses : 0;
+  const wr = games ? Math.round(x.rank.wins / games * 100) : null;
+  const name = x.hidden ? '<span class="faint">Joueur masqué</span>' : `<b>${esc(x.gameName)}</b><span class="faint">#${esc(x.tagLine)}</span>`;
+  return `<div class="lv-row ${x.playerId ? 'me' : ''}" ${x.playerId ? `data-action="open-player" data-id="${x.playerId}" data-tip="Ouvrir son tableau de bord"` : ''}>
+    <div class="lv-champ">${x.champion ? img(x.champion, 'lv-cimg') : '<span class="lv-cimg"></span>'}${perkImg(x.keystone, 'lv-key')}</div>
+    <div class="lv-spells">${spellImg(x.spells[0])}${spellImg(x.spells[1])}</div>
+    <div class="lv-who"><div class="lv-name">${name}</div><div class="lv-cname">${x.champion ? champ(x.champion) : 'Champion inconnu'}${perkImg(x.subStyle, 'lv-sub')}</div></div>
+    <div class="lv-rank">${x.rank ? `<b>${esc(x.rank.label)}</b> <span class="muted">${x.rank.lp} LP</span><div class="small"><span class="${wr >= 50 ? 'ok' : 'red'}">${wr} %</span> <span class="faint">sur ${games} parties</span></div>` : '<span class="faint">Non classé</span>'}</div>
+  </div>`;
+}
+function liveCard(g) {
+  const lol = (D().coach && D().coach.lol) || {};
+  const allyOurs = g.allies.filter(x => x.playerId).map(x => esc(x.gameName));
+  const enemyOurs = g.enemies.filter(x => x.playerId).map(x => esc(x.gameName));
+  const title = allyOurs.join(' et ') + (enemyOurs.length ? ' <span class="muted">contre</span> ' + enemyOurs.join(' et ') : '');
+  const side = t => (t === 100 ? 'bleu' : 'rouge');
+  const bans = list => (list.length ? list.map(c => img(c, 'lv-ban')).join('') : '<span class="faint tiny">aucun ban</span>');
+  const started = g.startTime ? 'commencée à ' + new Date(g.startTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : 'écran de chargement';
+  return `<div class="lv-card">
+    <div class="lv-head">
+      <span class="pulse"></span>
+      <div><div class="lv-title">${title}</div><div class="muted small">Classée Solo/Duo · ${esc(g.platformId)} · ${started}</div></div>
+      <span class="spacer"></span>
+      <div class="lv-clock" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</div>
+      <button class="btn primary lv-watch" data-action="live-watch" data-id="${g.gameId}">${icon('play', 15)} Regarder</button>
+    </div>
+    ${lol.found ? '' : `<div class="bk-alert muted-alert">${icon('alert', 16)}<span>League of Legends est introuvable sur cet ordinateur : le bouton Regarder ne pourra pas l'ouvrir.</span><span class="spacer"></span><button class="btn" data-action="go-spectator">Indiquer son emplacement</button></div>`}
+    <div class="lv-teams">
+      <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyOurs.length > 1 ? 'Leur équipe' : 'Son équipe'}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>${g.allies.map(liveRow).join('')}</div>
+      <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId === 100 ? 200 : 100)}"></span><b>Adversaires</b><span class="faint small">côté ${side(g.teamId === 100 ? 200 : 100)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span></div>${g.enemies.map(liveRow).join('')}</div>
+    </div>
+    <div class="faint tiny lv-foot">Regarder ouvre League of Legends en mode spectateur, avec 3 minutes de retard (règle de Riot pour les classées). Le jeu doit être installé et à jour sur cet ordinateur.</div>
+  </div>`;
+}
+function pageDirect() {
+  const L = LIVE();
+  const head = '<h1>En direct</h1><div class="sub">Les parties classées Solo/Duo en cours de tes joueurs, avec leurs adversaires. Vérification automatique chaque minute.</div>';
+  if (!L || !L.enabled) return head + `<div class="empty">Ajoute ta clé API Riot dans Paramètres › Général pour voir les parties en direct.</div>`;
+  const games = L.games || [];
+  const status = `<div class="lv-status"><span class="dot ${L.error ? 'err' : 'on'}"></span><span>${L.error ? 'Dernière vérification impossible : ' + esc(L.error) : L.checkedAt ? 'Vérifié ' + esc(ago(L.checkedAt)) : 'Première vérification en cours…'}</span><span class="spacer"></span><button class="btn" data-action="live-refresh">${icon('sync', 15)} Vérifier maintenant</button></div>`;
+  const playing = new Set(games.flatMap(g => g.playerIds));
+  const idle = D().players.filter(p => !playing.has(p.id));
+  const idleList = idle.length && games.length ? `<h2>${icon('players', 17)} Pas en partie classée</h2><div class="lv-idle">${idle.map(p => `<span class="chip" data-action="open-player" data-id="${p.id}">${esc(gameName(p))}</span>`).join('')}</div>` : '';
+  return head + status + (games.length ? games.map(liveCard).join('')
+    : `<div class="empty lv-empty">${icon('radio', 26)}<b>Aucun de tes joueurs n'est en partie classée Solo/Duo.</b><span>Dès que l'un d'eux lance une partie, elle s'affiche ici avec ses adversaires (et tu reçois une notification).</span></div>`) + idleList;
+}
+
+const PAGES = { accueil: pageAccueil, direct: pageDirect, dashboard: pageDashboard, parties: pageParties, seances: pageSeances, objectifs: pageObjectifs, joueurs: pageJoueurs, parametres: pageParametres };
 
 // le coach refuse un horaire en en proposant un autre
 function openProposeModal(bookingId) {
@@ -1068,6 +1140,11 @@ function openProposeModal(bookingId) {
 // ======================================================================== modale
 function openModal(html) { $('#modal-box').innerHTML = html; $('#modal').classList.remove('hidden'); hookImages(); }
 function closeModal() { $('#modal').classList.add('hidden'); $('#modal-box').innerHTML = ''; $('#modal-box').style.width = ''; state.proposing = null; }
+
+// chronos des parties en direct
+setInterval(() => {
+  document.querySelectorAll('[data-glen]').forEach(el => { el.textContent = fmtGame(gameSecs(Number(el.dataset.gstart) || 0, Number(el.dataset.glen), Number(el.dataset.gat))); });
+}, 1000);
 
 // minuteur du coaching : mis à jour chaque seconde sans redessiner la page
 setInterval(() => {
@@ -1229,6 +1306,17 @@ document.addEventListener('click', async e => {
       apply(await window.api.booking(act, id, start), msg);
       break;
     }
+    case 'live-refresh': { el.disabled = true; el.innerHTML = '<span class="spinner"></span> Vérification…'; apply(await window.api.refreshLive()); break; }
+    case 'live-watch': {
+      const old = el.innerHTML;
+      el.disabled = true; el.innerHTML = '<span class="spinner"></span> Ouverture…';
+      const r = await window.api.watchLive(id);
+      el.disabled = false; el.innerHTML = old;
+      if (r && r.ok) toast(r.message, 'ok', 7000); else toast(r ? r.message : 'Erreur inconnue.', 'err', 8000);
+      break;
+    }
+    case 'go-spectator': state.page = 'parametres'; state.settingsTab = 'general'; render(); { const s = document.getElementById('spectateur'); if (s) s.scrollIntoView({ block: 'start' }); } break;
+    case 'save-lolpath': apply(await window.api.saveSettings({ lolPath: $('#lolpath').value }), 'Emplacement enregistré.'); break;
     case 'export': { const r = await window.api.exportBackup(); if (r.ok) toast(r.message); break; }
     case 'import': if (confirm('Remplacer toutes les données par la sauvegarde ?')) apply(await window.api.importBackup()); break;
   }

@@ -210,7 +210,7 @@ const Exercises = (() => {
       steps: [
         'Au début de la partie, regarde de quel côté le jungler adverse a commencé (buff vu, laisse, ward).',
         'À 2:55, le carapateur apparaît : écris ou dis où est le jungler adverse (côté top, côté bot, sur un carapateur ou en train de reset).',
-        'Joue en conséquence : si il arrive de ton côté, pas de trade loin de ta tour.',
+        'Joue en conséquence : s\'il arrive de ton côté, pas de trade loin de ta tour.',
         'En review, vérifie si ta prédiction était juste.'
       ],
       fields: [
