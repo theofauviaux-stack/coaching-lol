@@ -11,7 +11,7 @@ const picked = R.pickMoments(m);
 assert.deepStrictEqual(picked.map(x => M.mmss(x.t) + ' ' + x.type), ['6:30 mort', '7:10 objectif', '9:00 kill', '14:00 objectif', '16:00 mort', '16:40 objectif'],
   'morts, objectifs perdus, kills et objectifs où il était ; pas les retours ni le dragon pris loin');
 const w = R.clipWindows(picked, 1200);
-assert.deepStrictEqual(w.map(x => [x.start, x.end, x.times.length]), [[370, 440, 2], [520, 550, 1], [820, 850, 1], [940, 1010, 2]], 'mort 6:30 + larves 7:10 dans le même extrait');
+assert.deepStrictEqual(w.map(x => [x.start, x.end, x.times.length]), [[365, 440, 2], [515, 550, 1], [815, 850, 1], [935, 1010, 2]], 'mort 6:30 + larves 7:10 dans le même extrait, 25 s avant chaque moment');
 assert.deepStrictEqual(R.clipWindows([{ t: 5000 }], 1200)[0], { start: 0, end: 15, times: [5000] }, 'pas avant 0:00');
 assert.strictEqual(R.clipWindows([{ t: 0 }, { t: 30000 }, { t: 60000 }, { t: 90000 }]).length, 2, 'extraits de 75 s au plus');
 
@@ -46,12 +46,13 @@ function fakeWorld(opts = {}) {
         const r = Object.assign({}, w.playback); w.playback.seeking = false; return r;
       }
       if (p === '/replay/render') {
-        if (method === 'POST') { if (body.selectionName === (opts.selectable || 'Darius')) w.render.selectionName = body.selectionName; return w.render; }
+        if (method === 'POST') { if (body.selectionName === (opts.selectable || 'Darius')) Object.assign(w.render, { selectionName: body.selectionName, cameraAttached: true }); return w.render; }
         return w.render;
       }
+      if (p === '/liveclientdata/playerlist') return opts.playerlist || [{ championName: 'Garen', riotIdGameName: 'Demacia', summonerName: 'Demacia#FR1' }, { championName: 'Darius', riotIdGameName: 'UCE Uawawa', summonerName: 'UCE Uawawa#000', rawChampionName: 'game_character_displayname_Darius' }];
       return {};
     },
-    record: async (s, file) => { w.recorded.push([s, file, w.playback.time]); w.clock += s * 1000; },
+    record: async (s, file) => { w.recorded.push([s, file, w.playback.time, w.playback.paused]); w.clock += s * 1000; },
     killGame: async () => { w.killed++; }
   };
   const lcu = io.lcu;
@@ -62,8 +63,9 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
 (async () => {
   let { w, io } = fakeWorld();
   let r = await R.recordGame(io, job, { poll: 1000 });
-  assert.deepStrictEqual(r.clips.map(x => [x.start, x.end, x.file]), [[370, 440, '/videos/0_370.webm'], [520, 550, '/videos/1_520.webm'], [820, 850, '/videos/2_820.webm'], [940, 1010, '/videos/3_940.webm']]);
-  assert.deepStrictEqual(w.recorded.map(x => [x[0], x[2]]), [[70, 370], [30, 520], [30, 820], [70, 940]], 'chaque extrait filmé depuis le bon moment');
+  assert.deepStrictEqual(r.clips.map(x => [x.start, x.end, x.file]), [[365, 440, '/videos/0_365.webm'], [515, 550, '/videos/1_515.webm'], [815, 850, '/videos/2_815.webm'], [935, 1010, '/videos/3_935.webm']]);
+  assert.deepStrictEqual(w.recorded.map(x => [x[0], x[2], x[3]]), [[75, 365, false], [35, 515, false], [35, 815, false], [75, 935, false]], 'chaque extrait filmé depuis le bon moment, replay relancé après la pause');
+  assert.ok(w.log.some(x => x.startsWith('POST /lol-replays/v1/rofls/')) && !w.log.some(x => x.includes('/create')), 'pas de création de fiche quand le replay est déjà proposé');
   assert.strictEqual(r.camera, 'Darius', 'caméra accrochée au champion');
   assert.strictEqual(w.killed, 1, 'jeu fermé à la fin');
   assert.ok(w.log.includes('POST /lol-replays/v1/rofls/7300000099/download {"componentType":"replay-button_match-history"}'), 'téléchargement demandé une fois');
@@ -71,11 +73,23 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
   assert.ok(w.log.includes('Téléchargement du replay… 50 %'));
   assert.ok(w.log.some(x => x.endsWith('/watch {"componentType":"replay-button_match-history"}')));
   assert.ok(w.log.includes('Enregistrement 4/4…'));
-  // caméra : le nom du champion ne marche pas, le pseudo oui
+  // caméra : le jeu attend le pseudo (trouvé dans la liste des joueurs du replay, même sans le connaître)
   ({ w, io } = fakeWorld({ selectable: 'UCE Uawawa', states: ['watch'] }));
-  r = await R.recordGame(io, job, { poll: 1000 });
+  r = await R.recordGame(io, Object.assign({}, job, { gameName: '' }), { poll: 1000 });
   assert.strictEqual(r.camera, 'UCE Uawawa');
+  // caméra impossible à placer sur le champion : arrêt (pas de vidéo en caméra libre)
+  ({ w, io } = fakeWorld({ selectable: 'personne', states: ['watch'] }));
+  await assert.rejects(R.recordGame(io, job, { poll: 1000, attachTimeout: 5000 }), /caméra n'a pas pu suivre Darius/);
+  assert.strictEqual(w.killed, 1, 'replay fermé');
+  // fiche replay absente : créée par l'app ; si rien ne vient, on demande d'ouvrir l'historique
+  ({ w, io } = fakeWorld({ states: ['checking', 'checking', 'checking', 'checking', 'checking', 'download', 'downloading', 'watch'] }));
+  r = await R.recordGame(io, Object.assign({}, job, { label: 'Darius contre Garen' }), { poll: 10000, askAfter: 20000 });
+  assert.ok(w.log.some(x => x.startsWith('POST /lol-replays/v2/metadata/7300000099/create')), 'fiche créée');
+  assert.ok(w.log.some(x => /Ouvre l'historique des parties.*Darius contre Garen/.test(x)), 'consigne historique');
+  assert.strictEqual(r.clips.length, 4);
   // erreurs claires
+  ({ io } = fakeWorld({ states: ['checking'] }));
+  await assert.rejects(R.recordGame(io, job, { poll: 10000, checkTimeout: 60000 }), /ne propose pas le replay de cette partie.*Historique/);
   for (const [st, re] of [['incompatible', /ancien patch/], ['missingOrExpired', /ne propose plus/], ['error', /10 replays par heure/]]) {
     ({ io } = fakeWorld({ states: [st] }));
     await assert.rejects(R.recordGame(io, job, { poll: 1000 }), re, st);

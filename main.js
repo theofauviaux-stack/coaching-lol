@@ -995,7 +995,8 @@ async function recordVideos({ playerId, matchId }) {
         record: (sec, file, onTick) => recordWindow(sec, file, onTick),
         killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status
       }, {
-        gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: 420, gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion, championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
+        gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: 420, gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
+        label: champName(me.champion) + (m.opp ? ' contre ' + champName((m.participants.find(p => p.id === m.opp) || {}).champion) : '') + (gm && gm.date ? ' du ' + new Date(gm.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(' ', ' à ') : ''), championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
         file: (i, w) => path.join(dir, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
       }, FAST ? { poll: 250 } : {});
       m.clips = r.clips.map(c => ({ start: c.start, end: c.end, times: c.times, file: path.basename(c.file), bytes: fs.statSync(c.file).size }));

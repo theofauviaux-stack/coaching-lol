@@ -41,6 +41,7 @@ function startLol() {
         if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
         return send(404, {});
       }
+      if (req.url === '/liveclientdata/playerlist') return rp.watching ? send(200, [{ championName: 'Garen', riotIdGameName: 'Demacia' }, { championName: 'Darius', riotIdGameName: 'UCE Uawawa', summonerName: 'UCE Uawawa#000' }]) : send(503, {});
       if (req.url.startsWith('/replay/')) {
         calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
         if (!rp.watching || rp.loading-- > 0) return send(503, {});
@@ -49,7 +50,7 @@ function startLol() {
           return send(200, { time: rp.time, seeking: false, paused: false, speed: 1, length: 1200 });
         }
         if (req.url === '/replay/render') {
-          if (req.method === 'POST' && body && body.selectionName === 'Darius') rp.selection = 'Darius';
+          if (req.method === 'POST' && body && body.selectionName === 'UCE Uawawa') rp.selection = 'UCE Uawawa';
           return send(200, { selectionName: rp.selection, cameraAttached: !!rp.selection });
         }
       }
@@ -129,7 +130,9 @@ function launch(phase, dataDir, env) {
   assert.ok(rj.progression.some(x => /vérifie le replay/.test(x[0])) && rj.progression.some(x => /^Enregistrement 2\/4/.test(x[0])), JSON.stringify(rj.progression.map(x => x[0])));
   assert.ok(rj.barre && rj.barre.largeur > 0, JSON.stringify(rj.barre));
   assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
-  assert.deepStrictEqual(rj.fichiers, ['01_6m10.webm', '02_8m40.webm', '03_13m40.webm', '04_15m40.webm']);
+  assert.deepStrictEqual(rj.fichiers, ['01_6m05.webm', '02_8m35.webm', '03_13m35.webm', '04_15m35.webm'], 'extraits commencés 25 s avant chaque moment');
+  assert.ok(calls.replay.filter(x => x.startsWith('POST /replay/render')).every(x => /"selectionName":"UCE Uawawa"/.test(x) || /"selectionName":"(Demacia)"/.test(x) === false), 'caméra uniquement sur le joueur');
+  assert.ok(calls.replay.includes('POST /replay/playback {"time":365,"paused":true,"speed":1}') && calls.replay.includes('POST /replay/playback {"paused":false,"speed":1}'), 'pause au début de l\'extrait puis lecture');
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
   assert.strictEqual(rj.cartes, 4);
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
@@ -142,7 +145,7 @@ function launch(phase, dataDir, env) {
   assert.ok(/UCE Uawawa.*Darius contre Garen.*2.*Nouvelle/.test(rc.liste[0]), rc.liste[0]);
   assert.ok(/Je veux travailler mes placements de wards/.test(rc.filGeneral), rc.filGeneral);
   assert.deepStrictEqual(rc.filMoment, ['Je pensais que leur jungler était bot, je n\'avais pas de ward.']);
-  assert.ok(rc.video.largeur > 0 && /^clip:\/\/r\/[0-9a-f-]{36}\/01_6m10\.webm$/.test(rc.video.src), JSON.stringify(rc.video));
+  assert.ok(rc.video.largeur > 0 && /^clip:\/\/r\/[0-9a-f-]{36}\/01_6m05\.webm$/.test(rc.video.src), JSON.stringify(rc.video));
   assert.strictEqual(rc.filmes, 5, 'moments couverts par les 2 vidéos envoyées');
   // discussion dans les deux sens, sans recharger la vidéo
   assert.ok(/Réponse du coach — Regarde la mini-carte/.test(rj.notification), rj.notification);

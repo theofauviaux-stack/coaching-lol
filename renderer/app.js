@@ -686,7 +686,7 @@ const fmtMo = b => (b / 1048576).toLocaleString('fr-FR', { maximumFractionDigits
 const excerpt = (t, n = 90) => (String(t).length > n ? String(t).slice(0, n - 1) + '…' : String(t));
 function momentsVideo(m, x, c) {
   const S = state.moments;
-  const from = Math.max(0, Math.round(x.t / 1000 - c.start - 6));
+  const from = Math.max(0, Math.round(x.t / 1000 - c.start - 20)); // 20 s avant le moment : on voit ce qui l'amène
   const src = S.mode === 'analysis' ? `clip://r/${esc(S.analysis.id)}/${esc(c.file)}` : `clip://v/${esc(S.videoKey)}/${esc(c.file)}`;
   return `<div class="mo-video"><video src="${src}" data-from="${from}" controls autoplay muted playsinline></video>
     <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay${m.camera ? ' · caméra sur le joueur' : ''}</div></div>`;
