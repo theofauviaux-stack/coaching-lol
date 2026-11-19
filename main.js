@@ -951,7 +951,7 @@ async function checkScreenPermission() {
   if (process.platform !== 'darwin') return;
   if (systemPreferences.getMediaAccessStatus('screen') === 'granted') return;
   try { await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }); } catch (e) { /* ouvre la demande de macOS */ }
-  throw new Error('Autorise Coaching LoL à enregistrer l\'écran : Réglages Système › Confidentialité et sécurité › Enregistrement de l\'écran, coche Coaching LoL, puis relance l\'app.');
+  throw new Error('ECRAN: macOS n\'autorise pas encore Coaching LoL à enregistrer l\'écran.');
 }
 async function recordVideos({ playerId, matchId }) {
   if (!isPlayer() || playerId !== session.playerId) throw new Error('Les moments se filment depuis l\'espace du joueur (code joueur), avec le client League of Legends de cet ordinateur.');
@@ -1386,6 +1386,16 @@ function registerIpc() {
   handle('analysis:send', q => sendAnalysis(q || {}));
   handle('analysis:comment', q => commentAnalysis(q || {}));
   handle('analysis:close', q => closeAnalysis(q || {}));
+  // autorisation « Enregistrement de l'écran » (Mac) : ouvrir le bon panneau des réglages, relancer l'app
+  handle('mac:screen-settings', async () => {
+    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    return { ok: true };
+  });
+  handle('app:relaunch', () => {
+    try { writeResume(); } catch (e) { /* le code sera redemandé */ }
+    setTimeout(() => { app.relaunch(); app.exit(0); }, 200);
+    return { ok: true };
+  });
   handle('lol:path', q => {
     if (!canEdit() && !isPlayer()) throw new Error('Action impossible ici.');
     store.data.settings.lolPath = String((q && q.path) || '').trim().slice(0, 400);

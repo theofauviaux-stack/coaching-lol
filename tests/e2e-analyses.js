@@ -119,6 +119,7 @@ function launch(phase, dataDir, env) {
   assert.ok(rj.menu.includes('Analyses'), rj.menu.join(','));
   assert.ok(rj.boutons.some(b => /Filmer les moments/.test(b)) && !rj.boutons.some(b => /Copier/.test(b)), rj.boutons.join(' | '));
   assert.ok(/4 extraits filmés/.test(rj.finTournage), rj.finTournage);
+  assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
   assert.deepStrictEqual(rj.fichiers, ['01_6m10.webm', '02_8m40.webm', '03_13m40.webm', '04_15m40.webm']);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
   assert.strictEqual(rj.cartes, 4);

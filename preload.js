@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
   commentAnalysis: (id, t, text) => call('analysis:comment', { id, t, text }),
   closeAnalysis: id => call('analysis:close', { id }),
   setLolPath: p => call('lol:path', { path: p }),
+  openScreenSettings: () => call('mac:screen-settings'),
+  relaunch: () => call('app:relaunch'),
   onAnalysisStatus: cb => ipcRenderer.on('analysis:status', (e, v) => cb(v)),
   onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))

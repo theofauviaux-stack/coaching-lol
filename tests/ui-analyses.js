@@ -34,6 +34,11 @@ module.exports = async function ({ app, win, fs, path }) {
       await until(`document.querySelectorAll('.mo-row').length > 0`, 20000);
       out.boutons = await js(`[...document.querySelectorAll('.mo-head .btn')].map(b => b.textContent.replace(/\\s+/g, ' ').trim())`);
       await shot('a1-moments-joueur');
+      // encadré « macOS bloque l'enregistrement de l'écran » (affiché sur Mac quand l'autorisation manque)
+      await js(`state.moments.screenPerm = true; showMoments(); 0`);
+      out.encadre = await js(`document.querySelector('.mo-perm') ? document.querySelector('.mo-perm').textContent.replace(/\\s+/g, ' ').trim() : null`);
+      await shot('a1b-autorisation-ecran');
+      await js(`state.moments.screenPerm = false; showMoments(); 0`);
       // filmer depuis le replay (faux client LoL + faux jeu)
       await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
       await until(`window.__toasts.some(t => /Vidéos :/.test(t))`, 90000);

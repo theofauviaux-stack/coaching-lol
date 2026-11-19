@@ -715,6 +715,12 @@ function momentsHead(S, sub) {
   const lol = S.canFilm && S.lol && !S.lol.found && S.mode === 'moments' && !(S.data && S.data.clips && S.data.clips.length) && !busy;
   return `<div class="mo-head"><h2>${title}</h2>${sub || ''}<span class="spacer"></span>${momentsButtons(S)}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
     ${busy ? `<div class="mo-vstatus"><span class="spinner"></span><span>${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span></div>` : ''}
+    ${S.screenPerm && !busy ? `<div class="mo-lol mo-perm">${icon('alert', 15)}<div><b>macOS bloque l'enregistrement de l'écran.</b>
+      <ol><li>Ouvre les réglages (bouton à droite) : <i>Enregistrement de l'écran</i>.</li>
+      <li>Si Coaching LoL est déjà dans la liste, sélectionne-le et enlève-le avec le bouton <b>−</b>.</li>
+      <li>Relance l'app, puis clique de nouveau sur « Filmer les moments » et choisis <b>Autoriser</b> (ou coche Coaching LoL dans la liste).</li>
+      <li>Relance l'app une dernière fois : macOS ne prend l'autorisation en compte qu'au redémarrage.</li></ol></div>
+      <div class="mo-perm-btns"><button class="btn" data-action="mo-screen-settings">Ouvrir les réglages</button><button class="btn primary" data-action="mo-relaunch">Relancer l'app</button></div></div>` : ''}
     ${lol ? `<div class="mo-lol">${icon('alert', 15)}<span>League of Legends introuvable sur cet ordinateur. Emplacement :</span>
       <input id="mo-lolpath" value="${esc(S.lol.custom || '')}" placeholder="${/^Win/.test(navigator.platform) ? 'C:\\Riot Games\\League of Legends' : '/Applications/League of Legends.app'}">
       <button class="btn" data-action="mo-lolpath">Enregistrer</button></div>` : ''}`;
@@ -1640,6 +1646,8 @@ document.addEventListener('click', async e => {
     case 'analysis-open': openAnalysis(id); break;
     case 'mo-send': if (state.moments && state.moments.data) { const S = state.moments; S.mode = 'send'; S.sendLabel = $('.mo-head .muted') ? $('.mo-head .muted').textContent : ''; showMoments(); } break;
     case 'mo-back': if (state.moments) { state.moments.mode = 'moments'; showMoments(); } break;
+    case 'mo-screen-settings': window.api.openScreenSettings(); break;
+    case 'mo-relaunch': window.api.relaunch(); break;
     case 'mo-lolpath': {
       const S = state.moments;
       const r = await window.api.setLolPath($('#mo-lolpath').value);
@@ -1693,6 +1701,7 @@ document.addEventListener('click', async e => {
       const r = await window.api.recordVideos(p.id, S.matchId);
       if (!r || !r.ok) {
         S.vstatus = null;
+        if (r && /^ECRAN:/.test(r.message)) { S.screenPerm = true; showMoments(); break; }
         const g = await window.api.getMoments(p.id, S.matchId);
         if (g && g.ok) S.lol = g.lol;
         showMoments();
