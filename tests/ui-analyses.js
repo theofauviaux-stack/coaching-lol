@@ -40,9 +40,14 @@ module.exports = async function ({ app, win, fs, path }) {
       await shot('a1b-autorisation-ecran');
       await js(`state.moments.screenPerm = false; showMoments(); 0`);
       // filmer depuis le replay (faux client LoL + faux jeu)
+      await js(`window.__vp = []; window.api.onVideoStatus(v => { if (v.text && !v.done && !v.error) window.__vp.push([v.text, v.progress]); }); 0`);
       await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
+      await until(`window.__vp.some(x => /^Enregistrement 2/.test(x[0]))`, 90000);
+      out.barre = await js(`(() => { const b = document.querySelector('.mo-bar i'); return b ? { largeur: parseFloat(b.style.width), texte: document.querySelector('.mo-vstatus').textContent.replace(/\\s+/g, ' ').trim() } : null; })()`);
+      await shot('a1c-tournage-en-cours');
       await until(`window.__toasts.some(t => /Vidéos :/.test(t))`, 90000);
       out.finTournage = (await toasts()).find(t => /Vidéos :/.test(t));
+      out.progression = await js(`window.__vp`);
       out.videoLocale = await videoOk();
       out.fichiers = fs.readdirSync(path.join(data, 'videos', 'p1_EUW1_7300000099')).sort();
       // choisir 2 vidéos sur 4, les commenter, envoyer

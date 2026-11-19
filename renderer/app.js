@@ -714,7 +714,8 @@ function momentsHead(S, sub) {
   const busy = S.vstatus || S.sstatus;
   const lol = S.canFilm && S.lol && !S.lol.found && S.mode === 'moments' && !(S.data && S.data.clips && S.data.clips.length) && !busy;
   return `<div class="mo-head"><h2>${title}</h2>${sub || ''}<span class="spacer"></span>${momentsButtons(S)}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
-    ${busy ? `<div class="mo-vstatus"><span class="spinner"></span><span>${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span></div>` : ''}
+    ${busy ? `<div class="mo-vstatus"><div class="mo-vline"><span class="spinner"></span><span class="mo-vtext">${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span><b class="mo-vpct">${Math.round((S.vstatus ? S.vprogress : S.sprogress) * 100 || 0)} %</b></div>
+      <div class="mo-bar"><i style="width:${Math.max(2, Math.round(((S.vstatus ? S.vprogress : S.sprogress) || 0) * 100))}%"></i></div></div>` : ''}
     ${S.screenPerm && !busy ? `<div class="mo-lol mo-perm">${icon('alert', 15)}<div><b>macOS bloque l'enregistrement de l'écran.</b>
       <ol><li>Ouvre les réglages (bouton à droite) : <i>Enregistrement de l'écran</i>.</li>
       <li>Si Coaching LoL est déjà dans la liste, sélectionne-le et enlève-le avec le bouton <b>−</b>.</li>
@@ -823,7 +824,7 @@ async function openMoments(matchId) {
     const first = r.moments.moments.findIndex(x => x.type === 'mort');
     Object.assign(state.moments, {
       data: r.moments, text: r.text, videoKey: r.videoKey, canFilm: !!r.canFilm, lol: r.lol, analysisId: r.analysisId || null, analysisClosed: !!r.analysisClosed,
-      vstatus: r.filming || null, sstatus: r.sending || null, sel: first >= 0 ? first : 0
+      vstatus: r.filming || null, vprogress: r.filmingProgress || 0, sstatus: r.sending || null, sel: first >= 0 ? first : 0
     });
   }
   showMoments();
@@ -892,8 +893,16 @@ window.api.onVideoStatus(async v => {
     }
     return;
   }
-  if (here) { S.vstatus = v.text; const el = $('.mo-vstatus span:nth-child(2)'); if (el) el.textContent = v.text; else showMoments(); }
+  if (here) { S.vstatus = v.text; S.vprogress = v.progress || S.vprogress || 0; if (!updateBar(v.text, S.vprogress)) showMoments(); }
 });
+function updateBar(text, p) {
+  const t = $('.mo-vtext'), bar = $('.mo-bar i'), pct = $('.mo-vpct');
+  if (!t || !bar) return false;
+  t.textContent = text;
+  bar.style.width = Math.max(2, Math.round((p || 0) * 100)) + '%';
+  if (pct) pct.textContent = Math.round((p || 0) * 100) + ' %';
+  return true;
+}
 // avancement de l'envoi d'une partie au coach
 window.api.onAnalysisStatus(v => {
   const S = state.moments;
@@ -904,7 +913,7 @@ window.api.onAnalysisStatus(v => {
     if (here) openAnalysis(v.id);
     return;
   }
-  if (here) { S.sstatus = v.text; const el = $('.mo-vstatus span:nth-child(2)'); if (el) el.textContent = v.text; else showMoments(); }
+  if (here) { S.sstatus = v.text; S.sprogress = v.progress || S.sprogress || 0; if (!updateBar(v.text, S.sprogress)) showMoments(); }
 });
 // liste des analyses à jour : si l'analyse ouverte a changé (message de l'autre, fin), on la relit
 async function analysisLiveUpdate() {
@@ -1663,6 +1672,7 @@ document.addEventListener('click', async e => {
       const picks = sendPicks();
       if (!picks.length) { toast('Coche au moins une vidéo.', 'err'); break; }
       S.sstatus = 'Préparation de l\'envoi…';
+      S.sprogress = 0.02;
       showMoments();
       const r = await window.api.sendAnalysis(S.matchId, picks, S.sendDraft.note);
       if (!r || !r.ok) { S.sstatus = null; showMoments(); toast(r ? r.message : 'Erreur inconnue.', 'err', 9000); }
@@ -1697,6 +1707,8 @@ document.addEventListener('click', async e => {
       const S = state.moments, p = player();
       if (!S || !p) break;
       S.vstatus = 'Préparation…';
+      S.vprogress = 0.01;
+      S.screenPerm = false;
       showMoments();
       const r = await window.api.recordVideos(p.id, S.matchId);
       if (!r || !r.ok) {

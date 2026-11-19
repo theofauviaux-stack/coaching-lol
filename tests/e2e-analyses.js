@@ -17,7 +17,8 @@ const partie = require('./fixtures/partie-moments')('P-UAWAWA');
 
 // ---------------------------------------------------------------- faux Riot (partie + timeline), client LoL et jeu
 const calls = { match: 0, lcu: [], replay: [] };
-const rp = { state: 'download', polls: 0, watching: false, loading: 3, time: 0, selection: '' };
+// comme le vrai client : pas de fiche replay tant qu'on ne l'a pas créée, puis « checking », puis « download »
+const rp = { state: null, polls: 0, checks: 0, watching: false, loading: 3, time: 0, selection: '' };
 function startLol() {
   const srv = http.createServer((req, res) => {
     let raw = '';
@@ -29,7 +30,10 @@ function startLol() {
       if (req.url.startsWith('/lol-replays/')) {
         calls.lcu.push(req.method + ' ' + req.url);
         if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: true, isPatching: false });
+        if (req.url === '/lol-replays/v2/metadata/7300000099/create' && req.method === 'POST') { if (!rp.state) rp.state = 'checking'; return send(204); }
         if (req.url === '/lol-replays/v1/metadata/7300000099') {
+          if (!rp.state) return send(404, { message: 'pas de fiche' });
+          if (rp.state === 'checking' && ++rp.checks > 2) rp.state = 'download';
           if (rp.state === 'downloading' && ++rp.polls > 2) rp.state = 'watch';
           return send(200, { gameId: 7300000099, state: rp.state, downloadProgress: rp.polls / 3 });
         }
@@ -119,6 +123,11 @@ function launch(phase, dataDir, env) {
   assert.ok(rj.menu.includes('Analyses'), rj.menu.join(','));
   assert.ok(rj.boutons.some(b => /Filmer les moments/.test(b)) && !rj.boutons.some(b => /Copier/.test(b)), rj.boutons.join(' | '));
   assert.ok(/4 extraits filmés/.test(rj.finTournage), rj.finTournage);
+  assert.ok(calls.lcu.some(x => x.startsWith('POST /lol-replays/v2/metadata/7300000099/create')), 'fiche replay créée dans le client');
+  const pr = rj.progression.map(x => x[1]);
+  assert.ok(pr.every((x, i) => i === 0 || x >= pr[i - 1] - 1e-9) && pr[pr.length - 1] >= 0.95, 'barre de progression croissante : ' + JSON.stringify(rj.progression));
+  assert.ok(rj.progression.some(x => /vérifie le replay/.test(x[0])) && rj.progression.some(x => /^Enregistrement 2\/4/.test(x[0])), JSON.stringify(rj.progression.map(x => x[0])));
+  assert.ok(rj.barre && rj.barre.largeur > 0, JSON.stringify(rj.barre));
   assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
   assert.deepStrictEqual(rj.fichiers, ['01_6m10.webm', '02_8m40.webm', '03_13m40.webm', '04_15m40.webm']);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));

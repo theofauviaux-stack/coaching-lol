@@ -70,8 +70,11 @@ const REPLAY_ERRORS = {
  * Renvoie [{ start, end, times, file }].
  */
 async function recordGame(io, job, opt = {}) {
-  const o = Object.assign({ downloadTimeout: 6 * 60000, loadTimeout: 5 * 60000, seekTimeout: 25000, poll: 1500 }, opt);
+  const o = Object.assign({ downloadTimeout: 6 * 60000, checkTimeout: 90000, loadTimeout: 5 * 60000, seekTimeout: 25000, poll: 1500 }, opt);
   const status = io.status || (() => {});
+  // avancement global (barre de progression) : recherche 0-5 %, téléchargement 5-40 %, ouverture 40-45 %, extraits 45-98 %
+  const windows = clipWindows(job.moments, job.duration || Infinity);
+  const total = windows.reduce((n, w) => n + (w.end - w.start), 0) || 1;
   const wait = async (fn, ms, label) => {
     const t0 = io.now();
     for (;;) {
@@ -88,25 +91,46 @@ async function recordGame(io, job, opt = {}) {
   }
   if (conf && conf.isReplaysEnabled === false) throw new Error('Les replays sont désactivés dans ton client League of Legends (ou un patch est en cours de téléchargement).');
   if (conf && conf.isPatching) throw new Error('Le client League of Legends est en train de se mettre à jour : réessaie quand il a fini.');
-  // 2. téléchargement du replay
+  // 2. téléchargement du replay. Le client ne connaît le replay d'une partie qu'une fois sa fiche créée
+  // (ce que fait l'historique des parties quand on l'ouvre) : on la crée, puis on suit son état.
   const meta = () => io.lcu('GET', `/lol-replays/v1/metadata/${job.gameId}`).catch(() => null);
+  const create = () => io.lcu('POST', `/lol-replays/v2/metadata/${job.gameId}/create`, {
+    gameId: job.gameId, gameType: 'MATCHED_GAME', queueId: job.queueId || 420, gameEnd: job.gameEnd || 0, gameVersion: job.gameVersion || ''
+  }).catch(() => null);
+  status('Recherche du replay dans le client League of Legends…', 0.02);
   let m = await meta();
-  let asked = false;
+  let lastCreate = -Infinity;
+  if (!m || !['download', 'downloading', 'watch'].includes(m.state)) { await create(); lastCreate = io.now(); m = await meta(); }
+  let askedAt = null;
   const t0 = io.now();
   while (!m || m.state !== 'watch') {
-    const st = m ? m.state : 'checking';
+    const st = m ? m.state : 'inconnu';
     if (REPLAY_ERRORS[st]) throw new Error(REPLAY_ERRORS[st]);
-    if (st === 'download' && !asked) {
-      status('Téléchargement du replay…');
-      await io.lcu('POST', `/lol-replays/v1/rofls/${job.gameId}/download`, { componentType: 'replay-button_match-history' });
-      asked = true;
-    } else if (st === 'downloading') status('Téléchargement du replay… ' + Math.round((m.downloadProgress || 0) * (m.downloadProgress > 1 ? 1 : 100)) + ' %');
+    const sec = Math.round((io.now() - t0) / 1000);
+    if (st === 'download') {
+      if (askedAt === null || io.now() - askedAt > 20000) { // demande (ou nouvelle demande si rien ne bouge)
+        status('Téléchargement du replay…', 0.05);
+        await io.lcu('POST', `/lol-replays/v1/rofls/${job.gameId}/download`, { componentType: 'replay-button_match-history' }).catch(() => null);
+        askedAt = io.now();
+      }
+    } else if (st === 'downloading') {
+      const p = Math.max(0, Math.min(1, (m.downloadProgress || 0) / (m.downloadProgress > 1 ? 100 : 1)));
+      status('Téléchargement du replay… ' + Math.round(p * 100) + ' %', 0.05 + 0.35 * p);
+    } else {
+      // « checking » ou pas encore de fiche : le client interroge Riot
+      status('Le client League of Legends vérifie le replay chez Riot… (' + sec + ' s)', 0.03);
+      if (io.now() - lastCreate > 15000) { await create(); lastCreate = io.now(); }
+      if (io.now() - t0 > o.checkTimeout) {
+        throw new Error('Le client League of Legends ne propose pas le replay de cette partie (état « ' + st + ' » au bout de ' + sec + ' s). '
+          + 'Vérifie dans le client : Profil › Historique, clique sur la partie. S\'il n\'y a pas de bouton pour télécharger le replay, Riot ne le propose pas (partie d\'un autre patch, ou trop ancienne).');
+      }
+    }
     if (io.now() - t0 > o.downloadTimeout) throw new Error('Le replay met trop de temps à se télécharger.');
     await io.sleep(o.poll);
     m = await meta();
   }
   // 3. lancement et attente de la Replay API
-  status('Ouverture du replay dans League of Legends…');
+  status('Ouverture du replay dans League of Legends…', 0.41);
   await io.lcu('POST', `/lol-replays/v1/rofls/${job.gameId}/watch`, { componentType: 'replay-button_match-history' });
   await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && p.length > 0 ? p : null; }, o.loadTimeout,
     'Le replay ne s\'est pas ouvert, ou la Replay API ne répond pas (EnableReplayApi=1 dans game.cfg).');
@@ -125,19 +149,22 @@ async function recordGame(io, job, opt = {}) {
   };
   await attach();
   // 4. un extrait par fenêtre
-  const windows = clipWindows(job.moments, job.duration || Infinity);
   const clips = [];
+  let done = 0;
+  const at = d => 0.45 + 0.53 * Math.min(1, d / total);
   for (let i = 0; i < windows.length; i++) {
     const w = windows[i];
-    status(`Enregistrement ${i + 1}/${windows.length}…`);
+    const label = `Enregistrement ${i + 1}/${windows.length}…`;
+    status(label, at(done));
     await io.replay('POST', '/replay/playback', { time: w.start, paused: false, speed: 1 });
     await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && !p.seeking && Math.abs(p.time - w.start) < 4 ? p : null; }, o.seekTimeout, 'Le replay ne répond plus.');
     await attach();
     const file = job.file(i, w);
-    await io.record(w.end - w.start, file);
+    await io.record(w.end - w.start, file, f => status(label, at(done + f * (w.end - w.start))));
+    done += w.end - w.start;
     clips.push(Object.assign({ file }, w));
   }
-  status('Fermeture du replay…');
+  status('Fermeture du replay…', 0.99);
   await io.killGame().catch(() => {});
   return { clips, camera: attached };
 }

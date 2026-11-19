@@ -631,7 +631,7 @@ async function getMoments({ playerId, matchId }) {
     const an = analyses.list.find(a => a.matchId === matchId && a.playerId === playerId);
     return {
       ok: true, moments: m, videoKey: videoKey(playerId, matchId), canFilm: true,
-      filming: !!(videoJob && videoJob.matchId === matchId) && videoJob.status,
+      filming: !!(videoJob && videoJob.matchId === matchId) && videoJob.status, filmingProgress: videoJob ? videoJob.progress : 0,
       sending: !!(sendJob && sendJob.matchId === matchId) && sendJob.status,
       analysisId: an ? an.id : null, analysisClosed: !!(an && an.status === 'terminee'), lol: lolInstallView()
     };
@@ -837,15 +837,15 @@ async function sendAnalysis({ matchId, picks, note }) {
     sendJob = null;
     throw e;
   }
-  const status = text => { sendJob.status = text; send('analysis:status', { matchId, text }); };
+  const status = (text, progress) => { sendJob.status = text; sendJob.progress = progress; send('analysis:status', { matchId, text, progress }); };
   (async () => {
     try {
       for (let i = 0; i < clips.length; i++) {
-        status('Envoi de la vidéo ' + (i + 1) + '/' + clips.length + '…');
+        status('Envoi de la vidéo ' + (i + 1) + '/' + clips.length + '…', 0.05 + 0.9 * i / clips.length);
         await cloud.uploadClip(id, clips[i].file, fs.readFileSync(path.join(dir, clips[i].file)));
         if (!session) throw new Error('Session fermée pendant l\'envoi.');
       }
-      status('Envoi au coach…');
+      status('Envoi au coach…', 0.97);
       const r = await cloud.analysisReady(playerToken(), id);
       delete m.pending;
       m.sent = { id, at: Date.now() };
@@ -926,7 +926,7 @@ function recorderWindow() {
   recWin = new BrowserWindow({ show: false, width: 320, height: 200, webPreferences: { preload: path.join(__dirname, 'recorder-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   return recWin.loadFile(path.join(__dirname, 'renderer', 'recorder.html')).then(() => recWin);
 }
-async function recordWindow(seconds, file) {
+async function recordWindow(seconds, file, onTick) {
   const sources = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } });
   const game = process.env.COACHING_LOL_TEST ? null : sources.find(x => x.id.startsWith('window') && /League of Legends \(TM\)/i.test(x.name));
   const src = game || sources.find(x => x.id.startsWith('screen'));
@@ -941,8 +941,12 @@ async function recordWindow(seconds, file) {
     };
     ipcMain.on('rec:done', h);
   });
-  rw.webContents.send('rec:start', { id, sourceId: src.id, ms: FAST ? 1500 : Math.round(seconds * 1000), w: 1280, h: 720, fps: 30, bps: 1200000 });
-  const data = await done;
+  const ms = FAST ? 1500 : Math.round(seconds * 1000);
+  rw.webContents.send('rec:start', { id, sourceId: src.id, ms, w: 1280, h: 720, fps: 30, bps: 1200000 });
+  const t0 = Date.now();
+  const tick = onTick ? setInterval(() => onTick(Math.min(1, (Date.now() - t0) / ms)), 1000) : null;
+  let data;
+  try { data = await done; } finally { if (tick) clearInterval(tick); }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, Buffer.from(data));
 }
@@ -975,18 +979,23 @@ async function recordVideos({ playerId, matchId }) {
   const dir = path.join(videosDir(), videoKey(playerId, matchId));
   fs.rmSync(dir, { recursive: true, force: true });
   const me = m.participants.find(p => p.id === m.me);
-  videoJob = { playerId, matchId, status: 'Préparation…' };
-  const status = text => { videoJob.status = text; sendVideo({ playerId, matchId, text }); };
-  status('Préparation…');
+  videoJob = { playerId, matchId, status: 'Préparation…', progress: 0 };
+  const status = (text, progress) => {
+    videoJob.status = text;
+    if (typeof progress === 'number') videoJob.progress = progress;
+    sendVideo({ playerId, matchId, text, progress: videoJob.progress });
+  };
+  status('Préparation…', 0.01);
+  const gm = ((session && session.source === 'cloud' && remoteData ? remoteData.games : store.data.games) || []).find(x => x.matchId === matchId && x.playerId === playerId);
   (async () => {
     try {
       const r = await replayMod.recordGame({
         lcu: (method, p, body) => localJson(creds.base, method, p, body, creds.password),
         replay: (method, p, body) => localJson(REPLAY_BASE, method, p, body),
-        record: (sec, file) => recordWindow(sec, file),
+        record: (sec, file, onTick) => recordWindow(sec, file, onTick),
         killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status
       }, {
-        gameId: m.gameId, duration: m.duration, champion: me.champion, championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
+        gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: 420, gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion, championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
         file: (i, w) => path.join(dir, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
       }, FAST ? { poll: 250 } : {});
       m.clips = r.clips.map(c => ({ start: c.start, end: c.end, times: c.times, file: path.basename(c.file), bytes: fs.statSync(c.file).size }));

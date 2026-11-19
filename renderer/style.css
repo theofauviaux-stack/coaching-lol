@@ -504,3 +504,10 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .mo-perm { align-items: flex-start; }
 .mo-perm ol { margin: 6px 0 0 18px; padding: 0; line-height: 1.55; }
 .mo-perm-btns { display: flex; flex-direction: column; gap: 8px; margin-left: auto; }
+/* barre de progression (tournage, envoi) */
+.mo-vstatus { flex-direction: column; align-items: stretch; gap: 8px; }
+.mo-vline { display: flex; align-items: center; gap: 10px; }
+.mo-vline .faint { margin-left: auto; font-weight: 400; }
+.mo-vpct { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.mo-bar { height: 6px; border-radius: 4px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.mo-bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .6s ease; }
