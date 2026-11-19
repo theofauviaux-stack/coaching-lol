@@ -24,7 +24,9 @@ const ERREURS = {
   stockage_plein: 'L\'espace vidéo du serveur est plein : le coach doit d\'abord terminer des analyses.',
   analyse_inconnue: 'Cette analyse n\'existe plus.',
   analyse_fermee: 'Cette analyse est terminée : la discussion est fermée.',
-  commentaire_invalide: 'Message vide ou trop long (2 000 caractères au plus).'
+  commentaire_invalide: 'Message vide ou trop long (2 000 caractères au plus).',
+  export_impossible: 'Cette analyse ne peut pas être exportée (pas encore terminée par le coach, ou déjà exportée).',
+  videos_restantes: 'Les vidéos ne sont pas encore effacées du serveur.'
 };
 
 // Adresse du projet et clé publique : publiques par conception (les tables sont fermées, seules
@@ -104,6 +106,8 @@ class CloudClient {
   analysesMine(token) { return this.rpc('analyses_mine', { p_token: token }); }
   analysisGet(token, id) { return this.rpc('analysis_get', { p_token: token, p_id: id }); }
   analysisComment(token, id, t, text) { return this.rpc('analysis_comment', { p_token: token, p_id: id, p_t: t, p_text: text }); }
+  analysisExportDone(token, id) { return this.rpc('analysis_export_done', { p_token: token, p_id: id }); }
+  analysisForget(token, id) { return this.rpc('analysis_forget', { p_token: token, p_id: id }); }
 
   // ---- stockage des vidéos (dossier public « clips ») ; règles d'accès dans supabase/analyses.sql
   clipUrl(id, file) { return `${this.url}/storage/v1/object/public/clips/${id}/${file}`; }

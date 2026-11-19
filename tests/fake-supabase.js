@@ -18,7 +18,8 @@ const SIG = {
   coach_clips_purge: { p_key: 'text' }, coach_clips_gone: { p_key: 'text', p_id: 'uuid' },
   moments_get: { p_token: 'text', p_match: 'text' }, analysis_create: { p_token: 'text', p: 'jsonb' }, analysis_ready: { p_token: 'text', p_id: 'uuid' },
   analyses_mine: { p_token: 'text' }, analysis_get: { p_token: 'text', p_id: 'uuid' },
-  analysis_comment: { p_token: 'text', p_id: 'uuid', p_t: 'int', p_text: 'text' }
+  analysis_comment: { p_token: 'text', p_id: 'uuid', p_t: 'int', p_text: 'text' },
+  analysis_export_done: { p_token: 'text', p_id: 'uuid' }, analysis_forget: { p_token: 'text', p_id: 'uuid' }
 };
 
 // Tables du stockage de Supabase (déjà présentes dans un vrai projet), avec la sécurité par ligne activée

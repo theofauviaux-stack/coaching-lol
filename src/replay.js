@@ -6,9 +6,9 @@
 //   4. fermeture du jeu.
 // Ce fichier ne touche ni au réseau ni à l'écran : tout passe par les fonctions données dans `io`
 // (voir tests/replay.js et main.js).
-const BEFORE = 25; // secondes filmées avant le moment (la lecture commence 20 s avant : 5 s de marge)
+const BEFORE = 35; // secondes filmées avant le moment (la lecture commence 30 s avant : 5 s de marge)
 const AFTER = 10; // et après
-const MAX_CLIP = 75; // deux moments proches partagent un extrait, sans dépasser 75 s
+const MAX_CLIP = 90; // deux moments proches partagent un extrait, sans dépasser 90 s
 const GAP = 15; // moins de 15 s entre deux extraits : on filme d'un seul tenant
 
 // Moments à filmer : morts, objectifs perdus, kills, objectifs pris où il était (10 au maximum)
@@ -72,6 +72,7 @@ const REPLAY_ERRORS = {
 async function recordGame(io, job, opt = {}) {
   const o = Object.assign({ downloadTimeout: 8 * 60000, askAfter: 20000, checkTimeout: 4 * 60000, loadTimeout: 5 * 60000, seekTimeout: 25000, attachTimeout: 20000, poll: 1500 }, opt);
   const status = io.status || (() => {});
+  const log = io.log || (() => {}); // journal local (diagnostic), jamais de mot de passe
   // avancement global (barre de progression) : recherche 0-5 %, téléchargement 5-40 %, ouverture 40-45 %, extraits 45-98 %
   const windows = clipWindows(job.moments, job.duration || Infinity);
   const total = windows.reduce((n, w) => n + (w.end - w.start), 0) || 1;
@@ -103,7 +104,9 @@ async function recordGame(io, job, opt = {}) {
   };
   status('Recherche du replay dans le client League of Legends…', 0.02);
   let m = await meta();
+  log('fiche replay', m);
   let lastCreate = -Infinity;
+  let lastState = m ? m.state : null;
   if (!m || !['download', 'downloading', 'watch'].includes(m.state)) { await create(); lastCreate = io.now(); m = await meta(); }
   let askedAt = null;
   const t0 = io.now();
@@ -135,6 +138,7 @@ async function recordGame(io, job, opt = {}) {
     if (io.now() - t0 > o.downloadTimeout) throw new Error('Le replay met trop de temps à se télécharger.');
     await io.sleep(o.poll);
     m = await meta();
+    if ((m ? m.state : null) !== lastState) { lastState = m ? m.state : null; log('état du replay', m); }
   }
   // 3. lancement et attente de la Replay API
   status('Ouverture du replay dans League of Legends…', 0.41);
@@ -149,14 +153,20 @@ async function recordGame(io, job, opt = {}) {
   try {
     const list = await io.replay('GET', '/liveclientdata/playerlist');
     const me = (Array.isArray(list) ? list : []).find(p => champs.includes(norm(p.championName)) || champs.includes(norm(String(p.rawChampionName || '').split('_').pop())));
-    if (me) names.push(me.riotIdGameName, me.summonerName, String(me.summonerName || '').split('#')[0], me.riotId, me.championName);
-  } catch (e) { /* liste indisponible : noms connus seulement */ }
+    if (me) names.push(me.riotIdGameName, me.riotId, me.summonerName, String(me.summonerName || '').split('#')[0], me.championName);
+    log('joueurs du replay', (Array.isArray(list) ? list : []).map(p => ({ champion: p.championName, riotId: p.riotId, nom: p.riotIdGameName || p.summonerName })));
+  } catch (e) { log('joueurs du replay', 'indisponible : ' + e.message); }
   names = [...new Set(names.concat([job.gameName, job.champion, job.championName]).filter(Boolean))];
   let attached = null;
+  // 1) sélectionner le champion, 2) attacher la caméra à la sélection : deux requêtes séparées (envoyées ensemble,
+  // le jeu attache la caméra à la sélection précédente, c'est-à-dire à rien) ; 3) vérifier
   const attachOnce = async n => {
-    await io.replay('POST', '/replay/render', { cameraAttached: true, selectionName: n, cameraMode: 'top' });
+    await io.replay('POST', '/replay/render', { selectionName: n });
+    await io.replay('POST', '/replay/render', { cameraMode: 'top', cameraAttached: true });
     const r = await io.replay('GET', '/replay/render');
-    return !!(r && r.cameraAttached !== false && norm(r.selectionName) && names.some(x => norm(x) === norm(r.selectionName)));
+    const ok = !!(r && r.cameraAttached !== false && norm(r.selectionName) && names.some(x => norm(x) === norm(r.selectionName)));
+    log('caméra « ' + n + ' »', { ok, selectionName: r && r.selectionName, cameraAttached: r && r.cameraAttached, cameraMode: r && r.cameraMode });
+    return ok;
   };
   const attach = async () => {
     for (const n of attached ? [attached].concat(names.filter(x => x !== attached)) : names) {
@@ -186,6 +196,7 @@ async function recordGame(io, job, opt = {}) {
     await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && !p.seeking && Math.abs(p.time - w.start) < 2 ? p : null; }, o.seekTimeout, 'Le replay ne répond plus.');
     if (!(await attach())) throw new Error('La caméra a perdu ' + (job.championName || job.champion) + ' dans le replay.');
     await io.replay('POST', '/replay/playback', { paused: false, speed: 1 });
+    await attachOnce(attached).catch(() => false); // la reprise de lecture peut décrocher la caméra
     const file = job.file(i, w);
     let ticks = 0;
     await io.record(w.end - w.start, file, f => {

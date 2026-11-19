@@ -100,33 +100,72 @@ const { prepareDb, storageOp } = require('./fake-supabase');
   assert.strictEqual((await r(`analysis_create($1, $2)`, [t2, JSON.stringify({ matchId: 'EUW1_2', clips: [Object.assign({}, clips[0], { bytes: 2 * 1048576 })] })])).error, 'stockage_plein');
   await db.query(`update analyses set bytes = 2000 where id = $1`, [a.id]);
 
-  // --- fin de l'analyse : vidéos effaçables, discussion fermée mais lisible
+  // --- fin de l'analyse : discussion fermée, vidéos gardées pour l'export du joueur
   assert.strictEqual((await r(`coach_analysis_close('mauvais', $1)`, [a.id])).error, 'jeton_inconnu');
   const closed = await r(`coach_analysis_close($1, $2)`, [KEY, a.id]);
   assert.strictEqual(closed.analysis.status, 'terminee');
-  assert.strictEqual(closed.analysis.clipsState, 'a_effacer');
+  assert.strictEqual(closed.analysis.clipsState, 'en_ligne', 'vidéos gardées pour l\'export');
   assert.strictEqual((await r(`analysis_comment($1, $2, null, 'encore')`, [t1, a.id])).error, 'analyse_fermee');
   assert.strictEqual((await r(`coach_analysis_comment($1, $2, null, 'encore')`, [KEY, a.id])).error, 'analyse_fermee');
-  // la purge liste les vidéos à effacer (dont les 2 envois abandonnés vieux de plus d'un jour)
+  assert.deepStrictEqual((await del([a.id + '/01_6m10.webm']))[1], [], 'pas effaçables par n\'importe qui');
+  // la purge : envois abandonnés (plus d'un jour) seulement ; l'analyse terminée hier garde ses vidéos
   await db.query(`update analyses set created_at = now() - interval '2 days' where status = 'envoi'`);
-  const pg = (await r(`coach_clips_purge($1)`, [KEY])).purge;
-  assert.strictEqual(pg.length, 3);
-  assert.deepStrictEqual(pg.find(x => x.id === a.id).files, ['01_6m10.webm', '02_8m40.webm']);
-  // effacement avec la clé publique, puis confirmation
-  const gone = await del([a.id + '/01_6m10.webm', a.id + '/02_8m40.webm']);
-  assert.strictEqual(gone[1].length, 2, JSON.stringify(gone));
-  assert.strictEqual(files.size, 0);
+  let pg = (await r(`coach_clips_purge($1)`, [KEY])).purge;
+  assert.strictEqual(pg.length, 2);
+  assert.ok(!pg.some(x => x.id === a.id));
   for (const x of pg) await r(`coach_clips_gone($1, $2)`, [KEY, x.id]);
-  const after = (await r(`analyses_mine($1)`, [t1])).analyses;
-  assert.deepStrictEqual(after.map(x => [x.status, x.clipsState, x.comments.length]), [['terminee', 'effacees', 4]], 'envois abandonnés supprimés, discussion gardée');
-  assert.deepStrictEqual((await r(`coach_clips_purge($1)`, [KEY])).purge, []);
-  // analyse ouverte de plus de 30 jours : vidéos effacées, discussion toujours ouverte
+  // export par le joueur : seulement le sien, seulement une fois terminé
+  assert.strictEqual((await r(`analysis_export_done($1, $2)`, [t2, a.id])).error, 'export_impossible');
+  const ex = await r(`analysis_export_done($1, $2)`, [t1, a.id]);
+  assert.ok(ex.ok && ex.clipsState === 'a_effacer', JSON.stringify(ex));
+  assert.deepStrictEqual(ex.files, ['01_6m10.webm', '02_8m40.webm']);
+  assert.strictEqual((await r(`analysis_export_done($1, $2)`, [t1, a.id])).error, 'export_impossible', 'une seule fois');
+  assert.deepStrictEqual((await r(`analyses_mine($1)`, [t1])).analyses, [], 'n\'apparaît plus');
+  assert.deepStrictEqual((await r(`coach_analyses($1)`, [KEY])).analyses, [], 'ni chez le coach');
+  // tant que les vidéos sont là, l'analyse reste (pour que la purge puisse les effacer)
+  assert.strictEqual((await r(`analysis_forget($1, $2)`, [t1, a.id])).error, 'videos_restantes');
+  const gone = await del(ex.files.map(f => a.id + '/' + f));
+  assert.strictEqual(gone[1].length, 2, 'le joueur efface ses vidéos avec la clé publique');
+  assert.strictEqual(files.size, 0);
+  assert.strictEqual((await r(`analysis_forget($1, $2)`, [t2, a.id])).ok, true);
+  assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [a.id])).n), 1, 'pas l\'analyse d\'un autre');
+  assert.strictEqual((await r(`analysis_forget($1, $2)`, [t1, a.id])).ok, true);
+  assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [a.id])).n), 0, 'analyse supprimée');
+  assert.strictEqual(Number((await one(`select count(*) as n from analysis_comments where analysis_id = $1`, [a.id])).n), 0, 'messages supprimés');
+  // analyse terminée depuis plus de 7 jours sans export : vidéos effacées, discussion gardée
   const b = await create(t1);
   for (const f of clips) await upload(b.id + '/' + f.file);
   await r(`analysis_ready($1, $2)`, [t1, b.id]);
-  await db.query(`update analyses set created_at = now() - interval '31 days' where id = $1`, [b.id]);
-  assert.deepStrictEqual((await r(`coach_clips_purge($1)`, [KEY])).purge.map(x => x.id), [b.id]);
-  assert.strictEqual((await r(`analysis_comment($1, $2, null, 'toujours ouverte')`, [t1, b.id])).ok, true);
+  await r(`coach_analysis_close($1, $2)`, [KEY, b.id]);
+  await db.query(`update analyses set closed_at = now() - interval '8 days' where id = $1`, [b.id]);
+  pg = (await r(`coach_clips_purge($1)`, [KEY])).purge;
+  assert.deepStrictEqual(pg.map(x => x.id), [b.id]);
+  await del(pg[0].files.map(f => b.id + '/' + f));
+  await r(`coach_clips_gone($1, $2)`, [KEY, b.id]);
+  assert.deepStrictEqual((await r(`analyses_mine($1)`, [t1])).analyses.map(x => [x.status, x.clipsState]), [['terminee', 'effacees']]);
+  // export après effacement : débrief seul, puis suppression
+  const ex2 = await r(`analysis_export_done($1, $2)`, [t1, b.id]);
+  assert.deepStrictEqual([ex2.clipsState, ex2.files], ['effacees', []]);
+  assert.strictEqual((await r(`analysis_forget($1, $2)`, [t1, b.id])).ok, true);
+  assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [b.id])).n), 0);
+  // exportée mais vidéos pas effacées (app fermée trop tôt) : la purge du coach finit le travail
+  const e3 = await create(t1);
+  for (const f of clips) await upload(e3.id + '/' + f.file);
+  await r(`analysis_ready($1, $2)`, [t1, e3.id]);
+  await r(`coach_analysis_close($1, $2)`, [KEY, e3.id]);
+  await r(`analysis_export_done($1, $2)`, [t1, e3.id]);
+  pg = (await r(`coach_clips_purge($1)`, [KEY])).purge;
+  assert.deepStrictEqual(pg.map(x => x.id), [e3.id]);
+  await del(pg[0].files.map(f => e3.id + '/' + f));
+  await r(`coach_clips_gone($1, $2)`, [KEY, e3.id]);
+  assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [e3.id])).n), 0, 'analyse exportée supprimée par la purge');
+  // analyse ouverte de plus de 30 jours : vidéos effacées, discussion toujours ouverte
+  const d = await create(t1);
+  for (const f of clips) await upload(d.id + '/' + f.file);
+  await r(`analysis_ready($1, $2)`, [t1, d.id]);
+  await db.query(`update analyses set created_at = now() - interval '31 days' where id = $1`, [d.id]);
+  assert.deepStrictEqual((await r(`coach_clips_purge($1)`, [KEY])).purge.map(x => x.id), [d.id]);
+  assert.strictEqual((await r(`analysis_comment($1, $2, null, 'toujours ouverte')`, [t1, d.id])).ok, true);
 
   // --- fonctions internes fermées au public
   for (const f of ['_analysis_json', '_comment_add']) {

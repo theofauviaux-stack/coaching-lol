@@ -50,8 +50,10 @@ function startLol() {
           return send(200, { time: rp.time, seeking: false, paused: false, speed: 1, length: 1200 });
         }
         if (req.url === '/replay/render') {
-          if (req.method === 'POST' && body && body.selectionName === 'UCE Uawawa') rp.selection = 'UCE Uawawa';
-          return send(200, { selectionName: rp.selection, cameraAttached: !!rp.selection });
+          // comme le jeu : sélection puis attache de la caméra (l'attache vaut pour la sélection en cours)
+          if (req.method === 'POST' && body && 'selectionName' in body) { rp.selection = body.selectionName === 'UCE Uawawa' ? 'UCE Uawawa' : ''; rp.attached = false; }
+          if (req.method === 'POST' && body && 'cameraAttached' in body && !('selectionName' in body)) rp.attached = !!body.cameraAttached && !!rp.selection;
+          return send(200, { selectionName: rp.selection, cameraAttached: !!rp.attached, cameraMode: 'top' });
         }
       }
       return send(404, { status: { message: 'Data not found', status_code: 404 } });
@@ -108,7 +110,8 @@ function launch(phase, dataDir, env) {
     if (Date.now() - t0 > 90000) throw new Error('moments jamais envoyés au serveur');
     await wait(500);
   }
-  const joueurDone = launch('joueur', path.join(DIR, 'joueur'), Object.assign({ COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url }, cloudEnv));
+  fs.mkdirSync(path.join(DIR, 'export'), { recursive: true });
+  const joueurDone = launch('joueur', path.join(DIR, 'joueur'), Object.assign({ COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url, COACHING_LOL_EXPORT_DIR: path.join(DIR, 'export') }, cloudEnv));
   await Promise.all([coachDone, joueurDone]);
   lol.close();
   const rc = JSON.parse(fs.readFileSync(path.join(DIR, 'resultat-coach.json'), 'utf8'));
@@ -130,9 +133,11 @@ function launch(phase, dataDir, env) {
   assert.ok(rj.progression.some(x => /vérifie le replay/.test(x[0])) && rj.progression.some(x => /^Enregistrement 2\/4/.test(x[0])), JSON.stringify(rj.progression.map(x => x[0])));
   assert.ok(rj.barre && rj.barre.largeur > 0, JSON.stringify(rj.barre));
   assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
-  assert.deepStrictEqual(rj.fichiers, ['01_6m05.webm', '02_8m35.webm', '03_13m35.webm', '04_15m35.webm'], 'extraits commencés 25 s avant chaque moment');
-  assert.ok(calls.replay.filter(x => x.startsWith('POST /replay/render')).every(x => /"selectionName":"UCE Uawawa"/.test(x) || /"selectionName":"(Demacia)"/.test(x) === false), 'caméra uniquement sur le joueur');
-  assert.ok(calls.replay.includes('POST /replay/playback {"time":365,"paused":true,"speed":1}') && calls.replay.includes('POST /replay/playback {"paused":false,"speed":1}'), 'pause au début de l\'extrait puis lecture');
+  assert.deepStrictEqual(rj.fichiers, ['01_5m55.webm', '02_8m25.webm', '03_13m25.webm', '04_15m25.webm'], 'extraits commencés 35 s avant chaque moment');
+  assert.ok(!calls.replay.some(x => /"selectionName".*"cameraAttached"|"cameraAttached".*"selectionName"/.test(x)), 'sélection et attache séparées');
+  assert.ok(calls.replay.includes('POST /replay/render {"selectionName":"UCE Uawawa"}') && calls.replay.includes('POST /replay/render {"cameraMode":"top","cameraAttached":true}'), 'caméra sur le joueur');
+  assert.ok(calls.replay.includes('POST /replay/playback {"time":355,"paused":true,"speed":1}') && calls.replay.includes('POST /replay/playback {"paused":false,"speed":1}'), 'pause au début de l\'extrait puis lecture');
+  assert.ok(/caméra « UCE Uawawa ».*"ok":true/.test(rj.journal) && /» Enregistrement 4\/4/.test(rj.journal), rj.journal);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
   assert.strictEqual(rj.cartes, 4);
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
@@ -145,8 +150,8 @@ function launch(phase, dataDir, env) {
   assert.ok(/UCE Uawawa.*Darius contre Garen.*2.*Nouvelle/.test(rc.liste[0]), rc.liste[0]);
   assert.ok(/Je veux travailler mes placements de wards/.test(rc.filGeneral), rc.filGeneral);
   assert.deepStrictEqual(rc.filMoment, ['Je pensais que leur jungler était bot, je n\'avais pas de ward.']);
-  assert.ok(rc.video.largeur > 0 && /^clip:\/\/r\/[0-9a-f-]{36}\/01_6m05\.webm$/.test(rc.video.src), JSON.stringify(rc.video));
-  assert.strictEqual(rc.filmes, 5, 'moments couverts par les 2 vidéos envoyées');
+  assert.ok(rc.video.largeur > 0 && /^clip:\/\/r\/[0-9a-f-]{36}\/01_5m55\.webm$/.test(rc.video.src), JSON.stringify(rc.video));
+  assert.strictEqual(rc.filmes, 6, 'moments couverts par les 2 vidéos envoyées');
   // discussion dans les deux sens, sans recharger la vidéo
   assert.ok(/Réponse du coach — Regarde la mini-carte/.test(rj.notification), rj.notification);
   assert.deepStrictEqual(rj.filMoment, ['Toi : Je pensais que leur jungler était bot, je n\'avais pas de ward.', 'Coach : Regarde la mini-carte à 6:10 : Kha\'Zix était top. Ward la rivière avant 6:00.']);
@@ -157,17 +162,32 @@ function launch(phase, dataDir, env) {
   assert.ok(/Analyse terminée/.test(rc.fin), rc.fin);
   assert.ok(/Analyse terminée/.test(rj.fin), rj.fin);
   assert.ok(/Le coach a terminé l'analyse de Darius contre Garen/.test(rj.notifFin), rj.notifFin);
-  assert.ok(/Darius contre Garen.*effacées.*5.*Terminée/.test(rj.liste[0]), rj.liste[0]);
+  assert.ok(/Darius contre Garen.*2.*5.*À exporter/.test(rj.liste[0]), rj.liste[0]);
+  assert.strictEqual(rc.videosApresFin, 'en_ligne', 'vidéos gardées à la fin pour l\'export');
+  assert.ok(/le joueur peut l'exporter/i.test(rc.fin), rc.fin);
+  // export : dossier sur l'ordinateur du joueur, puis suppression de l'app et du serveur
+  assert.ok(/Analyse exportée \(2 vidéos \+ débrief\)/.test(rj.export), rj.export);
+  const dirs = fs.readdirSync(path.join(DIR, 'export'));
+  assert.strictEqual(dirs.length, 1);
+  assert.ok(/^Analyse Darius contre Garen \d\d-\d\d-\d{4}$/.test(dirs[0]), dirs[0]);
+  const ex = path.join(DIR, 'export', dirs[0]);
+  assert.deepStrictEqual(fs.readdirSync(ex).sort(), ['01_5m55.webm', '04_15m25.webm', 'debrief.html']);
+  assert.ok(fs.statSync(path.join(ex, '01_5m55.webm')).size > 1000);
+  const html = fs.readFileSync(path.join(ex, 'debrief.html'), 'utf8');
+  for (const t of ['Je veux travailler mes placements de wards', 'Regarde la mini-carte', 'Compris, je pose une ward', 'Combat au mid', 'src="01_5m55.webm#t=5"', 'Discussion générale']) assert.ok(html.includes(t) || html.includes(t.replace(/'/g, '&#39;')), 'débrief : ' + t);
+  assert.strictEqual(rj.listeApres, 0, 'analyse supprimée de l\'app');
+  assert.strictEqual(rj.videosLocales, false, 'vidéos locales supprimées');
+  assert.ok(/a exporté cette analyse/.test(rc.apresExport), rc.apresExport);
   const a = (await fake.db.query(`select id, status, clips_state, note, (select count(*) from analysis_comments c where c.analysis_id = analyses.id) as n from analyses order by created_at`)).rows;
-  assert.deepStrictEqual(a.map(x => [x.status, x.clips_state, Number(x.n)]), [['terminee', 'effacees', 4], ['ouverte', 'en_ligne', 0]]);
-  assert.ok([...fake.files.keys()].every(k => k.startsWith('clips/' + a[1].id + '/')), 'vidéos de la 1re analyse effacées du stockage');
+  assert.deepStrictEqual(a.map(x => [x.status, x.clips_state, Number(x.n)]), [['ouverte', 'en_ligne', 0]], '1re analyse supprimée du serveur après l\'export');
+  assert.ok([...fake.files.keys()].every(k => k.startsWith('clips/' + a[0].id + '/')), 'vidéos de la 1re analyse effacées du stockage');
   // le joueur sur l'ordinateur du coach : moments, tournage, envoi, page Analyses
   assert.ok(rc.local.menu.includes('Analyses'), rc.local.menu.join(','));
-  assert.ok(/Darius contre Garen.*Terminée/.test(rc.local.liste[0]), JSON.stringify(rc.local.liste));
+  assert.deepStrictEqual(rc.local.liste, [], 'analyse exportée : plus dans la liste');
   assert.ok(rc.local.boutons.some(b => /Filmer les moments/.test(b)), rc.local.boutons.join(' | '));
   assert.ok(/4 extraits filmés/.test(rc.local.tournage), rc.local.tournage);
   assert.ok(/envoyée au coach/.test(rc.local.envoi), rc.local.envoi);
-  assert.strictEqual(a[1].note, 'Envoyée depuis l\'ordinateur du coach.');
+  assert.strictEqual(a[0].note, 'Envoyée depuis l\'ordinateur du coach.');
   assert.strictEqual(fake.files.size, 4);
   assert.strictEqual(fake.hits.uploads, 6);
   assert.ok(calls.match >= 2, 'moments calculés par l\'app du coach');

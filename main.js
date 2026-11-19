@@ -13,6 +13,7 @@ const lpMod = require('./src/lp');
 const liveMod = require('./src/live');
 const momentsMod = require('./src/moments');
 const replayMod = require('./src/replay');
+const debriefMod = require('./src/debrief');
 const { pathToFileURL } = require('url');
 // vidéos des moments : lues dans l'app par l'adresse clip://v/<joueur_partie>/<fichier>.webm
 protocol.registerSchemesAsPrivileged([{ scheme: 'clip', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -799,6 +800,73 @@ async function purgeClips() {
     if (err !== analyses.purgeError) { analyses.purgeError = err; if (canEdit()) refreshView(); }
   } catch (e) { /* nouvel essai au prochain passage */ }
 }
+// Export par le joueur d'une analyse terminée : vidéos + debrief.html dans un dossier de son ordinateur, puis
+// l'analyse est supprimée du serveur (vidéos et messages) et ses vidéos locales de l'app, pour ne pas encombrer.
+let exportJob = null;
+const playerNameFor = id => String((((session && session.source === 'cloud' && remoteData ? remoteData.players : store.data.players) || []).find(p => p.id === id) || {}).riotId || 'Joueur').split('#')[0];
+async function exportAnalysis({ id }) {
+  if (!isPlayerOnline()) throw new Error('L\'export se fait depuis l\'espace du joueur, connecté au serveur du coach.');
+  if (exportJob) throw new Error('Un export est déjà en cours.');
+  const a = (await cloud.analysisGet(playerToken(), id)).analysis;
+  if (a.status !== 'terminee') throw new Error('Tu pourras exporter l\'analyse quand le coach l\'aura terminée.');
+  let base = process.env.COACHING_LOL_TEST ? process.env.COACHING_LOL_EXPORT_DIR : null;
+  if (!base) {
+    const res = await dialog.showOpenDialog(win, { title: 'Où enregistrer l\'analyse (vidéos + débrief) ?', buttonLabel: 'Exporter ici', properties: ['openDirectory', 'createDirectory'] });
+    if (res.canceled || !res.filePaths || !res.filePaths[0]) return { ok: false, canceled: true };
+    base = res.filePaths[0];
+  }
+  exportJob = { id };
+  const say = (text, progress) => send('analysis:export', { id, text, progress });
+  try {
+    const label = gameLabel(a);
+    const day = new Date(a.createdAt).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' }).replace(/\//g, '-');
+    const name = ('Analyse ' + label + ' ' + day).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+    let dir = path.join(base, name);
+    for (let k = 2; fs.existsSync(dir); k++) dir = path.join(base, name + ' (' + k + ')');
+    fs.mkdirSync(dir, { recursive: true });
+    const clips = a.clipsState === 'en_ligne' ? a.clips : [];
+    const localDir = path.join(videosDir(), videoKey(a.playerId, a.matchId));
+    const files = [];
+    for (let i = 0; i < clips.length; i++) {
+      const f = clips[i].file;
+      if (!/^[\w-]+\.webm$/.test(f)) continue;
+      say('Enregistrement de la vidéo ' + (i + 1) + '/' + clips.length + ' sur ton ordinateur…', 0.05 + 0.75 * i / clips.length);
+      const out = path.join(dir, f);
+      const local = path.join(localDir, f);
+      if (fs.existsSync(local) && fs.statSync(local).size > 0) fs.copyFileSync(local, out);
+      else {
+        const res = await fetch(cloud.clipUrl(id, f));
+        if (!res.ok) throw new Error('La vidéo ' + f + ' est introuvable sur le serveur (' + res.status + ') : rien n\'a été supprimé.');
+        fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+      }
+      if (!(fs.statSync(out).size > 0)) throw new Error('La vidéo ' + f + ' est vide : rien n\'a été supprimé.');
+      files.push(f);
+    }
+    say('Écriture du débrief…', 0.84);
+    const html = debriefMod.buildDebrief({ analysis: a, label, playerName: playerNameFor(a.playerId), champName, files });
+    fs.writeFileSync(path.join(dir, 'debrief.html'), html);
+    if (fs.readFileSync(path.join(dir, 'debrief.html'), 'utf8').length !== html.length) throw new Error('Le débrief n\'a pas pu être écrit : rien n\'a été supprimé.');
+    // tout est sur l'ordinateur : l'analyse quitte le serveur et l'app
+    say('Suppression de l\'analyse sur le serveur…', 0.9);
+    const ex = await cloud.analysisExportDone(playerToken(), id);
+    let left = 0;
+    if (ex.files && ex.files.length) {
+      await cloud.deleteClips(ex.files.map(f => id + '/' + f)).catch(() => null);
+      for (const f of ex.files) if (await cloud.clipExists(id, f)) left++;
+    }
+    if (!left) await cloud.analysisForget(playerToken(), id).catch(() => null); // sinon la purge du coach finira
+    fs.rmSync(localDir, { recursive: true, force: true });
+    const mm = readMoments(a.playerId, a.matchId);
+    if (mm) { delete mm.clips; delete mm.camera; delete mm.sent; delete mm.pending; writeMoments(a.playerId, mm); }
+    analyses.list = analyses.list.filter(x => x.id !== id);
+    refreshView();
+    if (!process.env.COACHING_LOL_TEST) shell.showItemInFolder(path.join(dir, 'debrief.html'));
+    return { ok: true, dir, files: files.length };
+  } finally {
+    exportJob = null;
+  }
+}
+
 // Envoi d'une partie par le joueur : analyse créée, vidéos envoyées une à une, puis analyse ouverte au coach
 async function sendAnalysis({ matchId, picks, note }) {
   if (!isPlayerOnline()) throw new Error(isPlayer() ? 'Pas de connexion au serveur du coach : réessaie dans un moment.' : 'L\'envoi se fait depuis l\'espace du joueur.');
@@ -980,9 +1048,15 @@ async function recordVideos({ playerId, matchId }) {
   fs.rmSync(dir, { recursive: true, force: true });
   const me = m.participants.find(p => p.id === m.me);
   videoJob = { playerId, matchId, status: 'Préparation…', progress: 0 };
+  // journal du dernier tournage (diagnostic à envoyer au coach si ça bloque) : étapes, états du client, caméra
+  const journal = path.join(videosDir(), 'journal.txt');
+  const note = line => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + line + '\n'); } catch (e) { /* facultatif */ } };
+  try { fs.mkdirSync(videosDir(), { recursive: true }); fs.writeFileSync(journal, 'Coaching LoL ' + app.getVersion() + ' · ' + process.platform + ' · partie ' + matchId + ' · ' + new Date().toISOString() + '\n'); } catch (e) { /* facultatif */ }
+  let lastText = '';
   const status = (text, progress) => {
     videoJob.status = text;
     if (typeof progress === 'number') videoJob.progress = progress;
+    if (text !== lastText) { note('» ' + text); lastText = text; }
     sendVideo({ playerId, matchId, text, progress: videoJob.progress });
   };
   status('Préparation…', 0.01);
@@ -993,7 +1067,8 @@ async function recordVideos({ playerId, matchId }) {
         lcu: (method, p, body) => localJson(creds.base, method, p, body, creds.password),
         replay: (method, p, body) => localJson(REPLAY_BASE, method, p, body),
         record: (sec, file, onTick) => recordWindow(sec, file, onTick),
-        killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status
+        killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status,
+        log: (what, data) => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + what + (data === undefined ? '' : ' ' + JSON.stringify(data)) + '\n'); } catch (e) { /* journal facultatif */ } }
       }, {
         gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: 420, gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
         label: champName(me.champion) + (m.opp ? ' contre ' + champName((m.participants.find(p => p.id === m.opp) || {}).champion) : '') + (gm && gm.date ? ' du ' + new Date(gm.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(' ', ' à ') : ''), championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
@@ -1005,7 +1080,8 @@ async function recordVideos({ playerId, matchId }) {
       writeMoments(playerId, m);
       sendVideo({ playerId, matchId, done: true, text: r.clips.length + ' extrait' + (r.clips.length > 1 ? 's' : '') + ' filmé' + (r.clips.length > 1 ? 's' : '') + '.' + (r.camera ? '' : ' Le jeu n\'a pas accepté de suivre le joueur : caméra libre.') });
     } catch (e) {
-      sendVideo({ playerId, matchId, error: e.message });
+      note('ERREUR ' + e.message);
+      sendVideo({ playerId, matchId, error: e.message, journal: true });
     } finally {
       videoJob = null;
     }
@@ -1396,7 +1472,14 @@ function registerIpc() {
   handle('analysis:send', q => sendAnalysis(q || {}));
   handle('analysis:comment', q => commentAnalysis(q || {}));
   handle('analysis:close', q => closeAnalysis(q || {}));
+  handle('analysis:export', q => exportAnalysis(q || {}));
   // autorisation « Enregistrement de l'écran » (Mac) : ouvrir le bon panneau des réglages, relancer l'app
+  handle('videos:journal', async () => {
+    const f = path.join(videosDir(), 'journal.txt');
+    if (!fs.existsSync(f)) throw new Error('Pas encore de journal.');
+    shell.showItemInFolder(f);
+    return { ok: true };
+  });
   handle('mac:screen-settings', async () => {
     await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
     return { ok: true };

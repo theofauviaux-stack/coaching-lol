@@ -686,7 +686,7 @@ const fmtMo = b => (b / 1048576).toLocaleString('fr-FR', { maximumFractionDigits
 const excerpt = (t, n = 90) => (String(t).length > n ? String(t).slice(0, n - 1) + '…' : String(t));
 function momentsVideo(m, x, c) {
   const S = state.moments;
-  const from = Math.max(0, Math.round(x.t / 1000 - c.start - 20)); // 20 s avant le moment : on voit ce qui l'amène
+  const from = Math.max(0, Math.round(x.t / 1000 - c.start - 30)); // 30 s avant le moment : on voit ce qui l'amène
   const src = S.mode === 'analysis' ? `clip://r/${esc(S.analysis.id)}/${esc(c.file)}` : `clip://v/${esc(S.videoKey)}/${esc(c.file)}`;
   return `<div class="mo-video"><video src="${src}" data-from="${from}" controls autoplay muted playsinline></video>
     <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay${m.camera ? ' · caméra sur le joueur' : ''}</div></div>`;
@@ -695,8 +695,12 @@ function momentsButtons(S) {
   const m = S.data;
   if (!m || S.loading) return '';
   if (S.mode === 'analysis') {
-    return S.analysis.status === 'ouverte' && S.me === 'coach'
-      ? `<button class="btn" data-action="an-close" data-tip="La discussion reste lisible ; les vidéos sont effacées du serveur">${icon('check', 15)} Terminer l'analyse</button>` : '';
+    if (S.me === 'coach') {
+      return S.analysis.status === 'ouverte'
+        ? `<button class="btn" data-action="an-close" data-tip="Ferme la discussion ; le joueur pourra exporter vidéos + débrief sur son ordinateur">${icon('check', 15)} Terminer l'analyse</button>` : '';
+    }
+    return S.analysis.status === 'terminee' && !S.xstatus
+      ? `<button class="btn primary" data-action="an-export" data-tip="Enregistre les vidéos et le débrief dans un dossier de ton ordinateur, puis supprime l'analyse de l'app">${icon('download', 15)} Exporter sur mon ordinateur</button>` : '';
   }
   if (S.mode === 'send') return `<button class="btn ghost" data-action="mo-back">Retour aux moments</button>`;
   const see = S.analysisId ? `<button class="btn primary" data-action="analysis-open" data-id="${esc(S.analysisId)}">${icon('chat', 15)} Voir l'analyse</button>` : '';
@@ -711,17 +715,19 @@ function momentsButtons(S) {
 }
 function momentsHead(S, sub) {
   const title = S.mode === 'analysis' ? 'Analyse' : S.mode === 'send' ? 'Envoyer au coach' : 'Moments clés';
-  const busy = S.vstatus || S.sstatus;
+  const busy = S.vstatus || S.sstatus || S.xstatus;
+  const prog = S.vstatus ? S.vprogress : S.sstatus ? S.sprogress : S.xprogress;
   const lol = S.canFilm && S.lol && !S.lol.found && S.mode === 'moments' && !(S.data && S.data.clips && S.data.clips.length) && !busy;
   return `<div class="mo-head"><h2>${title}</h2>${sub || ''}<span class="spacer"></span>${momentsButtons(S)}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
-    ${busy ? `<div class="mo-vstatus"><div class="mo-vline"><span class="spinner"></span><span class="mo-vtext">${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span><b class="mo-vpct">${Math.round((S.vstatus ? S.vprogress : S.sprogress) * 100 || 0)} %</b></div>
-      <div class="mo-bar"><i style="width:${Math.max(2, Math.round(((S.vstatus ? S.vprogress : S.sprogress) || 0) * 100))}%"></i></div></div>` : ''}
+    ${busy ? `<div class="mo-vstatus"><div class="mo-vline"><span class="spinner"></span><span class="mo-vtext">${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : S.xstatus ? 'Ne ferme pas l\'app pendant l\'export.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span><b class="mo-vpct">${Math.round((prog || 0) * 100)} %</b></div>
+      <div class="mo-bar"><i style="width:${Math.max(2, Math.round((prog || 0) * 100))}%"></i></div></div>` : ''}
     ${S.screenPerm && !busy ? `<div class="mo-lol mo-perm">${icon('alert', 15)}<div><b>macOS bloque l'enregistrement de l'écran.</b>
       <ol><li>Ouvre les réglages (bouton à droite) : <i>Enregistrement de l'écran</i>.</li>
       <li>Si Coaching LoL est déjà dans la liste, sélectionne-le et enlève-le avec le bouton <b>−</b>.</li>
       <li>Relance l'app, puis clique de nouveau sur « Filmer les moments » et choisis <b>Autoriser</b> (ou coche Coaching LoL dans la liste).</li>
       <li>Relance l'app une dernière fois : macOS ne prend l'autorisation en compte qu'au redémarrage.</li></ol></div>
       <div class="mo-perm-btns"><button class="btn" data-action="mo-screen-settings">Ouvrir les réglages</button><button class="btn primary" data-action="mo-relaunch">Relancer l'app</button></div></div>` : ''}
+    ${S.verror && !busy ? `<div class="mo-lol mo-err">${icon('alert', 15)}<span>${esc(S.verror)}</span><button class="btn" data-action="mo-journal" data-tip="Le détail des étapes du dernier tournage : à envoyer au coach si ça bloque">Voir le journal</button></div>` : ''}
     ${lol ? `<div class="mo-lol">${icon('alert', 15)}<span>League of Legends introuvable sur cet ordinateur. Emplacement :</span>
       <input id="mo-lolpath" value="${esc(S.lol.custom || '')}" placeholder="${/^Win/.test(navigator.platform) ? 'C:\\Riot Games\\League of Legends' : '/Applications/League of Legends.app'}">
       <button class="btn" data-action="mo-lolpath">Enregistrer</button></div>` : ''}`;
@@ -739,7 +745,10 @@ function threadHtml(S) {
       : `<div class="faint small">Pas encore de message${mo ? ' sur ce moment' : ''}.</div>`}</div>
     ${A.status === 'ouverte'
       ? `<div class="an-reply"><textarea id="an-text" rows="2" placeholder="${S.me === 'coach' ? 'Ta réponse au joueur…' : 'Ta réponse ou ta question au coach…'}">${esc(draft)}</textarea><button class="btn primary" data-action="an-send">${icon('send', 15)} Envoyer</button></div>`
-      : `<div class="faint small" style="margin-top:8px">Analyse terminée${A.closedAt ? ' le ' + dateFr(A.closedAt) : ''} : la discussion est fermée.</div>`}</div>`;
+      : `<div class="an-closed">${icon('check', 14)} Analyse terminée${A.closedAt ? ' le ' + dateFr(A.closedAt) : ''} : la discussion est fermée.
+        ${S.me === 'coach'
+          ? 'Le joueur peut l\'exporter sur son ordinateur (vidéos + débrief) ; elle sera alors supprimée du serveur. Sans export, les vidéos sont effacées 7 jours après la fin.'
+          : 'Exporte-la sur ton ordinateur avec le bouton « Exporter sur mon ordinateur » : vidéos + débrief dans un dossier, puis l\'analyse est supprimée de l\'app. Sans export, les vidéos sont effacées 7 jours après la fin.'}</div>`}</div>`;
 }
 const gameNameOf = riotId => String(riotId || 'Joueur').split('#')[0];
 function momentsRows(S) {
@@ -883,7 +892,7 @@ const momentsOpen = () => !!(state.moments && $('#modal-box .mo-head'));
 window.api.onVideoStatus(async v => {
   const S = state.moments;
   const here = momentsOpen() && S.mode === 'moments' && S.data && S.matchId === v.matchId && player() && player().id === v.playerId;
-  if (v.error) { if (here) { S.vstatus = null; showMoments(); } toast('Vidéos : ' + v.error, 'err', 9000); return; }
+  if (v.error) { if (here) { S.vstatus = null; S.verror = v.error; showMoments(); } toast('Vidéos : ' + v.error, 'err', 9000); return; }
   if (v.done) {
     toast('Vidéos : ' + v.text, 'ok', 7000);
     if (here) {
@@ -915,11 +924,20 @@ window.api.onAnalysisStatus(v => {
   }
   if (here) { S.sstatus = v.text; S.sprogress = v.progress || S.sprogress || 0; if (!updateBar(v.text, S.sprogress)) showMoments(); }
 });
+// avancement de l'export d'une analyse (joueur)
+window.api.onExportStatus(v => {
+  const S = state.moments;
+  if (!momentsOpen() || S.mode !== 'analysis' || !S.analysis || S.analysis.id !== v.id || !S.xstatus) return;
+  S.xstatus = v.text;
+  S.xprogress = v.progress || S.xprogress || 0;
+  if (!updateBar(v.text, S.xprogress)) showMoments();
+});
 // liste des analyses à jour : si l'analyse ouverte a changé (message de l'autre, fin), on la relit
 async function analysisLiveUpdate() {
   const S = state.moments;
   if (!momentsOpen() || S.mode !== 'analysis' || !S.analysis || S.refreshing) return;
   const a = D().analyses && D().analyses.list.find(x => x.id === S.analysis.id);
+  if (!a && D().analyses && D().analyses.loaded && !S.xstatus && S.me === 'coach') { closeModal(); toast('Le joueur a exporté cette analyse sur son ordinateur : elle est supprimée de l\'app.', 'ok', 8000); return; }
   if (!a || (a.comments.length === S.analysis.comments.length && a.status === S.analysis.status)) return;
   S.refreshing = true;
   const r = await window.api.getAnalysis(S.analysis.id);
@@ -932,7 +950,7 @@ async function analysisLiveUpdate() {
 
 // ======================================================================== ANALYSES (joueur ↔ coach)
 function analysisState(a, me) {
-  if (a.status === 'terminee') return ['', 'Terminée'];
+  if (a.status === 'terminee') return me === 'coach' ? ['', 'Terminée'] : ['amber', 'À exporter'];
   if (a.unread) return ['accent', me === 'coach' ? (a.comments.some(c => c.author === 'coach') ? 'Réponse du joueur' : 'Nouvelle') : 'Réponse du coach'];
   const coachSaid = a.comments.some(c => c.author === 'coach');
   if (me === 'coach') return coachSaid ? ['', 'En attente du joueur'] : ['amber', 'À analyser'];
@@ -1656,6 +1674,7 @@ document.addEventListener('click', async e => {
     case 'mo-send': if (state.moments && state.moments.data) { const S = state.moments; S.mode = 'send'; S.sendLabel = $('.mo-head .muted') ? $('.mo-head .muted').textContent : ''; showMoments(); } break;
     case 'mo-back': if (state.moments) { state.moments.mode = 'moments'; showMoments(); } break;
     case 'mo-screen-settings': window.api.openScreenSettings(); break;
+    case 'mo-journal': { const r = await window.api.showJournal(); if (r && r.ok === false) toast(r.message, 'err'); break; }
     case 'mo-relaunch': window.api.relaunch(); break;
     case 'mo-lolpath': {
       const S = state.moments;
@@ -1694,12 +1713,27 @@ document.addEventListener('click', async e => {
     }
     case 'an-close': {
       const S = state.moments;
-      if (!S || !S.analysis || !confirm('Terminer l\'analyse ? La discussion reste lisible, mais les vidéos seront effacées du serveur.')) break;
+      if (!S || !S.analysis || !confirm('Terminer l\'analyse ? La discussion sera fermée. Le joueur pourra exporter les vidéos et le débrief sur son ordinateur ; l\'analyse sera alors supprimée du serveur (sans export, vidéos effacées 7 jours après).')) break;
       const r = await window.api.closeAnalysis(S.analysis.id);
       if (!r || !r.ok) { toast(r ? r.message : 'Erreur inconnue.', 'err', 7000); break; }
       setAnalysis(r);
       showMoments();
       toast('Analyse terminée : le joueur est prévenu.', 'ok');
+      break;
+    }
+    case 'an-export': {
+      const S = state.moments;
+      if (!S || !S.analysis || S.xstatus) break;
+      S.xstatus = 'Préparation de l\'export…';
+      S.xprogress = 0.02;
+      showMoments();
+      const r = await window.api.exportAnalysis(S.analysis.id);
+      if (r && r.canceled) { S.xstatus = null; showMoments(); break; }
+      if (!r || !r.ok) { S.xstatus = null; showMoments(); toast(r ? r.message : 'Erreur inconnue.', 'err', 9000); break; }
+      closeModal();
+      state.page = 'analyses';
+      render();
+      toast('Analyse exportée (' + r.files + ' vidéo' + (r.files > 1 ? 's' : '') + ' + débrief) dans « ' + r.dir + ' ». Elle est supprimée de l\'app.', 'ok', 12000);
       break;
     }
     case 'mo-view': if (state.moments) { state.moments.view = el.dataset.v; showMoments(); } break;
@@ -1709,6 +1743,7 @@ document.addEventListener('click', async e => {
       S.vstatus = 'Préparation…';
       S.vprogress = 0.01;
       S.screenPerm = false;
+      S.verror = null;
       showMoments();
       const r = await window.api.recordVideos(p.id, S.matchId);
       if (!r || !r.ok) {

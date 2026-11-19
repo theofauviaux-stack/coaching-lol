@@ -50,6 +50,7 @@ module.exports = async function ({ app, win, fs, path }) {
       out.progression = await js(`window.__vp`);
       out.videoLocale = await videoOk();
       out.fichiers = fs.readdirSync(path.join(data, 'videos', 'p1_EUW1_7300000099')).sort();
+      out.journal = fs.readFileSync(path.join(data, 'videos', 'journal.txt'), 'utf8');
       // choisir 2 vidéos sur 4, les commenter, envoyer
       await js(`document.querySelector('[data-action="mo-send"]').click(); 0`);
       await until(`document.querySelectorAll('.sd-card').length > 0`);
@@ -90,6 +91,17 @@ module.exports = async function ({ app, win, fs, path }) {
       await wait(500);
       out.liste = await js(`[...document.querySelectorAll('.table tr.click')].map(r => r.textContent.replace(/\\s+/g, ' ').trim())`);
       await shot('a8-liste-joueur');
+      // export sur l'ordinateur (vidéos + débrief), puis l'analyse quitte l'app et le serveur
+      await js(`document.querySelector('[data-action="analysis-open"]').click(); 0`);
+      await until(`!!document.querySelector('[data-action="an-export"]')`, 20000);
+      await shot('a8b-avant-export');
+      await js(`document.querySelector('[data-action="an-export"]').click(); 0`);
+      await until(`window.__toasts.some(t => /Analyse exportée/.test(t))`, 60000);
+      out.export = (await toasts()).find(t => /Analyse exportée/.test(t));
+      await wait(600);
+      out.listeApres = await js(`document.querySelectorAll('.table tr.click').length`);
+      out.videosLocales = fs.existsSync(path.join(data, 'videos', 'p1_EUW1_7300000099'));
+      await shot('a8c-apres-export');
     } else {
       await type('4821');
       await until(`state.data.coach && state.data.coach.cloud.linked`);
@@ -126,10 +138,14 @@ module.exports = async function ({ app, win, fs, path }) {
       // fin de l'analyse
       await js(`document.querySelector('[data-action="an-close"]').click(); 0`);
       await until(`state.moments.analysis.status === 'terminee'`);
-      await until(`state.data.analyses.list[0].clipsState === 'effacees'`, 30000);
+      await wait(400);
       out.fin = await js(`document.querySelector('.an-thread').textContent.replace(/\\s+/g, ' ').trim()`);
+      out.videosApresFin = await js(`state.data.analyses.list[0].clipsState`);
       await shot('a9-terminee-coach');
-      await wait(1500); // laisse le temps au joueur de voir la fin
+      // le joueur exporte : l'analyse disparaît chez le coach
+      await until(`state.data.analyses.list.length === 0`, 120000);
+      await until(`window.__toasts.some(t => /a exporté cette analyse/.test(t))`, 15000);
+      out.apresExport = (await toasts()).find(t => /a exporté cette analyse/.test(t));
       // le même joueur sur l'ordinateur du coach (code joueur) : mêmes outils (tournage, envoi, Analyses)
       await js(`closeModal(); document.querySelector('[data-action="logout"]').click(); 0`);
       await until(`state.data.locked`, 10000);

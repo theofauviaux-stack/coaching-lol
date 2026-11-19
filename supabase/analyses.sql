@@ -8,7 +8,9 @@
 --   * Vidéos : dossier public « clips » du stockage Supabase, une vidéo = clips/<analyse>/<fichier>.webm.
 --     L'adresse contient l'identifiant aléatoire de l'analyse (impossible à deviner) ; personne ne peut lister
 --     le dossier. Envoi permis seulement pendant 3 h après la création de l'analyse, pour les fichiers annoncés.
---     Effacement permis seulement quand l'analyse est terminée ou a plus de 30 jours (purge par l'app du coach).
+--     Quand le coach termine l'analyse, les vidéos restent pour que le joueur exporte « vidéos + débrief » sur son
+--     ordinateur ; l'export supprime ensuite l'analyse du serveur. Sans export : vidéos effacées 7 jours après la fin
+--     (30 jours après l'envoi au plus). Effacement permis seulement pour les vidéos marquées « à effacer ».
 --   * Limites : 3 analyses avec vidéos par joueur, 900 Mo de vidéos en tout (plan gratuit : 1 Go).
 
 create table if not exists public.moments (
@@ -25,7 +27,7 @@ create table if not exists public.analyses (
   id uuid primary key default gen_random_uuid(),
   player_id text not null references public.players(id) on delete cascade,
   match_id text not null,
-  status text not null default 'envoi',            -- envoi → ouverte → terminee
+  status text not null default 'envoi',            -- envoi → ouverte → terminee → exportee (puis supprimée)
   clips jsonb not null default '[]'::jsonb,        -- [{file, start, end, times, bytes}]
   clips_state text not null default 'envoi',       -- envoi → en_ligne → a_effacer → effacees
   bytes bigint not null default 0,
@@ -143,7 +145,7 @@ begin
     return jsonb_build_object('error', 'jeton_inconnu');
   end if;
   return jsonb_build_object('analyses', coalesce((
-    select jsonb_agg(_analysis_json(a, false) order by a.created_at desc) from analyses a where a.status <> 'envoi'), '[]'::jsonb));
+    select jsonb_agg(_analysis_json(a, false) order by a.created_at desc) from analyses a where a.status not in ('envoi', 'exportee')), '[]'::jsonb));
 end $$;
 
 create or replace function public.coach_analysis_get(p_key text, p_id uuid) returns jsonb
@@ -170,15 +172,14 @@ begin
   return _comment_add(p_id, 'coach', p_t, p_text);
 end $$;
 
--- fin de l'analyse : la discussion reste, les vidéos partent à l'effacement
+-- fin de l'analyse : discussion close ; les vidéos restent 7 jours pour l'export par le joueur
 create or replace function public.coach_analysis_close(p_key text, p_id uuid) returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
   if not public._coach_ok(p_key) then
     return jsonb_build_object('error', 'jeton_inconnu');
   end if;
-  update analyses set status = 'terminee', closed_at = now(), updated_at = now(),
-    clips_state = case when clips_state in ('envoi', 'en_ligne') then 'a_effacer' else clips_state end
+  update analyses set status = 'terminee', closed_at = now(), updated_at = now()
   where id = p_id and status = 'ouverte';
   if not found then
     return jsonb_build_object('error', 'analyse_fermee');
@@ -186,7 +187,7 @@ begin
   return jsonb_build_object('ok', true, 'analysis', (select _analysis_json(a, false) from analyses a where a.id = p_id));
 end $$;
 
--- vidéos à effacer : analyses terminées, de plus de 30 jours, ou envois abandonnés (plus d'un jour)
+-- vidéos à effacer : analyses terminées depuis 7 jours sans export, de plus de 30 jours, exportées, ou envois abandonnés
 create or replace function public.coach_clips_purge(p_key text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
@@ -195,8 +196,9 @@ begin
   end if;
   update analyses set clips_state = 'a_effacer'
   where (clips_state = 'en_ligne' and created_at < now() - interval '30 days')
+     or (clips_state = 'en_ligne' and status = 'terminee' and closed_at < now() - interval '7 days')
      or (clips_state = 'envoi' and created_at < now() - interval '1 day');
-  delete from analyses where status = 'envoi' and clips_state = 'effacees';
+  delete from analyses where status in ('envoi', 'exportee') and clips_state = 'effacees';
   return jsonb_build_object('purge', coalesce((
     select jsonb_agg(jsonb_build_object('id', id, 'files', (select coalesce(jsonb_agg(c->>'file'), '[]'::jsonb) from jsonb_array_elements(clips) c)))
     from analyses where clips_state = 'a_effacer'), '[]'::jsonb));
@@ -209,7 +211,7 @@ begin
     return jsonb_build_object('error', 'jeton_inconnu');
   end if;
   update analyses set clips_state = 'effacees', bytes = 0 where id = p_id and clips_state = 'a_effacer';
-  delete from analyses where id = p_id and status = 'envoi';
+  delete from analyses where id = p_id and status in ('envoi', 'exportee');
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -302,7 +304,7 @@ begin
   end if;
   return jsonb_build_object('analyses', coalesce((
     select jsonb_agg(_analysis_json(a, false) order by a.created_at desc) from analyses a
-    where a.player_id = v_player and a.status <> 'envoi'), '[]'::jsonb));
+    where a.player_id = v_player and a.status not in ('envoi', 'exportee')), '[]'::jsonb));
 end $$;
 
 create or replace function public.analysis_get(p_token text, p_id uuid) returns jsonb
@@ -331,6 +333,44 @@ begin
     return jsonb_build_object('error', 'analyse_fermee');
   end if;
   return _comment_add(p_id, 'joueur', p_t, p_text);
+end $$;
+
+-- export par le joueur (vidéos + débrief enregistrés sur son ordinateur) : l'analyse quitte le serveur.
+-- 1) analysis_export_done : vidéos marquées « à effacer » (le joueur les efface aussitôt avec la clé publique) ;
+-- 2) analysis_forget : suppression de l'analyse et de ses messages, une fois les vidéos parties.
+create or replace function public.analysis_export_done(p_token text, p_id uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_player text := public._player_of(p_token);
+  v_a analyses;
+begin
+  if v_player is null then
+    return jsonb_build_object('error', 'session_expiree');
+  end if;
+  update analyses set status = 'exportee', updated_at = now(),
+    clips_state = case when clips_state in ('envoi', 'en_ligne') then 'a_effacer' else clips_state end
+  where id = p_id and player_id = v_player and status = 'terminee'
+  returning * into v_a;
+  if v_a.id is null then
+    return jsonb_build_object('error', 'export_impossible');
+  end if;
+  return jsonb_build_object('ok', true, 'clipsState', v_a.clips_state,
+    'files', case when v_a.clips_state = 'a_effacer' then (select coalesce(jsonb_agg(c->>'file'), '[]'::jsonb) from jsonb_array_elements(v_a.clips) c) else '[]'::jsonb end);
+end $$;
+
+create or replace function public.analysis_forget(p_token text, p_id uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_player text := public._player_of(p_token);
+begin
+  if v_player is null then
+    return jsonb_build_object('error', 'session_expiree');
+  end if;
+  if exists (select 1 from storage.objects where bucket_id = 'clips' and name like p_id::text || '/%') then
+    return jsonb_build_object('error', 'videos_restantes');
+  end if;
+  delete from analyses where id = p_id and player_id = v_player and status = 'exportee';
+  return jsonb_build_object('ok', true);
 end $$;
 
 -- ---------------------------------------------------------------- stockage des vidéos
@@ -362,7 +402,8 @@ begin
     'coach_moments_push(text, jsonb)', 'coach_analyses(text)', 'coach_analysis_get(text, uuid)',
     'coach_analysis_comment(text, uuid, int, text)', 'coach_analysis_close(text, uuid)', 'coach_clips_purge(text)',
     'coach_clips_gone(text, uuid)', 'moments_get(text, text)', 'analysis_create(text, jsonb)', 'analysis_ready(text, uuid)',
-    'analyses_mine(text)', 'analysis_get(text, uuid)', 'analysis_comment(text, uuid, int, text)'] loop
+    'analyses_mine(text)', 'analysis_get(text, uuid)', 'analysis_comment(text, uuid, int, text)',
+    'analysis_export_done(text, uuid)', 'analysis_forget(text, uuid)'] loop
     execute 'revoke all on function public.' || f || ' from public';
     execute 'grant execute on function public.' || f || ' to anon, authenticated';
   end loop;
