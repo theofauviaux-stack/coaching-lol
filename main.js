@@ -515,7 +515,7 @@ async function pollLive() {
           ranks[x.puuid] = rk;
         } catch (e) { if (e.code === 'KEY') break; }
       }
-      games.push(liveMod.buildGame(f.raw, store.data.players, ranks, store.data.settings.champKeys || {}));
+      games.push(liveMod.buildGame(f.raw, store.data.players, ranks, store.data.settings.champKeys || {}, Date.now(), store.data.settings.roleRates || null));
     }
     const before = new Set(live.games.map(g => g.gameId));
     const after = new Set(games.map(g => g.gameId));
@@ -558,6 +558,18 @@ async function resolveSmurfs(text, region, previous, mainRiotId) {
     out.push({ riotId, puuid });
   }
   return out;
+}
+
+// Postes des champions (pour mettre les lanes face à face) : table Meraki relue une fois par jour,
+// sinon celle livrée avec l'app (src/role-rates.json)
+async function refreshRoleRates() {
+  const s = store.data.settings;
+  if (s.roleRates && Date.now() - (s.roleRates.at || 0) < 24 * 3600 * 1000) return;
+  try {
+    const r = await fetch('https://cdn.merakianalytics.com/riot/lol/resources/latest/en-US/championrates.json');
+    const c = r.ok ? liveMod.compactRates(await r.json()) : null;
+    if (c) { s.roleRates = Object.assign(c, { at: Date.now() }); store.save(); }
+  } catch (e) { /* on garde la table livrée avec l'app */ }
 }
 
 // Emplacement de League of Legends (relu au plus toutes les 20 s)
@@ -1018,6 +1030,8 @@ app.whenReady().then(async () => {
     setInterval(refreshReports, FAST ? 2000 : 30 * 1000);
     setInterval(watchCoaching, FAST ? 1000 : 5 * 1000);
     setInterval(pollLive, FAST ? 2000 : 60 * 1000);
+    setTimeout(refreshRoleRates, 30 * 1000);
+    setInterval(refreshRoleRates, 6 * 3600 * 1000);
   });
   if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

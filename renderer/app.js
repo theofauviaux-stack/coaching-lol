@@ -1078,17 +1078,22 @@ function liveChip(p) {
   return g ? `<span class="live-chip" data-action="go" data-page="direct" data-tip="Partie classée en cours : clique pour la voir"><span class="pulse"></span>En partie <span class="lv-tick" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</span></span>` : '';
 }
 const ownerName = pid => { const p = D().players.find(y => y.id === pid); return p ? gameName(p) : '?'; };
-function liveRow(x) {
+// mirror : ligne de l'adversaire, dans l'autre sens (champion à droite), pour les voir face à face
+function liveRow(x, mirror = false, end = false) {
   const games = x.rank ? x.rank.wins + x.rank.losses : 0;
   const wr = games ? Math.round(x.rank.wins / games * 100) : null;
   const name = x.hidden ? '<span class="faint">Joueur masqué</span>' : `<b>${esc(x.gameName)}</b><span class="faint">#${esc(x.tagLine)}</span>`;
-  return `<div class="lv-row ${x.playerId ? 'me' : ''}" ${x.playerId ? `data-action="open-player" data-id="${x.playerId}" data-tip="Ouvrir son tableau de bord"` : ''}>
-    <div class="lv-champ">${x.champion ? img(x.champion, 'lv-cimg') : '<span class="lv-cimg"></span>'}${perkImg(x.keystone, 'lv-key')}</div>
-    <div class="lv-spells">${spellImg(x.spells[0])}${spellImg(x.spells[1])}</div>
-    <div class="lv-who"><div class="lv-name">${name}</div><div class="lv-cname">${x.champion ? champ(x.champion) : 'Champion inconnu'}${perkImg(x.subStyle, 'lv-sub')}${x.smurf ? `<span class="lv-smurf">smurf de ${esc(ownerName(x.playerId))}</span>` : ''}</div></div>
-    <div class="lv-rank">${x.rank ? `<b>${esc(x.rank.label)}</b> <span class="muted">${x.rank.lp} LP</span><div class="small"><span class="${wr >= 50 ? 'ok' : 'red'}">${wr} %</span> <span class="faint">sur ${games} parties</span></div>` : '<span class="faint">Non classé</span>'}</div>
+  const cells = [
+    `<div class="lv-champ">${x.champion ? img(x.champion, 'lv-cimg') : '<span class="lv-cimg"></span>'}${perkImg(x.keystone, 'lv-key')}</div>`,
+    `<div class="lv-spells">${spellImg(x.spells[0])}${spellImg(x.spells[1])}</div>`,
+    `<div class="lv-who"><div class="lv-name">${name}</div><div class="lv-cname">${x.champion ? champ(x.champion) : 'Champion inconnu'}${perkImg(x.subStyle, 'lv-sub')}${x.smurf ? `<span class="lv-smurf">smurf de ${esc(ownerName(x.playerId))}</span>` : ''}</div></div>`,
+    `<div class="lv-rank">${x.rank ? `<b>${esc(x.rank.label)}</b> <span class="muted">${x.rank.lp} LP</span><div class="small"><span class="${wr >= 50 ? 'ok' : 'red'}">${wr} %</span> <span class="faint">sur ${games} parties</span></div>` : '<span class="faint">Non classé</span>'}</div>`
+  ];
+  return `<div class="lv-row ${x.playerId ? 'me' : ''} ${mirror ? 'mirror' : ''} ${end ? 'end' : ''}" ${x.playerId ? `data-action="open-player" data-id="${x.playerId}" data-tip="Ouvrir son tableau de bord"` : ''}>
+    ${(mirror ? cells.reverse() : cells).join('')}
   </div>`;
 }
+const LANE = { TOP: 'Top', JUNGLE: 'Jungle', MIDDLE: 'Mid', BOTTOM: 'ADC', UTILITY: 'Support' };
 function liveCard(g) {
   const lol = (D().coach && D().coach.lol) || {};
   const who = x => (x.smurf ? `${esc(ownerName(x.playerId))} <span class="muted">sur son smurf</span> ${esc(x.gameName)}` : esc(x.gameName));
@@ -1097,6 +1102,9 @@ function liveCard(g) {
   const title = allyOurs.join(' et ') + (enemyOurs.length ? ' <span class="muted">contre</span> ' + enemyOurs.join(' et ') : '');
   const side = t => (t === 100 ? 'bleu' : 'rouge');
   const bans = list => (list.length ? list.map(c => img(c, 'lv-ban')).join('') : '<span class="faint tiny">aucun ban</span>');
+  const facing = g.allies.length === 5 && g.enemies.length === 5 && g.allies.concat(g.enemies).every(x => x.position);
+  const enemySide = g.teamId === 100 ? 200 : 100;
+  const allyTeam = allyOurs.length > 1 ? 'Leur équipe' : 'Son équipe';
   const started = g.startTime ? 'commencée à ' + new Date(g.startTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : 'écran de chargement';
   return `<div class="lv-card">
     <div class="lv-head">
@@ -1107,11 +1115,16 @@ function liveCard(g) {
       <button class="btn primary lv-watch" data-action="live-watch" data-id="${g.gameId}">${icon('play', 15)} Regarder</button>
     </div>
     ${lol.found ? '' : `<div class="bk-alert muted-alert">${icon('alert', 16)}<span>League of Legends est introuvable sur cet ordinateur : le bouton Regarder ne pourra pas l'ouvrir.</span><span class="spacer"></span><button class="btn" data-action="go-spectator">Indiquer son emplacement</button></div>`}
-    <div class="lv-teams">
-      <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyOurs.length > 1 ? 'Leur équipe' : 'Son équipe'}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>${g.allies.map(liveRow).join('')}</div>
-      <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId === 100 ? 200 : 100)}"></span><b>Adversaires</b><span class="faint small">côté ${side(g.teamId === 100 ? 200 : 100)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span></div>${g.enemies.map(liveRow).join('')}</div>
-    </div>
-    <div class="faint tiny lv-foot">Regarder ouvre League of Legends en mode spectateur, avec 3 minutes de retard (règle de Riot pour les classées). Le jeu doit être installé et à jour sur cet ordinateur.</div>
+    ${facing ? `<div class="lv-face">
+      <div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>
+      <div class="lv-th lv-mid"></div>
+      <div class="lv-th right"><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span><span class="spacer"></span><span class="faint small">côté ${side(enemySide)}</span><b>Adversaires</b><span class="lv-side ${side(enemySide)}"></span></div>
+      ${g.allies.map((a, i) => liveRow(a, false, i === 4) + `<div class="lv-pos ${i === 4 ? 'end' : ''}">${LANE[a.position] || ''}</div>` + liveRow(g.enemies[i], true, i === 4)).join('')}
+    </div>` : `<div class="lv-teams">
+      <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>${g.allies.map(x => liveRow(x)).join('')}</div>
+      <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(enemySide)}"></span><b>Adversaires</b><span class="faint small">côté ${side(enemySide)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span></div>${g.enemies.map(x => liveRow(x)).join('')}</div>
+    </div>`}
+    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}Regarder ouvre League of Legends en mode spectateur, avec 3 minutes de retard (règle de Riot pour les classées). Le jeu doit être installé et à jour sur cet ordinateur.</div>
   </div>`;
 }
 function pageDirect() {

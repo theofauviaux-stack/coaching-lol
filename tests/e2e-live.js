@@ -21,10 +21,10 @@ const GAMES = {
     bannedChampions: [{ championId: 157, teamId: 100, pickTurn: 1 }, { championId: 238, teamId: 100, pickTurn: 2 }, { championId: 555, teamId: 100, pickTurn: 3 }, { championId: 11, teamId: 100, pickTurn: 4 }, { championId: 84, teamId: 100, pickTurn: 5 },
       { championId: 145, teamId: 200, pickTurn: 6 }, { championId: 117, teamId: 200, pickTurn: 7 }, { championId: 350, teamId: 200, pickTurn: 8 }, { championId: -1, teamId: 200, pickTurn: 9 }, { championId: 875, teamId: 200, pickTurn: 10 }],
     participants: [
-      part('A-TOP', 100, 122, 'Mordekaiser Main#EUW', [12, 4], [8010, 9111]), part('P-KIOGA', 100, 64, 'UCE Kioga#EUWWW', [11, 4], [8010, 9111]), part('A-MID', 100, 103, 'Foxfire#EUW', [4, 14], [8112, 8139]),
-      part('A-ADC', 100, 222, 'Get Excited#JINX', [4, 7], [8008, 9101]), part('P-HAVEHOPE', 100, 412, 'HaveHope#305', [4, 14], [8439, 8446]),
-      part('E-TOP', 200, 86, 'Demacia#FR1', [12, 4], [8010, 9111]), part('E-JGL', 200, 121, 'Void Bug#EUW', [11, 4], [8112, 8139]), part(null, 200, 7, '', [4, 12], [8112, 8139]),
-      part('E-ADC', 200, 51, 'Piltover Sniper#EUW', [4, 7], [8008, 9101]), part('E-SUP', 200, 53, 'Steam Golem#EUW', [4, 14], [8439, 8446])
+      part('A-ADC', 100, 222, 'Get Excited#JINX', [4, 7], [8008, 9101]), part('P-HAVEHOPE', 100, 412, 'HaveHope#305', [4, 14], [8439, 8446]), part('A-MID', 100, 103, 'Foxfire#EUW', [4, 14], [8112, 8139]),
+      part('A-TOP', 100, 122, 'Noxus Hand#EUW', [12, 4], [8010, 9111]), part('P-KIOGA', 100, 64, 'UCE Kioga#EUWWW', [11, 4], [8010, 9111]),
+      part('E-SUP', 200, 53, 'Steam Golem#EUW', [4, 14], [8439, 8446]), part('E-JGL', 200, 121, 'Void Bug#EUW', [11, 4], [8112, 8139]), part('E-ADC', 200, 51, 'Piltover Sniper#EUW', [4, 7], [8008, 9101]),
+      part(null, 200, 7, '', [4, 12], [8112, 8139]), part('E-TOP', 200, 86, 'Demacia#FR1', [12, 4], [8010, 9111])
     ] },
   partie2: { gameId: 7300000002, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: 0, gameLength: 40,
     observers: { encryptionKey: 'Zx9+YwVu8/TsRq7PoNm6LkJi5HgFe4Dc' },
@@ -130,6 +130,11 @@ exit 1
   assert.ok(r.cartes[0].texte.includes('Lee Sin') && r.cartes[0].texte.includes("Kha'Zix"), 'noms français des champions');
   assert.strictEqual(r.cartes[0].bans, 9, 'bans affichés (le « pas de ban » est ignoré)');
   assert.ok(/^1[45]:\d\d$/.test(r.cartes[0].chrono), 'chrono de la partie : ' + r.cartes[0].chrono);
+  // face à face, poste par poste (l'API les donne dans le désordre)
+  assert.deepStrictEqual(r.cartes[0].postes, ['Top', 'Jungle', 'Mid', 'ADC', 'Support']);
+  assert.deepStrictEqual(r.cartes[0].allies, ['Darius', 'Lee Sin', 'Ahri', 'Jinx', 'Thresh']);
+  assert.deepStrictEqual(r.cartes[0].adversaires, ['Garen', "Kha'Zix", 'LeBlanc', 'Caitlyn', 'Blitzcrank']);
+  assert.ok(/Postes devinés/.test(r.cartes[0].texte));
   assert.ok(/écran de chargement/.test(r.cartes[1].texte), 'partie encore au chargement');
   assert.ok(/Adversaires/.test(r.cartes[1].texte));
   // Regarder

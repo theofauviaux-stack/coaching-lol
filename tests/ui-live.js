@@ -32,6 +32,9 @@ module.exports = async function ({ app, win, fs, path }) {
       titre: c.querySelector('.lv-title').textContent.replace(/\\s+/g, ' ').trim(),
       lignes: c.querySelectorAll('.lv-row').length, nous: c.querySelectorAll('.lv-row.me').length,
       bans: c.querySelectorAll('.lv-ban').length, chrono: c.querySelector('.lv-clock').textContent.trim(),
+      postes: [...c.querySelectorAll('.lv-pos')].map(x => x.textContent.trim()),
+      allies: [...c.querySelectorAll('.lv-face .lv-row:not(.mirror) .lv-cname')].map(x => x.childNodes[0].textContent.trim()),
+      adversaires: [...c.querySelectorAll('.lv-face .lv-row.mirror .lv-cname')].map(x => x.childNodes[0].textContent.trim()),
       texte: c.textContent.replace(/\\s+/g, ' ').trim() }))`);
     await shot('l2-en-direct');
     await js(`document.querySelectorAll('.lv-card')[1].scrollIntoView({ block: 'start' }); 0`);

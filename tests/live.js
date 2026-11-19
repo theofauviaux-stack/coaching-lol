@@ -3,7 +3,7 @@ const assert = require('assert');
 const live = require('../src/live');
 const { RiotClient } = require('../src/riot');
 
-const P = (puuid, teamId, championId, riotId, extra = {}) => Object.assign({ puuid, teamId, championId, riotId, spell1Id: 4, spell2Id: 11, perks: { perkIds: [8112, 8126], perkStyle: 8100, perkSubStyle: 8300 } }, extra);
+const P = (puuid, teamId, championId, riotId, extra = {}) => Object.assign({ puuid, teamId, championId, riotId, spell1Id: 4, spell2Id: championId === 64 ? 11 : 14, perks: { perkIds: [8112, 8126], perkStyle: 8100, perkSubStyle: 8300 } }, extra);
 const raw = {
   gameId: 7123456789, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: 1763500000000, gameLength: 312,
   observers: { encryptionKey: 'aB3+/xyzKEY0123456789abcd' },
@@ -25,26 +25,32 @@ assert.strictEqual(live.soloRank([{ queueType: 'RANKED_SOLO_5x5', tier: 'MASTER'
 
 // ---------------- partie vue depuis l'équipe du joueur suivi
 const g = live.buildGame(raw, players, { A1: r, E1: null }, keys, 1763500100000);
+const byP = (list, id) => list.find(x => x.puuid === id);
 assert.strictEqual(g.gameId, 7123456789);
 assert.deepStrictEqual(g.playerIds, ['p-kioga']);
 assert.strictEqual(g.allies.length, 5);
 assert.strictEqual(g.enemies.length, 5);
-assert.strictEqual(g.allies[0].champion, 'LeeSin');
-assert.strictEqual(g.allies[0].gameName, 'UCE Kioga');
-assert.strictEqual(g.allies[0].tagLine, 'EUWWW');
-assert.strictEqual(g.allies[0].rank.label, 'Émeraude II');
-assert.strictEqual(g.allies[4].hidden, true, 'joueur anonyme');
-assert.strictEqual(g.enemies[0].gameName, 'Ennemi Jungle');
-assert.strictEqual(g.enemies[0].rank, null, 'non classé');
-assert.deepStrictEqual(g.allies[0].spells, [4, 11]);
-assert.strictEqual(g.allies[0].keystone, 8112);
+const kio = byP(g.allies, 'A1');
+assert.strictEqual(kio.champion, 'LeeSin');
+assert.strictEqual(kio.gameName, 'UCE Kioga');
+assert.strictEqual(kio.tagLine, 'EUWWW');
+assert.strictEqual(kio.rank.label, 'Émeraude II');
+assert.strictEqual(g.allies.find(x => !x.puuid).hidden, true, 'joueur anonyme');
+assert.strictEqual(byP(g.enemies, 'E1').gameName, 'Ennemi Jungle');
+assert.strictEqual(byP(g.enemies, 'E1').rank, null, 'non classé');
+assert.deepStrictEqual(kio.spells, [4, 11]);
+assert.strictEqual(kio.keystone, 8112);
+// postes : chaque équipe rangée top, jungle, mid, ADC, support
+assert.deepStrictEqual(g.allies.map(x => x.championId), [86, 64, 103, 222, 412], 'Garen, Lee Sin, Ahri, Jinx, Thresh');
+assert.deepStrictEqual(g.allies.map(x => x.position), live.POSITIONS);
+assert.deepStrictEqual(g.enemies.map(x => x.championId), [122, 121, 7, 51, 53], 'Darius, Kha\'Zix, LeBlanc, Caitlyn, Blitzcrank');
 assert.deepStrictEqual(g.bans, { allies: ['Zed'], enemies: ['Yasuo'] }, 'bans par équipe, sans les « pas de ban »');
 assert.strictEqual(g.key, 'aB3+/xyzKEY0123456789abcd');
 // le joueur suivi est dans l'équipe rouge : les « alliés » sont l'équipe rouge
 const g2 = live.buildGame(raw, [{ id: 'p-e2', puuid: 'E2', riotId: 'Mid#KR1' }], {}, keys);
 assert.strictEqual(g2.teamId, 200);
-assert.strictEqual(g2.allies[1].playerId, 'p-e2');
-assert.strictEqual(g2.enemies[0].champion, 'LeeSin');
+assert.strictEqual(byP(g2.allies, 'E2').playerId, 'p-e2');
+assert.strictEqual(g2.enemies[1].champion, 'LeeSin', 'en face : jungle contre jungle');
 // chronomètre : depuis le début réel, sinon depuis la durée donnée par Riot
 assert.strictEqual(live.elapsed(g, 1763500000000 + 125000), 125);
 assert.strictEqual(live.elapsed({ startTime: null, length: 30, fetchedAt: 1000 }, 11000), 40);
@@ -93,9 +99,21 @@ assert.deepStrictEqual(live.trackedAccounts(withSmurf).map(a => [a.puuid, a.play
 const g3 = live.buildGame(raw, [{ id: 'p-x', puuid: 'ZZ', riotId: 'Main#EUW', smurfs: [{ riotId: 'Mid#KR1', puuid: 'E2' }] }], {}, keys);
 assert.deepStrictEqual(g3.playerIds, ['p-x']);
 assert.strictEqual(g3.teamId, 200);
-assert.strictEqual(g3.allies[1].smurf, 'Mid#KR1');
-assert.strictEqual(g3.allies[1].playerId, 'p-x');
-assert.strictEqual(g.allies[0].smurf, null);
+assert.strictEqual(byP(g3.allies, 'E2').smurf, 'Mid#KR1');
+assert.strictEqual(byP(g3.allies, 'E2').playerId, 'p-x');
+assert.strictEqual(kio.smurf, null);
+
+// ---------------- postes devinés
+const T = (c, s1, s2, role) => ({ championId: c, spells: [s1, s2], role });
+assert.deepStrictEqual(live.assignPositions([T(412, 4, 14), T(222, 4, 7), T(64, 11, 4), T(122, 12, 4), T(103, 4, 14)]), ['UTILITY', 'BOTTOM', 'JUNGLE', 'TOP', 'MIDDLE'], 'équipe classique mélangée');
+assert.deepStrictEqual(live.assignPositions([T(103, 11, 4), T(64, 4, 14), T(222, 4, 7), T(412, 4, 3), T(122, 12, 4)]), ['JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY', 'TOP'], 'Châtiment = jungle, même sur Ahri');
+assert.deepStrictEqual(live.assignPositions([T(99999, 12, 4), T(64, 11, 4), T(103, 4, 14), T(222, 4, 7), T(412, 4, 3)]), ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'], 'champion inconnu : le poste qui reste');
+// deux mids possibles : le rôle coaché du joueur départage
+assert.deepStrictEqual(live.assignPositions([T(103, 4, 14, 'Support'), T(1, 4, 14), T(64, 11, 4), T(122, 12, 4), T(222, 4, 7)]), ['UTILITY', 'MIDDLE', 'JUNGLE', 'TOP', 'BOTTOM']);
+assert.strictEqual(live.assignPositions([T(103, 4, 14)]), null, 'équipe incomplète : pas de postes');
+assert.strictEqual(live.compactRates({ data: { 1: {} } }), null, 'table vide refusée');
+const cr = live.compactRates({ patch: '16.3', data: Object.fromEntries(Array.from({ length: 120 }, (_, i) => [String(i + 1), { TOP: { playRate: 3 }, JUNGLE: { playRate: 1 }, MIDDLE: { playRate: 0 }, BOTTOM: { playRate: 0 }, UTILITY: { playRate: 0 } }])) });
+assert.deepStrictEqual(cr.data['1'], [0.75, 0.25, 0, 0, 0]);
 
 // ---------------- relance automatique du mode spectateur
 const EventEmitter = require('events');

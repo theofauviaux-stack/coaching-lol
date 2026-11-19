@@ -426,3 +426,17 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .lv-idle .chip { cursor: pointer; }
 .lv-idle .chip:hover { color: var(--text); border-color: var(--faint); }
 .lv-smurf { padding: 1px 7px; border-radius: 999px; background: rgba(105, 194, 216, .14); color: var(--blue); font-size: 11px; font-weight: 700; white-space: nowrap; }
+/* équipes face à face, poste par poste */
+.lv-face { display: grid; grid-template-columns: minmax(0, 1fr) 70px minmax(0, 1fr); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.lv-face .lv-th.right { justify-content: flex-end; }
+.lv-face .lv-mid { padding: 0; }
+.lv-face .lv-row { border-bottom: 1px solid var(--line); }
+.lv-face .lv-row.end, .lv-pos.end { border-bottom: 0; }
+.lv-pos { display: grid; place-items: center; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--faint); font: 800 10.5px Manrope, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.lv-row.mirror { grid-template-columns: auto minmax(0, 1fr) 22px 46px; border-left: 0; border-right: 3px solid transparent; }
+.lv-row.mirror.me { border-right-color: var(--accent); }
+.lv-row.mirror .lv-rank { text-align: left; }
+.lv-row.mirror .lv-who { text-align: right; }
+.lv-row.mirror .lv-cname { justify-content: flex-end; }
+.lv-row.mirror .lv-champ { justify-self: end; }
+.lv-row.mirror .lv-key { right: auto; left: -6px; }
