@@ -77,7 +77,7 @@ function launch(phase, dataDir, env) {
   await fake.db.query(`insert into push_keys (hash) values ($1)`, [crypto.createHash('sha256').update(TOKEN).digest('hex')]);
   const dd = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'ddragon.json'), 'utf8'));
   const c = emptyData();
-  Object.assign(c.settings, dd, { coachCode: '4821', pushToken: TOKEN, apiKey: 'RGAPI-test-analyses' });
+  Object.assign(c.settings, dd, { coachCode: '4821', pushToken: TOKEN, apiKey: 'RGAPI-test-analyses', lolPath: path.join(DIR, 'Jeux') });
   c.settings.items = { 1055: ['Lame de Doran', 450], 2003: ['Potion de soin', 50], 3133: ['Marteau de guerre de Caulfield', 1100], 3071: ['Couperet noir', 3000] };
   c.players.push({ id: 'p1', riotId: 'UCE Uawawa#000', region: 'euw', role: 'Top', puuid: 'P-UAWAWA', code: '7391', objectives: {}, createdAt: NOW - 86400e3 });
   c.games.push({ matchId: 'EUW1_7300000099', playerId: 'p1', date: NOW - 3600000, role: 'Top', champion: 'Darius', opponent: 'Garen', win: false, duration: 20, kills: 1, deaths: 2, assists: 0, teamKills: 3,
@@ -96,7 +96,7 @@ function launch(phase, dataDir, env) {
   Object.assign(j.settings, dd, { lolPath: path.join(DIR, 'Jeux') });
   fs.writeFileSync(path.join(DIR, 'joueur', 'coaching-data.json'), JSON.stringify(j));
 
-  const coachDone = launch('coach', path.join(DIR, 'coach'), Object.assign({ COACHING_LOL_RIOT: lol.url }, cloudEnv));
+  const coachDone = launch('coach', path.join(DIR, 'coach'), Object.assign({ COACHING_LOL_RIOT: lol.url, COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url }, cloudEnv));
   // moments envoyés au serveur par l'app du coach (calculés chez « Riot »), puis le joueur ouvre son app
   const t0 = Date.now();
   while (!(await fake.db.query(`select 1 from moments where match_id = 'EUW1_7300000099'`)).rows.length) {
@@ -125,7 +125,7 @@ function launch(phase, dataDir, env) {
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
   assert.ok(/envoyée au coach/.test(rj.messageEnvoi), rj.messageEnvoi);
   assert.ok(/Je veux travailler mes placements de wards/.test(rj.filGeneral), rj.filGeneral);
-  assert.strictEqual(fake.hits.uploads, 2, 'seules les 2 vidéos choisies sont envoyées');
+  assert.strictEqual(rj.total.startsWith('2 vidéos'), true, 'seules les 2 vidéos choisies sont envoyées');
   // coach : notification, liste, vidéo en ligne, réponse
   assert.ok(/Partie à analyser — UCE Uawawa t'envoie Darius contre Garen \(2 vidéos\)/.test(rc.notification), rc.notification);
   assert.strictEqual(rc.pastille, '1');
@@ -145,9 +145,18 @@ function launch(phase, dataDir, env) {
   assert.ok(/Analyse terminée/.test(rj.fin), rj.fin);
   assert.ok(/Le coach a terminé l'analyse de Darius contre Garen/.test(rj.notifFin), rj.notifFin);
   assert.ok(/Darius contre Garen.*effacées.*5.*Terminée/.test(rj.liste[0]), rj.liste[0]);
-  const a = (await fake.db.query(`select status, clips_state, (select count(*) from analysis_comments) as n from analyses`)).rows;
-  assert.deepStrictEqual(a.map(x => [x.status, x.clips_state, Number(x.n)]), [['terminee', 'effacees', 4]]);
-  assert.strictEqual(fake.files.size, 0, 'vidéos effacées du stockage');
+  const a = (await fake.db.query(`select id, status, clips_state, note, (select count(*) from analysis_comments c where c.analysis_id = analyses.id) as n from analyses order by created_at`)).rows;
+  assert.deepStrictEqual(a.map(x => [x.status, x.clips_state, Number(x.n)]), [['terminee', 'effacees', 4], ['ouverte', 'en_ligne', 0]]);
+  assert.ok([...fake.files.keys()].every(k => k.startsWith('clips/' + a[1].id + '/')), 'vidéos de la 1re analyse effacées du stockage');
+  // le joueur sur l'ordinateur du coach : moments, tournage, envoi, page Analyses
+  assert.ok(rc.local.menu.includes('Analyses'), rc.local.menu.join(','));
+  assert.ok(/Darius contre Garen.*Terminée/.test(rc.local.liste[0]), JSON.stringify(rc.local.liste));
+  assert.ok(rc.local.boutons.some(b => /Filmer les moments/.test(b)), rc.local.boutons.join(' | '));
+  assert.ok(/4 extraits filmés/.test(rc.local.tournage), rc.local.tournage);
+  assert.ok(/envoyée au coach/.test(rc.local.envoi), rc.local.envoi);
+  assert.strictEqual(a[1].note, 'Envoyée depuis l\'ordinateur du coach.');
+  assert.strictEqual(fake.files.size, 4);
+  assert.strictEqual(fake.hits.uploads, 6);
   assert.ok(calls.match >= 2, 'moments calculés par l\'app du coach');
   fake.close();
   console.log(JSON.stringify({ coach: rc, joueur: rj }, null, 1));

@@ -120,6 +120,32 @@ module.exports = async function ({ app, win, fs, path }) {
       out.fin = await js(`document.querySelector('.an-thread').textContent.replace(/\\s+/g, ' ').trim()`);
       await shot('a9-terminee-coach');
       await wait(1500); // laisse le temps au joueur de voir la fin
+      // le même joueur sur l'ordinateur du coach (code joueur) : mêmes outils (tournage, envoi, Analyses)
+      await js(`closeModal(); document.querySelector('[data-action="logout"]').click(); 0`);
+      await until(`state.data.locked`, 10000);
+      await type('7391');
+      await until(`state.data.session && state.data.session.role === 'joueur' && !!state.data.analyses`, 20000);
+      const lo = {};
+      lo.menu = await js(`[...document.querySelectorAll('.nav span')].map(s => s.textContent)`);
+      await js(`state.page = 'analyses'; render(); 0`);
+      await wait(400);
+      lo.liste = await js(`[...document.querySelectorAll('.table tr.click')].map(r => r.textContent.replace(/\\s+/g, ' ').trim())`);
+      await js(`state.page = 'parties'; render(); document.querySelector('[data-action="game"]').click(); 0`);
+      await until(`!!document.querySelector('[data-action="moments"]')`);
+      await js(`document.querySelector('[data-action="moments"]').click(); 0`);
+      await until(`document.querySelectorAll('.mo-row').length > 0`, 20000);
+      lo.boutons = await js(`[...document.querySelectorAll('.mo-head .btn')].map(b => b.textContent.replace(/\\s+/g, ' ').trim())`);
+      await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
+      await until(`window.__toasts.some(t => /Vidéos :/.test(t))`, 90000);
+      lo.tournage = (await toasts()).find(t => /Vidéos :/.test(t));
+      await js(`document.querySelector('[data-action="mo-send"]').click(); 0`);
+      await until(`document.querySelectorAll('.sd-card').length > 0`);
+      await fill('#sd-note', 'Envoyée depuis l\'ordinateur du coach.');
+      await js(`document.querySelector('[data-action="send-go"]').click(); 0`);
+      await until(`state.moments && state.moments.mode === 'analysis' && !!document.querySelector('.an-thread')`, 60000);
+      lo.envoi = (await toasts()).find(t => /envoyée au coach/.test(t));
+      await shot('a10-joueur-sur-ordi-coach');
+      out.local = lo;
     }
   } catch (e) {
     out.exception = e.stack || String(e);

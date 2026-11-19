@@ -138,6 +138,13 @@ async function login(code) {
   if (local) {
     limiter.ok();
     session = Object.assign(local, { source: 'local' });
+    // joueur sur l'ordinateur du coach : on ouvre aussi sa session sur le serveur (analyses, envoi de vidéos)
+    if (session.role === 'joueur' && cloud) {
+      try {
+        const r = await cloud.login(code);
+        if (r.role === 'joueur' && r.playerId === session.playerId) session.cloudToken = r.token;
+      } catch (e) { /* serveur injoignable : analyses indisponibles pour cette session */ }
+    }
     if (canEdit()) setTimeout(pollLive, 1500);
     return { ok: true, data: viewData() };
   }
@@ -165,6 +172,7 @@ async function login(code) {
 
 function logout() {
   if (session && session.token && cloud) cloud.logout(session.token);
+  if (session && session.cloudToken && cloud) cloud.logout(session.cloudToken);
   session = null;
   remoteData = null;
   bookings.mine = []; bookings.busy = [];
@@ -583,6 +591,9 @@ function saveMomentsFrom(match, tl, player) {
 }
 // joueur connecté sur son propre ordinateur (données lues sur le serveur) : il voit, filme et envoie ses parties
 const isPlayerCloud = () => !!(session && session.role === 'joueur' && session.source === 'cloud');
+const isPlayer = () => !!(session && session.role === 'joueur');
+const playerToken = () => (isPlayer() ? (session.source === 'cloud' ? session.token : session.cloudToken) || null : null);
+const isPlayerOnline = () => !!(cloud && playerToken());
 function readMoments(playerId, matchId) {
   try { return JSON.parse(fs.readFileSync(momentsFile(playerId, matchId), 'utf8')); } catch (e) { return null; }
 }
@@ -604,20 +615,25 @@ async function computeMoments(player, matchId) {
   return m;
 }
 async function getMoments({ playerId, matchId }) {
-  if (isPlayerCloud()) {
+  if (isPlayer()) {
     if (playerId !== session.playerId) throw new Error('Partie introuvable.');
     let m = readMoments(playerId, matchId);
+    if (!m && session.source === 'local') { // ordinateur du coach : calcul avec sa clé Riot
+      const player = store.data.players.find(p => p.id === playerId);
+      if (!player) throw new Error('Joueur introuvable.');
+      m = await computeMoments(player, matchId);
+    }
     if (!m) {
       if (!cloud) throw new Error('Pas de serveur configuré.');
       m = (await cloud.momentsGet(session.token, matchId)).moments;
       writeMoments(playerId, m);
     }
-    const an = analyses.list.find(a => a.matchId === matchId);
+    const an = analyses.list.find(a => a.matchId === matchId && a.playerId === playerId);
     return {
       ok: true, moments: m, videoKey: videoKey(playerId, matchId), canFilm: true,
       filming: !!(videoJob && videoJob.matchId === matchId) && videoJob.status,
       sending: !!(sendJob && sendJob.matchId === matchId) && sendJob.status,
-      analysisId: an ? an.id : null, lol: lolInstallView()
+      analysisId: an ? an.id : null, analysisClosed: !!(an && an.status === 'terminee'), lol: lolInstallView()
     };
   }
   requireEdit();
@@ -658,7 +674,7 @@ async function pushMoments() {
       if (!m) continue;
       const mt = Math.round(fs.statSync(momentsFile(g.playerId, g.matchId)).mtimeMs);
       if (sent[k] === mt) continue;
-      const { clips, camera, sent: _s, ...data } = m; // eslint-disable-line no-unused-vars
+      const { clips, camera, sent: _s, pending: _p, ...data } = m; // eslint-disable-line no-unused-vars
       items.push({ k, mt, item: { playerId: g.playerId, matchId: g.matchId, date: g.date, data } });
     }
     for (let i = 0; i < items.length; i += 10) {
@@ -680,16 +696,21 @@ async function pushMoments() {
 // joueur en discutent moment par moment ; le coach termine l'analyse (les vidéos sont alors effacées du serveur).
 const analyses = { list: [], loaded: false, error: '' };
 let sendJob = null;
-const analysisRole = () => (canEdit() ? 'coach' : isPlayerCloud() ? 'joueur' : null);
-const seenMap = () => store.data.settings.analysesSeen || (store.data.settings.analysesSeen = {});
+const analysisRole = () => (canEdit() ? 'coach' : isPlayerOnline() ? 'joueur' : null);
+// messages lus : un registre pour le coach, un par joueur (plusieurs profils peuvent servir sur le même ordinateur)
+function seenMap(me = analysisRole()) {
+  const all = store.data.settings.analysesLus || (store.data.settings.analysesLus = {});
+  const k = me === 'coach' ? 'coach' : 'joueur:' + (session && session.playerId);
+  return all[k] || (all[k] = {});
+}
 const lastId = (a, who) => a.comments.filter(c => !who || c.author === who).reduce((n, c) => Math.max(n, c.id), 0);
 function unreadOf(a, me) {
-  const seen = seenMap();
+  const seen = seenMap(me);
   if (me === 'coach' && !(a.id in seen)) return true;
   return lastId(a, me === 'coach' ? 'joueur' : 'coach') > (seen[a.id] || 0);
 }
 function gameLabel(a) {
-  const games = isPlayerCloud() && remoteData ? remoteData.games : store.data.games;
+  const games = session && session.source === 'cloud' && remoteData ? remoteData.games : store.data.games;
   const g = (games || []).find(x => x.matchId === a.matchId && x.playerId === a.playerId);
   return g ? champName(g.champion) + (g.opponent ? ' contre ' + champName(g.opponent) : '') : 'une partie';
 }
@@ -722,7 +743,7 @@ async function refreshAnalyses() {
 function analysesView() {
   const me = analysisRole();
   if (!me) return null;
-  const list = analyses.list.map(a => Object.assign({}, a, { unread: unreadOf(a, me), label: gameLabel(a) }));
+  const list = analyses.list.filter(a => me === 'coach' || a.playerId === session.playerId).map(a => Object.assign({}, a, { unread: unreadOf(a, me), label: gameLabel(a) }));
   return { me, list, unread: list.filter(a => a.unread).length, error: analyses.error || (me === 'coach' && analyses.purgeError) || '', loaded: analyses.loaded };
 }
 function keepAnalysis(a, seen) {
@@ -735,7 +756,7 @@ function keepAnalysis(a, seen) {
 async function getAnalysis({ id }) {
   const me = analysisRole();
   if (!me || !cloud) throw new Error('Analyses indisponibles ici.');
-  const r = me === 'coach' ? await cloud.coachAnalysisGet(getPushToken(), id) : await cloud.analysisGet(session.token, id);
+  const r = me === 'coach' ? await cloud.coachAnalysisGet(getPushToken(), id) : await cloud.analysisGet(playerToken(), id);
   keepAnalysis(r.analysis, true);
   setTimeout(refreshView, 0);
   return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId) };
@@ -746,7 +767,7 @@ async function commentAnalysis({ id, t, text }) {
   const msg = String(text || '').trim();
   if (!msg) throw new Error('Message vide.');
   const tt = t === null || t === undefined || t === '' ? null : Math.round(Number(t));
-  const r = me === 'coach' ? await cloud.coachAnalysisComment(getPushToken(), id, tt, msg) : await cloud.analysisComment(session.token, id, tt, msg);
+  const r = me === 'coach' ? await cloud.coachAnalysisComment(getPushToken(), id, tt, msg) : await cloud.analysisComment(playerToken(), id, tt, msg);
   keepAnalysis(r.analysis, true);
   refreshView();
   return { ok: true, analysis: r.analysis };
@@ -780,7 +801,7 @@ async function purgeClips() {
 }
 // Envoi d'une partie par le joueur : analyse créée, vidéos envoyées une à une, puis analyse ouverte au coach
 async function sendAnalysis({ matchId, picks, note }) {
-  if (!isPlayerCloud() || !cloud) throw new Error('L\'envoi se fait depuis l\'ordinateur du joueur.');
+  if (!isPlayerOnline()) throw new Error(isPlayer() ? 'Pas de connexion au serveur du coach : réessaie dans un moment.' : 'L\'envoi se fait depuis l\'espace du joueur.');
   if (sendJob) throw new Error('Un envoi est déjà en cours.');
   if (videoJob) throw new Error('Attends la fin de l\'enregistrement.');
   const playerId = session.playerId;
@@ -803,7 +824,12 @@ async function sendAnalysis({ matchId, picks, note }) {
     // envoi interrompu il y a peu avec les mêmes vidéos : on reprend la même analyse
     if (m.pending && m.pending.files === files && Date.now() - m.pending.at < 2.5 * 3600e3) id = m.pending.id;
     else {
-      id = (await cloud.analysisCreate(session.token, { matchId, clips, note: String(note || '').trim().slice(0, 2000), comments })).id;
+      if (session.source === 'local' && isCoachMachine()) { // ordinateur du coach : les moments de cette partie partent tout de suite
+        const g = store.data.games.find(x => x.matchId === matchId && x.playerId === playerId);
+        const { clips: _c, camera: _k, sent: _s, pending: _p, ...data } = m; // eslint-disable-line no-unused-vars
+        await cloud.coachMomentsPush(getPushToken(), [{ playerId, matchId, date: g ? g.date : Date.now(), data }]);
+      }
+      id = (await cloud.analysisCreate(playerToken(), { matchId, clips, note: String(note || '').trim().slice(0, 2000), comments })).id;
       m.pending = { id, at: Date.now(), files };
       writeMoments(playerId, m);
     }
@@ -817,9 +843,10 @@ async function sendAnalysis({ matchId, picks, note }) {
       for (let i = 0; i < clips.length; i++) {
         status('Envoi de la vidéo ' + (i + 1) + '/' + clips.length + '…');
         await cloud.uploadClip(id, clips[i].file, fs.readFileSync(path.join(dir, clips[i].file)));
+        if (!session) throw new Error('Session fermée pendant l\'envoi.');
       }
       status('Envoi au coach…');
-      const r = await cloud.analysisReady(session.token, id);
+      const r = await cloud.analysisReady(playerToken(), id);
       delete m.pending;
       m.sent = { id, at: Date.now() };
       writeMoments(playerId, m);
@@ -927,7 +954,7 @@ async function checkScreenPermission() {
   throw new Error('Autorise Coaching LoL à enregistrer l\'écran : Réglages Système › Confidentialité et sécurité › Enregistrement de l\'écran, coche Coaching LoL, puis relance l\'app.');
 }
 async function recordVideos({ playerId, matchId }) {
-  if (!isPlayerCloud() || playerId !== session.playerId) throw new Error('Les moments se filment depuis l\'ordinateur du joueur, avec son client League of Legends.');
+  if (!isPlayer() || playerId !== session.playerId) throw new Error('Les moments se filment depuis l\'espace du joueur (code joueur), avec le client League of Legends de cet ordinateur.');
   if (sendJob) throw new Error('Attends la fin de l\'envoi.');
   if (videoJob) throw new Error('Un enregistrement est déjà en cours (' + videoJob.status + ').');
   const { moments: m } = await getMoments({ playerId, matchId });
@@ -976,7 +1003,7 @@ async function recordVideos({ playerId, matchId }) {
   return { ok: true };
 }
 function deleteVideos({ playerId, matchId }) {
-  if (!isPlayerCloud() || playerId !== session.playerId) throw new Error('Action réservée au joueur.');
+  if (!isPlayer() || playerId !== session.playerId) throw new Error('Action réservée au joueur.');
   if (videoJob || sendJob) throw new Error('Attends la fin de l\'enregistrement ou de l\'envoi.');
   fs.rmSync(path.join(videosDir(), videoKey(playerId, matchId)), { recursive: true, force: true });
   try {
@@ -1360,7 +1387,7 @@ function registerIpc() {
   handle('analysis:comment', q => commentAnalysis(q || {}));
   handle('analysis:close', q => closeAnalysis(q || {}));
   handle('lol:path', q => {
-    if (!canEdit() && !isPlayerCloud()) throw new Error('Action impossible ici.');
+    if (!canEdit() && !isPlayer()) throw new Error('Action impossible ici.');
     store.data.settings.lolPath = String((q && q.path) || '').trim().slice(0, 400);
     store.save();
     lolCache = null;
@@ -1399,7 +1426,7 @@ async function restoreSession() {
   const s = r.session;
   if (s.source === 'local') {
     const ok = s.role === 'coach' ? isCoachMachine() : store.data.players.some(p => p.id === s.playerId);
-    if (ok) session = { role: s.role, playerId: s.playerId, source: 'local' };
+    if (ok) session = { role: s.role, playerId: s.playerId, source: 'local', cloudToken: s.cloudToken || undefined };
   } else if (s.source === 'cloud' && cloud && s.token) {
     try {
       remoteData = cloudMod.dataFromCloud(await cloud.getData(s.token), store.data);

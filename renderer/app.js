@@ -630,7 +630,7 @@ function renderDrawer() {
   $('#drawer').innerHTML = `<div class="row"><span class="chip ${g.win ? 'accent' : 'red'}">${g.win ? 'Victoire' : 'Défaite'}</span><span class="muted small">${dateTimeFr(g.date)} · ${g.duration} min</span><span class="spacer"></span><button class="icon-btn" data-action="close-drawer">${icon('close', 18)}</button></div>
     <div class="game-head">${img(g.champion, '')}<div><h2 style="margin:0">${champ(g.champion)}</h2><div class="muted small">${esc(g.role)} · côté ${esc(g.side || '?')} · niveau ${g.level || '?'}</div></div><span class="spacer"></span>
       ${g.opponent ? `<div class="vs" style="text-align:center"><div class="faint tiny">contre</div>${img(g.opponent, '')}<div class="small">${champ(g.opponent)}</div></div>` : ''}</div>
-    ${(edit && isCoach()) || isPlayerCloud() ? `<button class="btn primary mo-open" data-action="moments" data-id="${esc(g.matchId)}">${icon('target', 15)} Moments clés de la partie</button>` : ''}
+    ${(edit && isCoach()) || isPlayerSpace() ? `<button class="btn primary mo-open" data-action="moments" data-id="${esc(g.matchId)}">${icon('target', 15)} Moments clés de la partie</button>` : ''}
     <div class="statgrid">
       ${cell('K / D / A', `${g.kills} / ${g.deaths} / ${g.assists}`)}${cell('KDA', Stats.fmt(M.KDA(g), 'dec2'))}${cell('Kill participation', Stats.fmt(M.KP(g), 'pct'))}
       ${cell('CS', `${g.cs} <span class="muted small">(${Stats.fmt(M['CS/min'](g), 'dec2')}/min)</span>`)}${cell('CS à 10 min', Stats.fmt(g.cs10, 'int'))}${cell('Morts avant 15 min', g.deaths15 === null || g.deaths15 === undefined ? '—' : g.deaths15)}
@@ -681,7 +681,7 @@ function momentDetail(x) {
   return x.zone ? esc(x.zone) : '';
 }
 const clipFor = (m, x) => (x && m.clips ? m.clips.find(c => x.t / 1000 >= c.start - 1 && x.t / 1000 <= c.end + 1) : null);
-const isPlayerCloud = () => { const s = D().session; return !!(s && s.role === 'joueur' && s.source === 'cloud'); };
+const isPlayerSpace = () => { const s = D().session; return !!(s && s.role === 'joueur'); };
 const fmtMo = b => (b / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: b < 10 * 1048576 ? 1 : 0 }) + ' Mo';
 const excerpt = (t, n = 90) => (String(t).length > n ? String(t).slice(0, n - 1) + '…' : String(t));
 function momentsVideo(m, x, c) {
@@ -701,13 +701,13 @@ function momentsButtons(S) {
   if (S.mode === 'send') return `<button class="btn ghost" data-action="mo-back">Retour aux moments</button>`;
   const see = S.analysisId ? `<button class="btn primary" data-action="analysis-open" data-id="${esc(S.analysisId)}">${icon('chat', 15)} Voir l'analyse</button>` : '';
   if (!S.canFilm) return see + `<button class="btn" data-action="mo-copy">${icon('copy', 15)} Copier pour l'analyse</button>`;
-  if (S.vstatus || S.sstatus || S.analysisId) return see;
+  if (S.vstatus || S.sstatus || (S.analysisId && !S.analysisClosed)) return see;
   if (m.clips && m.clips.length) {
-    return `<button class="btn primary" data-action="mo-send">${icon('send', 15)} Envoyer au coach</button>
+    return see.replace('btn primary', 'btn') + `<button class="btn primary" data-action="mo-send">${icon('send', 15)} Envoyer au coach</button>
       <button class="btn ghost" data-action="mo-film" data-tip="Filmer à nouveau depuis le replay">${icon('play', 15)} Refilmer</button>
       <button class="icon-btn" data-action="mo-unfilm" data-tip="Supprimer les vidéos de cette partie">${icon('trash', 16)}</button>`;
   }
-  return `<button class="btn primary" data-action="mo-film" data-tip="Le client LoL télécharge le replay, l'ouvre, et l'app filme 30 s autour de chaque moment (morts, objectifs, kills)">${icon('play', 15)} Filmer les moments <span class="chip" style="padding:0 7px">bêta</span></button>`;
+  return see.replace('btn primary', 'btn') + `<button class="btn primary" data-action="mo-film" data-tip="Le client LoL télécharge le replay, l'ouvre, et l'app filme 30 s autour de chaque moment (morts, objectifs, kills)">${icon('play', 15)} Filmer les moments <span class="chip" style="padding:0 7px">bêta</span></button>`;
 }
 function momentsHead(S, sub) {
   const title = S.mode === 'analysis' ? 'Analyse' : S.mode === 'send' ? 'Envoyer au coach' : 'Moments clés';
@@ -816,7 +816,7 @@ async function openMoments(matchId) {
   else {
     const first = r.moments.moments.findIndex(x => x.type === 'mort');
     Object.assign(state.moments, {
-      data: r.moments, text: r.text, videoKey: r.videoKey, canFilm: !!r.canFilm, lol: r.lol, analysisId: r.analysisId || null,
+      data: r.moments, text: r.text, videoKey: r.videoKey, canFilm: !!r.canFilm, lol: r.lol, analysisId: r.analysisId || null, analysisClosed: !!r.analysisClosed,
       vstatus: r.filming || null, sstatus: r.sending || null, sel: first >= 0 ? first : 0
     });
   }
