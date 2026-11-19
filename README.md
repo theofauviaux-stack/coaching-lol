@@ -34,7 +34,8 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 
 - Page « En direct » (coach, sur son ordinateur) : chaque minute, l'app demande à l'API Riot (spectator-v5) si un joueur suivi est en partie. Seules les classées Solo/Duo (file 420) sont affichées, avec les deux équipes : champions, pseudos, rang Solo/Duo (gardé 30 min), sorts, runes, bans et chrono.
 - Pastille « En partie » sur l'accueil, compteur dans le menu, notification quand une partie commence. Quand elle se termine, le rang est relevé 2 min plus tard (LP de la partie au plus juste).
-- « Regarder » lance League of Legends en mode spectateur avec la clé d'observation donnée par Riot (`spectator.<plateforme>.lol.pvp.net:8080`), 3 min de retard comme toujours en classée. Le jeu doit être installé et à jour : il est cherché dans Applications (Mac) ou C:\Riot Games (Windows), sinon à l'emplacement indiqué dans Paramètres › Général › Mode spectateur.
+- Smurfs : dans la fiche d'un joueur (Joueurs › Modifier), un pseudo par ligne. Ils sont surveillés comme le compte principal sur la page En direct (étiquette « smurf de … »), mais leurs parties n'entrent pas dans les stats. Ils ne partent pas sur le serveur en ligne.
+- « Regarder » lance League of Legends en mode spectateur avec la clé d'observation donnée par Riot (`spectator.<plateforme>.lol.pvp.net:8080`), 3 min de retard comme toujours en classée. Si le jeu se ferme dans les 30 s (échec fréquent au premier lancement), l'app le relance d'elle-même, 3 essais au maximum, et jamais si une fenêtre de jeu est déjà ouverte. Le jeu doit être installé et à jour : il est cherché dans Applications (Mac) ou C:\Riot Games (Windows), sinon à l'emplacement indiqué dans Paramètres › Général › Mode spectateur.
 - Les joueurs ne voient pas cette page : la clé API Riot reste sur l'ordinateur du coach.
 
 ## Installer

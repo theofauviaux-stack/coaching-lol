@@ -15,6 +15,8 @@ module.exports = async function ({ app, win, fs, path }) {
     win.setSize(1440, 900);
     await wait(1200);
     await type('4821');
+    // espion des messages affichés (certains passent vite)
+    await js(`window.__toasts = []; { const t0 = toast; toast = function (m) { window.__toasts.push(String(m)); return t0.apply(this, arguments); }; } 0`);
     await until(`state.data.live && state.data.live.games && state.data.live.games.length === 2`, 40000);
     out.parties = await js(`state.data.live.games.length`);
     await wait(500);
@@ -37,9 +39,18 @@ module.exports = async function ({ app, win, fs, path }) {
     await js(`document.querySelector('#page').scrollTop = 0; 0`);
     // Regarder
     await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
-    out.toastRegarder = await toastText();
+    await until(`window.__toasts.some(t => /s'ouvre en mode spectateur/.test(t))`, 15000);
+    out.toastRegarder = await js(`window.__toasts.find(t => /s'ouvre en mode spectateur/.test(t))`);
     out.spectateur = JSON.parse(fs.readFileSync(path.join(data, 'spectateur.json'), 'utf8'));
     await shot('l4-regarder');
+    await hideToast();
+    // le faux jeu se ferme tout de suite : l'app le relance d'elle-même
+    await until(`window.__toasts.some(t => /nouvelle tentative/.test(t))`, 15000);
+    out.toastRelance = await js(`window.__toasts.find(t => /nouvelle tentative/.test(t))`);
+    await wait(1500);
+    out.lancements = Number(fs.readFileSync(path.join(dir, 'lancements'), 'utf8'));
+    out.journalLancement = fs.readFileSync(path.join(dir, 'lancements.log'), 'utf8').split('\n')[0];
+    await shot('l4b-relance');
     await hideToast();
     // jeu introuvable : message clair
     fs.rmSync(path.join(data, 'spectateur.json'));
@@ -56,13 +67,40 @@ module.exports = async function ({ app, win, fs, path }) {
     await js(`state.page = 'parametres'; state.settingsTab = 'general'; render(); document.getElementById('spectateur').scrollIntoView({ block: 'start' }); 0`);
     out.reglage = await js(`document.getElementById('spectateur').textContent.replace(/\\s+/g, ' ').trim()`);
     await shot('l6-parametres');
+    // smurf de Questinou : pseudo inconnu refusé, puis le bon
+    const editSmurf = async v => {
+      await js(`state.page = 'joueurs'; render(); document.querySelector('[data-action="edit-player"][data-id="p4"]').click(); 0`);
+      await wait(500);
+      await js(`document.querySelector('#player-form [name="smurfs"]').value = ${JSON.stringify(v)}; document.querySelector('#player-form').requestSubmit(); 0`);
+    };
+    await editSmurf('Inconnu#XXX');
+    out.toastSmurfInconnu = await toastText();
+    await hideToast();
+    await js(`closeModal(); 0`);
+    await editSmurf('Quest Smurf#EUW');
+    await until(`(state.data.players.find(p => p.id === 'p4').smurfs || []).length === 1`);
+    out.smurfsEnregistres = await js(`state.data.players.find(p => p.id === 'p4').smurfs`);
+    await hideToast();
+    await js(`state.page = 'joueurs'; render(); 0`);
+    out.ficheJoueur = await js(`[...document.querySelectorAll('.pcard')].find(c => c.textContent.includes('UCE Questinou')).textContent.replace(/\\s+/g, ' ')`);
+    await shot('l6b-joueurs-smurf');
+    await until(`state.data.live.games.length === 3`, 20000);
+    out.partiesAvecSmurf = 3;
+    await js(`state.page = 'direct'; render(); 0`);
+    await wait(500);
+    out.carteSmurf = await js(`(() => { const c = [...document.querySelectorAll('.lv-card')].find(x => x.textContent.includes('smurf')); return { titre: c.querySelector('.lv-title').textContent.replace(/\\s+/g, ' ').trim(), texte: c.textContent.replace(/\\s+/g, ' ') }; })()`);
+    await js(`[...document.querySelectorAll('.lv-card')].find(x => x.textContent.includes('smurf')).scrollIntoView({ block: 'start' }); 0`);
+    await shot('l6c-en-direct-smurf');
+    await js(`document.querySelector('#page').scrollTop = 0; 0`);
     // la partie de Kioga et HaveHope se termine ; Uawawa lance une partie (notification)
     await js(`state.page = 'direct'; render(); 0`);
     await riot('/__fin');
-    await until(`state.data.live.games.length === 1`, 20000);
+    await until(`state.data.live.games.length === 2`, 20000);
     out.apresFin = await js(`state.data.live.games.length`);
     await riot('/__nouvelle');
-    out.notification = await toastText();
+    await until(`window.__toasts.some(t => /Partie classée en cours/.test(t) && /UCE Uawawa/.test(t))`, 20000);
+    out.notification = await js(`window.__toasts.find(t => /Partie classée en cours/.test(t) && /UCE Uawawa/.test(t))`);
+    out.notificationSmurf = await js(`window.__toasts.find(t => /sur son smurf/.test(t)) || ''`);
     await shot('l7-notification');
     // plus personne en partie
     await riot('/__plus-rien');

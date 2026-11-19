@@ -22,10 +22,36 @@ function splitRiotId(id) {
   return i > 0 ? { gameName: s.slice(0, i), tagLine: s.slice(i + 1) } : { gameName: s, tagLine: '' };
 }
 
+// ---------------------------------------------------------------- smurfs (comptes secondaires)
+const RIOT_ID = /^[^#]{1,32}#[^#\s]{2,6}$/;
+const MAX_SMURFS = 6;
+// Texte saisi (un pseudo par ligne, ou séparés par des virgules) → { list, bad }
+function parseSmurfs(text) {
+  const list = [], bad = [], seen = new Set();
+  for (const raw of String(text || '').split(/[\n,;]+/)) {
+    const id = raw.trim().replace(/\s*#\s*/, '#');
+    if (!id) continue;
+    if (!RIOT_ID.test(id)) { bad.push(id); continue; }
+    const k = id.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); list.push(id); }
+  }
+  return { list: list.slice(0, MAX_SMURFS), bad, tooMany: list.length > MAX_SMURFS };
+}
+
+// Comptes à surveiller : compte principal + smurfs de chaque joueur (ceux dont le puuid est connu)
+function trackedAccounts(players) {
+  const out = [];
+  for (const p of players || []) {
+    if (p.puuid) out.push({ puuid: p.puuid, playerId: p.id, region: p.region, riotId: p.riotId, smurf: null });
+    for (const sm of p.smurfs || []) if (sm && sm.puuid) out.push({ puuid: sm.puuid, playerId: p.id, region: p.region, riotId: sm.riotId, smurf: sm.riotId });
+  }
+  return out;
+}
+
 // Partie brute de l'API → partie affichable, vue depuis l'équipe du (premier) joueur suivi.
-// players : joueurs suivis ({ id, puuid, riotId }) ; ranks : { puuid: rang } ; champKeys : { "103": "Ahri" }
+// players : joueurs suivis ({ id, puuid, riotId, smurfs }) ; ranks : { puuid: rang } ; champKeys : { "103": "Ahri" }
 function buildGame(raw, players, ranks = {}, champKeys = {}, now = Date.now()) {
-  const ours = new Map(players.filter(p => p.puuid).map(p => [p.puuid, p]));
+  const ours = new Map(trackedAccounts(players).map(a => [a.puuid, a]));
   const parts = (raw.participants || []).map(x => {
     const me = x.puuid ? ours.get(x.puuid) : null;
     const rid = splitRiotId(x.riotId || (me && me.riotId) || '');
@@ -34,7 +60,7 @@ function buildGame(raw, players, ranks = {}, champKeys = {}, now = Date.now()) {
       teamId: x.teamId, championId: x.championId, champion: champKeys[String(x.championId)] || null,
       spells: [x.spell1Id, x.spell2Id], keystone: x.perks && x.perks.perkIds ? x.perks.perkIds[0] : null,
       subStyle: x.perks ? x.perks.perkSubStyle : null, bot: !!x.bot,
-      playerId: me ? me.id : null, rank: x.puuid && ranks[x.puuid] !== undefined ? ranks[x.puuid] : null
+      playerId: me ? me.playerId : null, smurf: me ? me.smurf : null, rank: x.puuid && ranks[x.puuid] !== undefined ? ranks[x.puuid] : null
     };
   });
   const mine = parts.filter(x => x.playerId);
@@ -115,4 +141,34 @@ function findInstall(os, io, custom, env = {}) {
   return null;
 }
 
-module.exports = { QUEUE_SOLO, soloRank, buildGame, elapsed, spectatorHost, checkGame, spectateArgs, readLocale, findInstall, splitRiotId };
+// Lance le jeu en mode spectateur et le relance s'il se ferme tout de suite : le premier lancement échoue
+// souvent (jeu qui se ferme pendant le chargement). Résout dès que le premier lancement a démarré.
+// Pas de relance si une fenêtre de jeu tourne déjà (isRunning), si la partie est finie (stillLive) ou si
+// le jeu est resté ouvert plus de minRunMs (le coach a regardé puis fermé).
+function launchWatch(o) {
+  const opt = Object.assign({ tries: 3, minRunMs: 30000, gapMs: 4000, now: Date.now, wait: ms => new Promise(r => setTimeout(r, ms)),
+    isRunning: async () => false, stillLive: () => true, onRetry() {}, onGiveUp() {} }, o);
+  let attempt = 0;
+  const start = () => new Promise((resolve, reject) => {
+    attempt++;
+    const t0 = opt.now();
+    const child = opt.spawn(opt.exe, opt.args, { cwd: opt.cwd, env: opt.env, detached: true, stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.once('exit', async code => {
+        if (opt.now() - t0 >= opt.minRunMs) return;
+        if (!opt.stillLive()) return;
+        if (await opt.isRunning()) return;
+        if (attempt >= opt.tries) return opt.onGiveUp(attempt, code);
+        opt.onRetry(attempt + 1, opt.tries);
+        await opt.wait(opt.gapMs);
+        start().catch(e => opt.onGiveUp(attempt, e.message));
+      });
+      if (child.unref) child.unref();
+      resolve(child);
+    });
+  });
+  return start();
+}
+
+module.exports = { parseSmurfs, trackedAccounts, launchWatch, MAX_SMURFS, QUEUE_SOLO, soloRank, buildGame, elapsed, spectatorHost, checkGame, spectateArgs, readLocale, findInstall, splitRiotId };

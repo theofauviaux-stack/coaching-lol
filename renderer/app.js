@@ -904,6 +904,7 @@ function pageJoueurs() {
         <div style="min-width:0"><b>${esc(p.riotId)}</b><div class="row" style="gap:6px;margin-top:4px"><span class="chip">${esc(p.role || '?')}</span><span class="chip">${esc((p.region || '').toUpperCase())}</span></div></div></div>
       <div class="small">${rk ? `<span class="ok">${esc(rk.label)}</span>` : '<span class="muted">Rang non relevé</span>'} <span class="muted">· ${gs.length} partie${gs.length > 1 ? 's' : ''}</span></div>
       ${p.goal ? `<div class="small muted">${icon('target', 13)} ${esc(p.goal)}</div>` : ''}
+      ${(p.smurfs || []).length ? `<div class="small muted">${icon('players', 13)} Smurfs : ${p.smurfs.map(x => `<span class="${x.missing ? 'red' : ''}" ${x.missing ? 'data-tip="Introuvable chez Riot : vérifie le pseudo"' : ''}>${esc(x.riotId)}</span>`).join(', ')}</div>` : ''}
       <div class="row small"><span class="muted">Code d'accès</span><span class="code">${shown ? esc(p.code || '—') : '••••'}</span>
         <button class="icon-btn" data-action="toggle-code" data-id="${p.id}" title="${shown ? 'Masquer' : 'Afficher'}">${icon(shown ? 'eyeOff' : 'eye', 15)}</button></div>
       ${p.status === 'error' ? `<div class="small red">${icon('alert', 13)} ${esc(p.statusText)}</div>` : /^Récupération/.test(p.statusText || '') ? `<div class="small muted"><span class="spinner" style="width:12px;height:12px"></span> ${esc(p.statusText)}</div>` : ''}
@@ -934,7 +935,9 @@ function profileFields(p) {
       <div class="field"><label>Rang de départ</label><select name="rankStart"><option value="">—</option>${RANGS.map(r => opt(r, p.rankStart)).join('')}</select></div>
       <div class="field"><label>Rang visé</label><select name="rankTarget"><option value="">—</option>${RANGS.map(r => opt(r, p.rankTarget)).join('')}</select></div>
     </div>
-    <div class="field"><label>Objectif du coaching</label><input name="goal" value="${esc(p.goal || '')}" placeholder="ex. Passer Grand Maître"></div>`;
+    <div class="field"><label>Objectif du coaching</label><input name="goal" value="${esc(p.goal || '')}" placeholder="ex. Passer Grand Maître"></div>
+    <div class="field"><label>Smurfs <span class="faint">(pour la page En direct, pas dans les stats)</span></label>
+      <textarea name="smurfs" rows="2" placeholder="Un pseudo par ligne, ex. Mon Smurf#EUW">${esc((p.smurfs || []).map(x => x.riotId).join('\n'))}</textarea></div>`;
 }
 
 // Liens de téléchargement épinglés (toujours la dernière version)
@@ -1074,6 +1077,7 @@ function liveChip(p) {
   const g = isCoach() && canEdit() ? liveOf(p.id) : null;
   return g ? `<span class="live-chip" data-action="go" data-page="direct" data-tip="Partie classée en cours : clique pour la voir"><span class="pulse"></span>En partie <span class="lv-tick" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</span></span>` : '';
 }
+const ownerName = pid => { const p = D().players.find(y => y.id === pid); return p ? gameName(p) : '?'; };
 function liveRow(x) {
   const games = x.rank ? x.rank.wins + x.rank.losses : 0;
   const wr = games ? Math.round(x.rank.wins / games * 100) : null;
@@ -1081,14 +1085,15 @@ function liveRow(x) {
   return `<div class="lv-row ${x.playerId ? 'me' : ''}" ${x.playerId ? `data-action="open-player" data-id="${x.playerId}" data-tip="Ouvrir son tableau de bord"` : ''}>
     <div class="lv-champ">${x.champion ? img(x.champion, 'lv-cimg') : '<span class="lv-cimg"></span>'}${perkImg(x.keystone, 'lv-key')}</div>
     <div class="lv-spells">${spellImg(x.spells[0])}${spellImg(x.spells[1])}</div>
-    <div class="lv-who"><div class="lv-name">${name}</div><div class="lv-cname">${x.champion ? champ(x.champion) : 'Champion inconnu'}${perkImg(x.subStyle, 'lv-sub')}</div></div>
+    <div class="lv-who"><div class="lv-name">${name}</div><div class="lv-cname">${x.champion ? champ(x.champion) : 'Champion inconnu'}${perkImg(x.subStyle, 'lv-sub')}${x.smurf ? `<span class="lv-smurf">smurf de ${esc(ownerName(x.playerId))}</span>` : ''}</div></div>
     <div class="lv-rank">${x.rank ? `<b>${esc(x.rank.label)}</b> <span class="muted">${x.rank.lp} LP</span><div class="small"><span class="${wr >= 50 ? 'ok' : 'red'}">${wr} %</span> <span class="faint">sur ${games} parties</span></div>` : '<span class="faint">Non classé</span>'}</div>
   </div>`;
 }
 function liveCard(g) {
   const lol = (D().coach && D().coach.lol) || {};
-  const allyOurs = g.allies.filter(x => x.playerId).map(x => esc(x.gameName));
-  const enemyOurs = g.enemies.filter(x => x.playerId).map(x => esc(x.gameName));
+  const who = x => (x.smurf ? `${esc(ownerName(x.playerId))} <span class="muted">sur son smurf</span> ${esc(x.gameName)}` : esc(x.gameName));
+  const allyOurs = g.allies.filter(x => x.playerId).map(who);
+  const enemyOurs = g.enemies.filter(x => x.playerId).map(who);
   const title = allyOurs.join(' et ') + (enemyOurs.length ? ' <span class="muted">contre</span> ' + enemyOurs.join(' et ') : '');
   const side = t => (t === 100 ? 'bleu' : 'rouge');
   const bans = list => (list.length ? list.map(c => img(c, 'lv-ban')).join('') : '<span class="faint tiny">aucun ban</span>');
@@ -1363,6 +1368,7 @@ document.addEventListener('submit', async e => {
     if (f.code && !/^\d{4}$/.test(f.code)) return toast('Le code doit faire 4 chiffres.', 'err');
     const isNew = !f.pid;
     const p = { riotId, region: f.region, role: f.role, startDate: f.startDate, rankStart: f.rankStart, rankTarget: f.rankTarget, goal: f.goal };
+    if ('smurfs' in f) p.smurfs = f.smurfs;
     if (f.code) p.code = f.code;
     if (!isNew) {
       p.id = f.pid;

@@ -35,10 +35,13 @@ const GAMES = {
     ] },
   aram: { gameId: 7300000003, platformId: 'EUW1', gameQueueConfigId: 450, gameStartTime: NOW - 5 * 60000, gameLength: 300, observers: { encryptionKey: 'aramKEYaramKEYaramKEY' }, bannedChampions: [],
     participants: [part('P-QUEST', 100, 22, 'UCE Questinou#000')] },
+  smurf: { gameId: 7300000005, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: NOW - 6 * 60000, gameLength: 360, observers: { encryptionKey: 'SmUrFkEySmUrFkEySmUrFk' }, bannedChampions: [],
+    participants: [part('F-1', 100, 39, 'Blade Dancer#EUW'), part('F-2', 100, 113, 'Snow Rider#EUW'), part('F-3', 100, 38, 'Void Walker#EUW'), part('S-QUEST', 100, 202, 'Quest Smurf#EUW', [4, 7], [8008, 9101]), part('F-5', 100, 497, 'Charmer#EUW'),
+      part('G-1', 200, 98, 'Twilight#EUW'), part('G-2', 200, 427, 'Treant#EUW'), part('G-3', 200, 134, 'Dark Sovereign#EUW'), part('G-4', 200, 110, 'Arrow Rain#EUW'), part('G-5', 200, 111, 'Tidal#EUW')] },
   partie3: { gameId: 7300000004, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: NOW, gameLength: 0, observers: { encryptionKey: 'NeWkEyNeWkEyNeWkEyNeWk' }, bannedChampions: [],
     participants: [part('P-UAWAWA', 100, 17, 'UCE Uawawa#000'), part('D-2', 200, 1, 'Annie Bot#EUW')] }
 };
-const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram' };
+const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram', 'S-QUEST': 'smurf' };
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
 const calls = { spectator: {}, league: {} };
 function rankFor(puuid) {
@@ -56,6 +59,10 @@ function startRiot() {
     if (req.url === '/__fin') { delete where['P-KIOGA']; delete where['P-HAVEHOPE']; return send(200, {}); }
     if (req.url === '/__nouvelle') { where['P-UAWAWA'] = 'partie3'; return send(200, {}); }
     if (req.url === '/__plus-rien') { for (const k of Object.keys(where)) delete where[k]; return send(200, {}); }
+    if ((m = req.url.match(/\/riot\/account\/v1\/accounts\/by-riot-id\/([^/]+)\/([^/?]+)/))) {
+      const id = decodeURIComponent(m[1]) + '#' + decodeURIComponent(m[2]);
+      return id === 'Quest Smurf#EUW' ? send(200, { puuid: 'S-QUEST', gameName: 'Quest Smurf', tagLine: 'EUW' }) : send(404, { status: { message: 'Data not found', status_code: 404 } });
+    }
     if ((m = req.url.match(/\/lol\/spectator\/v5\/active-games\/by-summoner\/([^/?]+)/))) {
       calls.spectator[m[1]] = (calls.spectator[m[1]] || 0) + 1;
       return where[m[1]] ? send(200, GAMES[where[m[1]]]) : send(404, { status: { message: 'Data not found', status_code: 404 } });
@@ -76,7 +83,14 @@ function startRiot() {
   const app = path.join(DIR, 'Jeux', 'League of Legends.app');
   fs.mkdirSync(path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS'), { recursive: true });
   fs.mkdirSync(path.join(app, 'Contents/LoL/Config'), { recursive: true });
-  fs.writeFileSync(path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends'), '#!/bin/sh\n');
+  const exe = path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends');
+  fs.writeFileSync(exe, `#!/bin/sh
+n=$(cat "${DIR}/lancements" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${DIR}/lancements"
+echo "$riot_launched|$(pwd)|$1" >> "${DIR}/lancements.log"
+[ "$n" -ge 2 ] && exec sleep 25
+exit 1
+`);
+  fs.chmodSync(exe, 0o755);
   fs.writeFileSync(path.join(app, 'Contents/LoL/Config/LeagueClientSettings.yaml'), 'install:\n    globals:\n        locale: "fr_FR"\n        region: "EUW"\n');
 
   const d = emptyData();
@@ -100,6 +114,7 @@ function startRiot() {
     p.on('exit', resolve);
   });
   riot.close();
+  spawn('pkill', ['-f', 'e2e-live/Jeux']);
   const r = JSON.parse(fs.readFileSync(path.join(DIR, 'resultat.json'), 'utf8'));
   assert.ok(!r.exception, r.exception);
   assert.strictEqual(r.parties, 2, 'deux parties classées : l\'ARAM de Questinou est ignorée');
@@ -123,10 +138,22 @@ function startRiot() {
   assert.ok(r.spectateur.cwd.endsWith('League of Legends.app/Contents/LoL/Game'));
   assert.ok(/mode spectateur/.test(r.toastRegarder), r.toastRegarder);
   assert.ok(/introuvable/.test(r.toastIntrouvable), r.toastIntrouvable);
+  // relance automatique : le faux jeu se ferme au premier lancement, tient au deuxième
+  assert.ok(/nouvelle tentative \(2\/3\)/.test(r.toastRelance), r.toastRelance);
+  assert.strictEqual(r.lancements, 2, 'un seul relancement');
+  assert.ok(/^true\|.*League of Legends\.app\/Contents\/LoL\/Game\|spectator spectator\.euw1/.test(r.journalLancement), r.journalLancement);
+  // smurfs
+  assert.ok(/Smurf introuvable chez Riot : Inconnu#XXX/.test(r.toastSmurfInconnu), r.toastSmurfInconnu);
+  assert.deepStrictEqual(r.smurfsEnregistres, [{ riotId: 'Quest Smurf#EUW', puuid: 'S-QUEST' }]);
+  assert.strictEqual(r.partiesAvecSmurf, 3);
+  assert.ok(/UCE Questinou sur son smurf Quest Smurf/.test(r.carteSmurf.titre), r.carteSmurf.titre);
+  assert.ok(/smurf de UCE Questinou/.test(r.carteSmurf.texte));
+  assert.ok(/Smurfs : Quest Smurf#EUW/.test(r.ficheJoueur), r.ficheJoueur);
   assert.ok(/League of Legends trouvé/.test(r.reglage), r.reglage);
   // fin de partie, nouvelle partie, plus rien
-  assert.strictEqual(r.apresFin, 1);
+  assert.strictEqual(r.apresFin, 2, 'restent KasKet et le smurf de Questinou');
   assert.ok(/Partie classée en cours/.test(r.notification) && /UCE Uawawa/.test(r.notification), r.notification);
+  assert.ok(/UCE Questinou sur son smurf Quest Smurf#EUW \(Jhin\)/.test(r.notificationSmurf), r.notificationSmurf);
   assert.ok(/Aucun de tes joueurs/.test(r.vide), r.vide);
   // rangs gardés en mémoire : une seule demande par joueur malgré les vérifications toutes les 2 s
   assert.ok(Object.keys(calls.league).filter(k => !k.startsWith('P-')).every(k => calls.league[k] === 1), JSON.stringify(calls.league));

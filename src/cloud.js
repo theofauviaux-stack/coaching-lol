@@ -90,7 +90,7 @@ function buildSnapshot(data, coachCode) {
     coachCode: coachCode || '',
     settings: { objectives: s.objectives || {}, cards: s.cards || [], axes: s.axes || [] },
     players: (data.players || []).map(p => {
-      const { puuid, status, statusText, ...rest } = p; // eslint-disable-line no-unused-vars
+      const { puuid, status, statusText, smurfs, ...rest } = p; // eslint-disable-line no-unused-vars
       return rest;
     }),
     games: data.games || [],

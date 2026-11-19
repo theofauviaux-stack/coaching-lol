@@ -82,8 +82,58 @@ assert.strictEqual(live.findInstall('win32', wio, '').exe, D_EXE, 'emplacement l
 io.texts = {};
 for (const c of ['E:\\Jeux\\LoL', 'E:\\Jeux\\LoL\\Game', 'E:\\Jeux\\LoL\\Game\\League of Legends.exe']) assert.strictEqual(live.findInstall('win32', wio, c).exe, D_EXE, c);
 
-// ---------------- client Riot : partie en cours et adresse de test
+// ---------------- smurfs
+let sm = live.parseSmurfs('Smurf Kio#EUW, autre # 123\nmauvais\nsmurf kio#euw\n\n');
+assert.deepStrictEqual(sm.list, ['Smurf Kio#EUW', 'autre#123'], 'doublons et espaces autour du # retirés');
+assert.deepStrictEqual(sm.bad, ['mauvais']);
+assert.strictEqual(live.parseSmurfs('A#EUW,B#EUW,C#EUW,D#EUW,E#EUW,F#EUW,G#EUW').tooMany, true);
+const withSmurf = [{ id: 'p-kioga', puuid: 'A1', riotId: 'UCE Kioga#EUWWW', region: 'euw', smurfs: [{ riotId: 'Ennemi Jungle#EUW', puuid: 'E1' }, { riotId: 'Pas encore#EUW', puuid: '' }] }];
+assert.deepStrictEqual(live.trackedAccounts(withSmurf).map(a => [a.puuid, a.playerId, a.smurf]), [['A1', 'p-kioga', null], ['E1', 'p-kioga', 'Ennemi Jungle#EUW']], 'smurf sans puuid ignoré');
+// joueur suivi seulement par son smurf (compte principal pas dans la partie)
+const g3 = live.buildGame(raw, [{ id: 'p-x', puuid: 'ZZ', riotId: 'Main#EUW', smurfs: [{ riotId: 'Mid#KR1', puuid: 'E2' }] }], {}, keys);
+assert.deepStrictEqual(g3.playerIds, ['p-x']);
+assert.strictEqual(g3.teamId, 200);
+assert.strictEqual(g3.allies[1].smurf, 'Mid#KR1');
+assert.strictEqual(g3.allies[1].playerId, 'p-x');
+assert.strictEqual(g.allies[0].smurf, null);
+
+// ---------------- relance automatique du mode spectateur
+const EventEmitter = require('events');
+async function scenario(lifetimes, opts = {}) {
+  let clock = 0;
+  const launches = [], retries = [], giveUps = [];
+  const spawn = (exe, args, o) => {
+    const c = new EventEmitter();
+    const life = lifetimes[launches.length];
+    launches.push({ exe, args, o });
+    setImmediate(() => {
+      if (life === 'erreur') return c.emit('error', new Error('ENOENT'));
+      c.emit('spawn');
+      if (life !== null) setImmediate(() => { clock += life; c.emit('exit', 1); });
+    });
+    c.unref = () => {};
+    return c;
+  };
+  await live.launchWatch(Object.assign({ spawn, exe: '/jeu', args: ['a'], cwd: '/', env: {}, now: () => clock, wait: async () => {},
+    onRetry: (n, t) => retries.push(n + '/' + t), onGiveUp: n => giveUps.push(n) }, opts));
+  await new Promise(r => setTimeout(r, 30));
+  return { launches: launches.length, retries, giveUps };
+}
 (async () => {
+  let s1 = await scenario([2000, null]);
+  assert.deepStrictEqual([s1.launches, s1.retries, s1.giveUps], [2, ['2/3'], []], 'fermé au bout de 2 s : relancé une fois, puis il tient');
+  s1 = await scenario([1000, 1000, 1000]);
+  assert.deepStrictEqual([s1.launches, s1.retries, s1.giveUps], [3, ['2/3', '3/3'], [3]], 'trois échecs : on abandonne avec un message');
+  s1 = await scenario([45 * 60000]);
+  assert.deepStrictEqual([s1.launches, s1.retries], [1, []], 'regardé 45 min puis fermé : pas de relance');
+  s1 = await scenario([1000], { isRunning: async () => true });
+  assert.strictEqual(s1.launches, 1, 'un jeu tourne déjà : pas de deuxième fenêtre');
+  s1 = await scenario([1000], { stillLive: () => false });
+  assert.strictEqual(s1.launches, 1, 'partie terminée : pas de relance');
+  await assert.rejects(scenario(['erreur']), /ENOENT/, 'jeu impossible à lancer : erreur tout de suite');
+})().then(() => {
+// ---------------- client Riot : partie en cours et adresse de test
+return (async () => {
   const urls = [];
   const fetch = async url => { urls.push(url); return url.includes('/active-games/by-summoner/A1') ? { status: 200, json: async () => raw } : { status: 404, json: async () => null }; };
   const c = new RiotClient('RGAPI-test', { fetch, delayMs: 0 });
@@ -93,5 +143,6 @@ for (const c of ['E:\\Jeux\\LoL', 'E:\\Jeux\\LoL\\Game', 'E:\\Jeux\\LoL\\Game\\L
   const t = new RiotClient('RGAPI-test', { fetch, delayMs: 0, base: 'http://127.0.0.1:9' });
   await t.activeGame('A1', 'kr');
   assert.strictEqual(urls[2], 'http://127.0.0.1:9/lol/spectator/v5/active-games/by-summoner/A1');
-  console.log('✅ Parties en direct et mode spectateur : OK');
-})().catch(e => { console.error(e); process.exit(1); });
+  console.log('✅ Parties en direct, smurfs et mode spectateur : OK');
+})();
+}).catch(e => { console.error(e); process.exit(1); });

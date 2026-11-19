@@ -476,15 +476,27 @@ async function pollLive() {
   const found = new Map();
   let error = '';
   try {
-    const seen = new Set();
+    // smurfs ajoutés sans clé API : on cherche leur puuid maintenant
     for (const p of store.data.players) {
-      if (!p.puuid || seen.has(p.puuid)) continue;
-      seen.add(p.puuid);
-      // déjà vu dans une partie trouvée (deux joueurs suivis dans la même partie) : inutile de redemander
-      if ([...found.values()].some(f => (f.raw.participants || []).some(x => x.puuid === p.puuid))) continue;
+      for (const sm of p.smurfs || []) {
+        if (sm.puuid || sm.missing) continue;
+        try {
+          const [gameName, tagLine] = sm.riotId.split('#');
+          const acc = await client.account(gameName, tagLine, p.region);
+          if (acc && acc.puuid) sm.puuid = acc.puuid; else sm.missing = true;
+          store.save();
+        } catch (e) { if (e.code === 'KEY') break; }
+      }
+    }
+    const seen = new Set();
+    for (const a of liveMod.trackedAccounts(store.data.players)) {
+      if (seen.has(a.puuid)) continue;
+      seen.add(a.puuid);
+      // déjà vu dans une partie trouvée (deux comptes suivis dans la même partie) : inutile de redemander
+      if ([...found.values()].some(f => (f.raw.participants || []).some(x => x.puuid === a.puuid))) continue;
       try {
-        const raw = await client.activeGame(p.puuid, p.region);
-        if (raw && raw.gameQueueConfigId === liveMod.QUEUE_SOLO && !found.has(raw.gameId)) found.set(raw.gameId, { raw, region: p.region });
+        const raw = await client.activeGame(a.puuid, a.region);
+        if (raw && raw.gameQueueConfigId === liveMod.QUEUE_SOLO && !found.has(raw.gameId)) found.set(raw.gameId, { raw, region: a.region });
       } catch (e) {
         error = e.message;
         if (e.code === 'KEY' || e.code === 'NO_KEY') break;
@@ -509,7 +521,7 @@ async function pollLive() {
     const after = new Set(games.map(g => g.gameId));
     if (!live.first && isCoach()) {
       for (const g of games.filter(x => !before.has(x.gameId))) {
-        const who = g.allies.concat(g.enemies).filter(x => x.playerId).map(x => (x.gameName || playerName(x.playerId)) + ' (' + champName(x.champion) + ')');
+        const who = g.allies.concat(g.enemies).filter(x => x.playerId).map(x => (x.smurf ? playerName(x.playerId) + ' sur son smurf ' + x.smurf : x.gameName || playerName(x.playerId)) + ' (' + champName(x.champion) + ')');
         notifyCoach('Partie classée en cours', who.join(', ') + ' · ouvre « En direct » pour la regarder');
       }
     }
@@ -521,6 +533,31 @@ async function pollLive() {
   } finally {
     live.checking = false;
   }
+}
+
+// Smurfs d'un joueur (page En direct seulement) : pseudos saisis → { riotId, puuid }. Sans clé API, le puuid
+// est cherché plus tard (pollLive). Un pseudo inconnu chez Riot est refusé tout de suite.
+async function resolveSmurfs(text, region, previous, mainRiotId) {
+  const { list, bad, tooMany } = liveMod.parseSmurfs(text);
+  if (bad.length) throw new Error('Smurf au mauvais format : ' + bad.join(', ') + ' (il faut Nom#TAG).');
+  if (tooMany) throw new Error(liveMod.MAX_SMURFS + ' smurfs au maximum par joueur.');
+  const key = getSecret('apiKey');
+  const client = key ? new RiotClient(key, { delayMs: 200, base: RIOT_BASE }) : null;
+  const out = [];
+  for (const riotId of list) {
+    if (mainRiotId && riotId.toLowerCase() === String(mainRiotId).toLowerCase()) continue;
+    const old = previous.find(x => x.riotId.toLowerCase() === riotId.toLowerCase());
+    if (old && old.puuid) { out.push({ riotId, puuid: old.puuid }); continue; }
+    let puuid = '';
+    if (client) {
+      const [gameName, tagLine] = riotId.split('#');
+      const acc = await client.account(gameName, tagLine, region);
+      if (!acc || !acc.puuid) throw new Error('Smurf introuvable chez Riot : ' + riotId + ' (vérifie le pseudo et la région).');
+      puuid = acc.puuid;
+    }
+    out.push({ riotId, puuid });
+  }
+  return out;
 }
 
 // Emplacement de League of Legends (relu au plus toutes les 20 s)
@@ -535,6 +572,17 @@ function lolInstall() {
 }
 const lolInstallView = () => { const i = lolInstall(); return { found: !!i, path: i ? i.base : '', custom: store.data.settings.lolPath || '' }; };
 
+// Une fenêtre de jeu League of Legends est-elle déjà ouverte ?
+function gameRunning() {
+  return new Promise(resolve => {
+    const { execFile } = require('child_process');
+    if (process.platform === 'win32') execFile('tasklist', ['/FI', 'IMAGENAME eq League of Legends.exe', '/NH'], (e, out) => resolve(!e && /League of Legends\.exe/i.test(String(out))));
+    else execFile('pgrep', ['-x', 'LeagueofLegends'], e => resolve(!e));
+  });
+}
+// Message dans l'app du coach (sans notification système)
+function tellCoach(title, body) { if (win && !win.isDestroyed()) win.webContents.send('coach:alert', { title, body }); }
+
 // Bouton « Regarder » : lance League of Legends en mode spectateur sur la partie
 async function watchGame(gameId) {
   requireEdit();
@@ -547,16 +595,16 @@ async function watchGame(gameId) {
   let locale = '';
   try { locale = liveMod.readLocale(fs.readFileSync(ins.config, 'utf8')); } catch (e) { /* langue par défaut du jeu */ }
   const args = liveMod.spectateArgs(g, LOL_OS, locale);
-  if (process.env.COACHING_LOL_TEST) {
-    fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'spectateur.json'), JSON.stringify({ exe: ins.exe, cwd: ins.gameDir, args }));
-  } else {
-    if (LOL_OS === 'darwin') { try { fs.chmodSync(ins.exe, 0o755); } catch (e) { /* déjà exécutable */ } }
-    await new Promise((resolve, reject) => {
-      const child = spawn(ins.exe, args, { cwd: ins.gameDir, detached: true, stdio: 'ignore', env: Object.assign({}, process.env, { riot_launched: 'true' }) });
-      child.once('error', e => reject(new Error('Impossible de lancer League of Legends (' + e.message + ').')));
-      child.once('spawn', () => { child.unref(); resolve(); });
-    });
-  }
+  if (process.env.COACHING_LOL_TEST) fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'spectateur.json'), JSON.stringify({ exe: ins.exe, cwd: ins.gameDir, args }));
+  if (LOL_OS === 'darwin') { try { fs.chmodSync(ins.exe, 0o755); } catch (e) { /* déjà exécutable */ } }
+  // le jeu se ferme souvent au premier lancement : relance automatique (3 essais), jamais deux fenêtres
+  await liveMod.launchWatch({
+    spawn, exe: ins.exe, args, cwd: ins.gameDir, env: Object.assign({}, process.env, { riot_launched: 'true' }),
+    tries: 3, minRunMs: 30000, gapMs: FAST ? 500 : 4000,
+    isRunning: gameRunning, stillLive: () => live.games.some(x => String(x.gameId) === String(gameId)),
+    onRetry: (n, total) => tellCoach('Mode spectateur', 'Le jeu s\'est fermé tout de suite : nouvelle tentative (' + n + '/' + total + ')…'),
+    onGiveUp: () => tellCoach('Mode spectateur', 'Le jeu ne s\'est pas ouvert après 3 essais. Ouvre le client League of Legends une fois (pour qu\'il se mette à jour), puis réessaie.')
+  }).catch(e => { throw new Error('Impossible de lancer League of Legends (' + e.message + ').'); });
   const wait = Math.max(0, 180 - liveMod.elapsed(g));
   return { ok: true, message: 'League of Legends s\'ouvre en mode spectateur' + (wait > 30 ? ' : la partie s\'affichera dans environ ' + Math.ceil(wait / 60) + ' min (3 min de retard en classée).' : ' (3 min de retard en classée).') };
 }
@@ -718,9 +766,10 @@ function registerIpc() {
     return { ok: true, data: viewData() };
   });
 
-  handle('player:save', p => {
+  handle('player:save', async p => {
     requireEdit();
     const list = store.data.players;
+    if ('smurfs' in p) p.smurfs = await resolveSmurfs(p.smurfs, p.region || 'euw', (list.find(x => x.id === p.id) || {}).smurfs || [], p.riotId);
     if (p.code) {
       const conflict = access.codeConflict(store.data, p.code, getSecret('coachCode'), p.id);
       if (conflict) throw new Error(conflict);
