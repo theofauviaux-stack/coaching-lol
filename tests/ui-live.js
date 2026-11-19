@@ -136,6 +136,34 @@ module.exports = async function ({ app, win, fs, path }) {
     await until(`document.querySelectorAll('.mo-row').length > 0`, 20000);
     mo.fichier = fs.existsSync(path.join(data, 'moments', 'p1_EUW1_7300000099.json'));
     out.moments = mo;
+    // vidéos : le faux client télécharge le replay, le faux jeu répond à la Replay API, l'app filme l'écran
+    const vd = { etapes: [] };
+    try {
+      await js(`window.__vs = []; window.api.onVideoStatus(v => window.__vs.push(v)); 0`);
+      await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
+      await until(`window.__vs.some(v => v.done || v.error)`, 90000);
+      const vs = await js(`window.__vs`);
+      vd.etapes = vs.map(v => v.text || v.error || '');
+      const err = vs.find(v => v.error);
+      if (err) vd.erreur = err.error;
+      vd.fin = (vs.find(v => v.done) || {}).text;
+      await until(`!!document.querySelector('.mo-video video')`, 15000);
+      vd.video = await js(`document.querySelector('.mo-video video').src`);
+      await wait(2500);
+      vd.lecture = await js(`(() => { const v = document.querySelector('.mo-video video'); return v.readyState >= 1 ? (v.videoWidth || 0) : 0; })()`);
+      await shot('l11-video');
+      const mf = JSON.parse(fs.readFileSync(path.join(data, 'moments', 'p1_EUW1_7300000099.json'), 'utf8'));
+      vd.extraits = mf.clips;
+      vd.camera = mf.camera;
+      const vdir = path.join(data, 'videos', 'p1_EUW1_7300000099');
+      vd.fichiers = fs.readdirSync(vdir).map(f => ({ f, taille: fs.statSync(path.join(vdir, f)).size }));
+      vd.gameCfg = fs.readFileSync(path.join(dir, 'Jeux', 'League of Legends.app', 'Contents', 'LoL', 'Config', 'game.cfg'), 'utf8');
+      // suppression
+      await js(`window.confirm = () => true; document.querySelector('[data-action="mo-unfilm"]').click(); 0`);
+      await until(`!document.querySelector('.mo-video')`, 10000);
+      vd.apresSuppression = fs.existsSync(vdir) ? fs.readdirSync(vdir).length : 0;
+    } catch (e) { vd.erreur = vd.erreur || String(e.stack || e); }
+    out.videos = vd;
   } catch (e) {
     out.exception = e.stack || String(e);
     try { await shot('erreur'); } catch (x) { /* rien */ }

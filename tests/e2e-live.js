@@ -43,7 +43,9 @@ const GAMES = {
 };
 const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram', 'S-QUEST': 'smurf' };
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
-const calls = { spectator: {}, league: {}, match: 0 };
+const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [] };
+// faux client LoL (replays) et faux jeu (Replay API)
+const rp = { state: 'download', polls: 0, watching: false, loading: 3, time: 0, selection: '' };
 const partieMoments = require('./fixtures/partie-moments')('P-UAWAWA');
 function rankFor(puuid) {
   if (puuid === 'E-JGL') return []; // non classé
@@ -55,8 +57,37 @@ function rankFor(puuid) {
 }
 function startRiot() {
   const srv = http.createServer((req, res) => {
-    const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
+    let raw = '';
+    req.on('data', c => { raw += c; });
+    req.on('end', () => handle(req, res, raw ? JSON.parse(raw) : null));
+  });
+  function handle(req, res, body) {
+    const send = (code, b) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(b === undefined ? '' : JSON.stringify(b)); };
     let m;
+    if (req.url.startsWith('/lol-replays/')) {
+      calls.lcu.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : '') + ' ' + (req.headers.authorization || ''));
+      if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: true, isPatching: false });
+      if (req.url === '/lol-replays/v1/metadata/7300000099') {
+        if (rp.state === 'downloading' && ++rp.polls > 2) rp.state = 'watch';
+        return send(200, { gameId: 7300000099, state: rp.state, downloadProgress: rp.polls / 3 });
+      }
+      if (req.url === '/lol-replays/v1/rofls/7300000099/download') { rp.state = 'downloading'; return send(204); }
+      if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
+      return send(404, {});
+    }
+    if (req.url.startsWith('/replay/')) {
+      calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
+      if (!rp.watching || rp.loading-- > 0) return send(503, {});
+      if (req.url === '/replay/playback') {
+        if (req.method === 'POST' && body && typeof body.time === 'number') rp.time = body.time;
+        return send(200, { time: rp.time, seeking: false, paused: false, speed: 1, length: 1200 });
+      }
+      if (req.url === '/replay/render') {
+        if (req.method === 'POST' && body && body.selectionName === 'Darius') rp.selection = 'Darius';
+        return send(200, { selectionName: rp.selection, cameraAttached: !!rp.selection });
+      }
+      return send(404, {});
+    }
     if (req.url === '/__fin') { delete where['P-KIOGA']; delete where['P-HAVEHOPE']; return send(200, {}); }
     if (req.url === '/__nouvelle') { where['P-UAWAWA'] = 'partie3'; return send(200, {}); }
     if (req.url === '/__plus-rien') { for (const k of Object.keys(where)) delete where[k]; return send(200, {}); }
@@ -77,7 +108,7 @@ function startRiot() {
       return send(200, rankFor(m[1]));
     }
     return send(404, {});
-  });
+  }
   return new Promise(r => srv.listen(0, '127.0.0.1', () => r({ url: 'http://127.0.0.1:' + srv.address().port, close: () => srv.close() })));
 }
 
@@ -116,7 +147,7 @@ exit 1
   await new Promise(resolve => {
     const p = spawn('xvfb-run', ['-a', '-s', '-screen 0 1440x900x24', path.join(__dirname, '..', 'node_modules/.bin/electron'), path.join(__dirname, '..'), '--no-sandbox'], {
       env: Object.assign({}, process.env, { SYNC_DIR: DIR, COACHING_LOL_DATA: path.join(DIR, 'coach'), COACHING_LOL_FAST: '1', COACHING_LOL_TEST: path.join(__dirname, 'ui-live.js'),
-        COACHING_LOL_RIOT: riot.url, COACHING_LOL_CLOUD: JSON.stringify({ url: riot.url, publicKey: 'cle-publique-test' }) }),
+        COACHING_LOL_RIOT: riot.url, COACHING_LOL_LCU: riot.url, COACHING_LOL_REPLAY: riot.url, COACHING_LOL_CLOUD: JSON.stringify({ url: riot.url, publicKey: 'cle-publique-test' }) }),
       stdio: 'ignore'
     });
     p.on('exit', resolve);
@@ -177,6 +208,20 @@ exit 1
   assert.ok(r.moments.copie.startsWith('DOSSIER DE PARTIE') && r.moments.copie.includes('6:30 — Mort : tué par Kha\'Zix — top lane'), r.moments.copie.slice(0, 400));
   assert.strictEqual(calls.match, 2, 'partie et timeline demandées une seule fois (ensuite lues sur le disque)');
   assert.ok(r.moments.fichier, 'moments enregistrés sur l\'ordinateur du coach');
+  // vidéos des moments à partir du replay
+  assert.ok(!r.videos.erreur, r.videos.erreur);
+  assert.deepStrictEqual(r.videos.extraits.map(c => [c.start, c.end]), [[370, 440], [520, 550], [820, 850], [940, 1010]]);
+  assert.ok(r.videos.fichiers.length === 4 && r.videos.fichiers.every(f => f.taille > 1000), JSON.stringify(r.videos.fichiers));
+  assert.ok(/EnableReplayApi=1/.test(r.videos.gameCfg), 'Replay API activée dans game.cfg');
+  assert.ok(r.videos.etapes.some(t => /Téléchargement du replay/.test(t)) && r.videos.etapes.some(t => /Enregistrement \d\/4/.test(t)), r.videos.etapes.join(' | '));
+  assert.ok(/4 extraits filmés/.test(r.videos.fin), r.videos.fin);
+  assert.strictEqual(r.videos.camera, 'Darius');
+  assert.ok(r.videos.video && r.videos.video.includes('clip://v/p1_EUW1_7300000099/01_6m10.webm'), r.videos.video);
+  assert.ok(r.videos.lecture > 0, 'la vidéo se lit dans l\'app (durée ' + r.videos.lecture + ')');
+  assert.strictEqual(calls.lcu.filter(x => x.includes('/download')).length, 1);
+  assert.ok(calls.lcu.every(x => x.endsWith('Basic ' + Buffer.from('riot:test').toString('base64'))), 'mot de passe du client envoyé');
+  assert.ok(calls.replay.includes('POST /replay/playback {"time":940,"paused":false,"speed":1}'), calls.replay.slice(-6).join(' | '));
+  assert.strictEqual(r.videos.apresSuppression, 0, 'vidéos supprimées');
   // rangs gardés en mémoire : une seule demande par joueur malgré les vérifications toutes les 2 s
   assert.ok(Object.keys(calls.league).filter(k => !k.startsWith('P-')).every(k => calls.league[k] === 1), JSON.stringify(calls.league));
   assert.ok(calls.spectator['P-UAWAWA'] >= 3, 'vérification régulière');

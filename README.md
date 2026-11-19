@@ -45,6 +45,13 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - Calculés à la synchro à partir de la timeline déjà téléchargée (aucune requête en plus) ; pour les parties plus anciennes, à la première ouverture (2 requêtes). Un fichier par partie dans le dossier `moments/` des données du coach (src/moments.js).
 - « Copier pour l'analyse » : dossier texte de la partie à coller dans Claude (calibration de l'analyse avec le coach).
 
+### Vidéos des moments (bêta, ordinateur du coach)
+
+- Dans la fenêtre « Moments clés » : « Filmer les moments ». L'app demande au client LoL de télécharger le replay de la partie (API locale du client, `/lol-replays/v1/…`), l'ouvre, active la Replay API du jeu (`EnableReplayApi=1` dans `Config/game.cfg`), place la caméra sur le joueur, va à chaque moment et filme la fenêtre du jeu (20 s avant, 10 s après ; moments proches regroupés, 10 extraits au plus), puis ferme le replay.
+- Moments filmés : morts, objectifs perdus, kills, objectifs pris en sa présence. Vidéos WebM 1280×720 dans le dossier `videos/<joueur>_<partie>/` des données du coach, lues dans l'app (onglets Vidéo / Carte, ▶ sur les moments filmés). « Refilmer » et la corbeille pour les supprimer.
+- Conditions : client LoL ouvert et connecté, aucune partie en cours, replay disponible (patch en cours seulement, 10 téléchargements par heure chez Riot). Sur Mac, autoriser Coaching LoL dans Réglages Système › Confidentialité et sécurité › Enregistrement de l'écran (à refaire parfois après une mise à jour, l'app n'étant pas signée).
+- Uniquement des API locales officielles de Riot (client et Replay API) : pas de lecture de la mémoire du jeu. Code : src/replay.js, renderer/recorder.*.
+
 ## Installer
 
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :

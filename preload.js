@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('api', {
   refreshLive: () => call('live:refresh'),
   watchLive: gameId => call('live:watch', gameId),
   getMoments: (playerId, matchId) => call('moments:get', { playerId, matchId }),
+  recordVideos: (playerId, matchId) => call('videos:record', { playerId, matchId }),
+  deleteVideos: (playerId, matchId) => call('videos:delete', { playerId, matchId }),
+  onVideoStatus: cb => ipcRenderer.on('video:status', (e, v) => cb(v)),
   onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))
 });

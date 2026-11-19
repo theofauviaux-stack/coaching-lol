@@ -470,3 +470,11 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .mo-txt b { font-size: 13.5px; }
 .mo-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
 .mo-tags span { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 11px; }
+/* vidéos des moments */
+.mo-vstatus { display: flex; align-items: center; gap: 10px; margin: -4px 0 14px; padding: 10px 14px; border-radius: 9px; border: 1px solid rgba(195, 236, 127, .35); background: var(--accent-dim); font-size: 13.5px; font-weight: 600; }
+.mo-vstatus .faint { margin-left: auto; font-weight: 400; }
+.mo-seg { margin-bottom: 8px; }
+.mo-video { position: relative; width: 430px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #000; }
+.mo-video video { width: 100%; display: block; aspect-ratio: 16 / 9; background: #000; }
+.mo-video .mo-maptime { position: static; border-radius: 0; }
+.mo-has { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; background: var(--accent); color: #14200a; vertical-align: 1px; }

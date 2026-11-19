@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, powerMonitor, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, powerMonitor, Notification, protocol, net, desktopCapturer, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -12,6 +12,10 @@ const playersMod = require('./src/players');
 const lpMod = require('./src/lp');
 const liveMod = require('./src/live');
 const momentsMod = require('./src/moments');
+const replayMod = require('./src/replay');
+const { pathToFileURL } = require('url');
+// vidéos des moments : lues dans l'app par l'adresse clip://v/<joueur_partie>/<fichier>.webm
+protocol.registerSchemesAsPrivileged([{ scheme: 'clip', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
 const { spawn } = require('child_process');
 
 const REPO = 'theofauviaux-stack/coaching-lol';
@@ -591,7 +595,157 @@ async function getMoments({ playerId, matchId }) {
     if (!m) throw new Error('Le joueur n\'apparaît pas dans cette partie.');
   }
   const text = momentsMod.toText(m, { player: player.riotId, champName });
-  return { ok: true, moments: m, text };
+  return { ok: true, moments: m, text, videoKey: videoKey(playerId, matchId), filming: !!(videoJob && videoJob.playerId === playerId && videoJob.matchId === matchId) && videoJob.status };
+}
+
+// ---------------------------------------------------------------- vidéos des moments (replay, ordinateur du coach)
+// Le client LoL télécharge puis ouvre le replay ; la Replay API du jeu va à chaque moment avec la caméra sur
+// le joueur ; l'app filme la fenêtre du jeu (fenêtre cachée « recorder ») ; voir src/replay.js.
+const videosDir = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'videos');
+const videoKey = (playerId, matchId) => String(playerId).replace(/[^\w-]/g, '') + '_' + String(matchId).replace(/[^\w-]/g, '');
+const REPLAY_BASE = (process.env.COACHING_LOL_TEST && process.env.COACHING_LOL_REPLAY) || 'https://127.0.0.1:2999';
+let videoJob = null;
+
+// Requête vers un service local de Riot (client LoL ou jeu). Leurs certificats sont auto-signés par Riot :
+// on ne les vérifie pas, mais on n'accepte que 127.0.0.1.
+function localJson(base, method, p, body, password) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(p, base);
+    if (!['127.0.0.1', 'localhost'].includes(u.hostname)) return reject(new Error('Adresse locale attendue.'));
+    const data = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const headers = { Accept: 'application/json' };
+    if (data) Object.assign(headers, { 'Content-Type': 'application/json', 'Content-Length': data.length });
+    if (password) headers.Authorization = 'Basic ' + Buffer.from('riot:' + password).toString('base64');
+    const req = (u.protocol === 'https:' ? require('https') : require('http')).request(u, { method, headers, rejectUnauthorized: false, timeout: 10000 }, res => {
+      let txt = '';
+      res.setEncoding('utf8');
+      res.on('data', c => { txt += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 400) return reject(Object.assign(new Error('HTTP ' + res.statusCode), { status: res.statusCode }));
+        try { resolve(txt ? JSON.parse(txt) : {}); } catch (e) { resolve({}); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('délai dépassé')));
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+// Port et mot de passe du client LoL : fichier « lockfile », sinon arguments du processus LeagueClientUx
+async function lcuCreds() {
+  if (process.env.COACHING_LOL_TEST && process.env.COACHING_LOL_LCU) return { base: process.env.COACHING_LOL_LCU, password: 'test' };
+  const ins = lolInstall();
+  if (ins) {
+    const f = LOL_OS === 'win32' ? path.join(ins.base, 'lockfile') : path.join(ins.base, 'Contents', 'LoL', 'lockfile');
+    try { const i = replayMod.lockfileInfo(fs.readFileSync(f, 'utf8')); if (i) return { base: 'https://127.0.0.1:' + i.port, password: i.password }; } catch (e) { /* client fermé */ }
+  }
+  const out = await new Promise(resolve => {
+    const { execFile } = require('child_process');
+    if (process.platform === 'win32') execFile('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "name=\'LeagueClientUx.exe\'" | Select-Object -ExpandProperty CommandLine'], (e, o) => resolve(String(o || '')));
+    else execFile('ps', ['-A', '-o', 'args'], { maxBuffer: 16 * 1024 * 1024 }, (e, o) => resolve(String(o || '').split('\n').filter(l => l.includes('LeagueClientUx')).join('\n')));
+  });
+  const i = replayMod.lcuFromArgs(out);
+  return i ? { base: 'https://127.0.0.1:' + i.port, password: i.password } : null;
+}
+function killGame() {
+  return new Promise(resolve => {
+    if (process.env.COACHING_LOL_TEST) return resolve();
+    const { execFile } = require('child_process');
+    if (process.platform === 'win32') execFile('taskkill', ['/IM', 'League of Legends.exe', '/F'], () => resolve());
+    else execFile('pkill', ['-x', 'LeagueofLegends'], () => resolve());
+  });
+}
+// Fenêtre cachée qui filme (MediaRecorder) ; une seule, créée à la demande
+let recWin = null;
+function recorderWindow() {
+  if (recWin && !recWin.isDestroyed()) return Promise.resolve(recWin);
+  recWin = new BrowserWindow({ show: false, width: 320, height: 200, webPreferences: { preload: path.join(__dirname, 'recorder-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+  return recWin.loadFile(path.join(__dirname, 'renderer', 'recorder.html')).then(() => recWin);
+}
+async function recordWindow(seconds, file) {
+  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } });
+  const game = process.env.COACHING_LOL_TEST ? null : sources.find(x => x.id.startsWith('window') && /League of Legends/i.test(x.name));
+  const src = game || sources.find(x => x.id.startsWith('screen'));
+  if (!src) throw new Error('Aucune fenêtre à filmer.');
+  const rw = await recorderWindow();
+  const id = crypto.randomUUID();
+  const done = new Promise((resolve, reject) => {
+    const h = (e, r) => {
+      if (!r || r.id !== id) return;
+      ipcMain.removeListener('rec:done', h);
+      if (r.error) reject(new Error('Enregistrement impossible : ' + r.error)); else resolve(r.data);
+    };
+    ipcMain.on('rec:done', h);
+  });
+  rw.webContents.send('rec:start', { id, sourceId: src.id, ms: FAST ? 1500 : Math.round(seconds * 1000), w: 1280, h: 720, fps: 30, bps: 2500000 });
+  const data = await done;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, Buffer.from(data));
+}
+function sendVideo(v) { if (win && !win.isDestroyed()) win.webContents.send('video:status', v); }
+async function checkScreenPermission() {
+  if (process.platform !== 'darwin') return;
+  if (systemPreferences.getMediaAccessStatus('screen') === 'granted') return;
+  try { await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }); } catch (e) { /* ouvre la demande de macOS */ }
+  throw new Error('Autorise Coaching LoL à enregistrer l\'écran : Réglages Système › Confidentialité et sécurité › Enregistrement de l\'écran, coche Coaching LoL, puis relance l\'app.');
+}
+async function recordVideos({ playerId, matchId }) {
+  requireEdit();
+  if (videoJob) throw new Error('Un enregistrement est déjà en cours (' + videoJob.status + ').');
+  const { moments: m } = await getMoments({ playerId, matchId });
+  const picked = replayMod.pickMoments(m);
+  if (!picked.length) throw new Error('Rien à filmer dans cette partie.');
+  const ins = lolInstall();
+  if (!ins) throw new Error('League of Legends est introuvable sur cet ordinateur : indique son emplacement dans Paramètres › Général › Mode spectateur.');
+  if (!process.env.COACHING_LOL_TEST && await gameRunning()) throw new Error('Une partie ou un replay est déjà ouvert : ferme-le puis réessaie.');
+  await checkScreenPermission();
+  // Replay API : EnableReplayApi=1 dans game.cfg (lu au lancement du jeu)
+  const cfgFile = path.join(path.dirname(ins.config), 'game.cfg');
+  let cfg = '';
+  try { cfg = fs.readFileSync(cfgFile, 'utf8'); } catch (e) { /* fichier créé ci-dessous */ }
+  const en = replayMod.enableReplayApi(cfg);
+  if (en.changed) { fs.mkdirSync(path.dirname(cfgFile), { recursive: true }); fs.writeFileSync(cfgFile, en.text); }
+  const creds = await lcuCreds();
+  if (!creds) throw new Error('Le client League of Legends ne répond pas : ouvre-le (connecté à ton compte) puis réessaie.');
+  const dir = path.join(videosDir(), videoKey(playerId, matchId));
+  fs.rmSync(dir, { recursive: true, force: true });
+  const me = m.participants.find(p => p.id === m.me);
+  videoJob = { playerId, matchId, status: 'Préparation…' };
+  const status = text => { videoJob.status = text; sendVideo({ playerId, matchId, text }); };
+  status('Préparation…');
+  (async () => {
+    try {
+      const r = await replayMod.recordGame({
+        lcu: (method, p, body) => localJson(creds.base, method, p, body, creds.password),
+        replay: (method, p, body) => localJson(REPLAY_BASE, method, p, body),
+        record: (sec, file) => recordWindow(sec, file),
+        killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status
+      }, {
+        gameId: m.gameId, duration: m.duration, champion: me.champion, championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
+        file: (i, w) => path.join(dir, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
+      }, FAST ? { poll: 250 } : {});
+      m.clips = r.clips.map(c => ({ start: c.start, end: c.end, times: c.times, file: path.basename(c.file) }));
+      m.camera = r.camera;
+      fs.writeFileSync(momentsFile(playerId, matchId), JSON.stringify(m));
+      sendVideo({ playerId, matchId, done: true, text: r.clips.length + ' extrait' + (r.clips.length > 1 ? 's' : '') + ' filmé' + (r.clips.length > 1 ? 's' : '') + '.' + (r.camera ? '' : ' Le jeu n\'a pas accepté de suivre le joueur : caméra libre.') });
+    } catch (e) {
+      sendVideo({ playerId, matchId, error: e.message });
+    } finally {
+      videoJob = null;
+    }
+  })();
+  return { ok: true };
+}
+function deleteVideos({ playerId, matchId }) {
+  requireEdit();
+  fs.rmSync(path.join(videosDir(), videoKey(playerId, matchId)), { recursive: true, force: true });
+  try {
+    const f = momentsFile(playerId, matchId);
+    const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+    delete m.clips; delete m.camera;
+    fs.writeFileSync(f, JSON.stringify(m));
+  } catch (e) { /* pas de moments */ }
+  return { ok: true };
 }
 
 // Postes des champions (pour mettre les lanes face à face) : table Meraki relue une fois par jour,
@@ -847,6 +1001,7 @@ function registerIpc() {
     requireEdit();
     playersMod.deletePlayer(store.data, id);
     try { for (const f of fs.readdirSync(momentsDir())) if (f.startsWith(String(id).replace(/[^\w-]/g, '') + '_')) fs.unlinkSync(path.join(momentsDir(), f)); } catch (e) { /* pas de moments */ }
+    try { for (const f of fs.readdirSync(videosDir())) if (f.startsWith(String(id).replace(/[^\w-]/g, '') + '_')) fs.rmSync(path.join(videosDir(), f), { recursive: true, force: true }); } catch (e) { /* pas de vidéos */ }
     return { ok: true, data: changed(1000) };
   });
 
@@ -957,6 +1112,8 @@ function registerIpc() {
   handle('live:refresh', async () => { requireEdit(); await pollLive(); return { ok: true, data: viewData() }; });
   handle('live:watch', gameId => watchGame(gameId));
   handle('moments:get', q => getMoments(q || {}));
+  handle('videos:record', q => recordVideos(q || {}));
+  handle('videos:delete', q => deleteVideos(q || {}));
 
   handle('open:external', url => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { ok: true }; });
 }
@@ -1044,6 +1201,11 @@ app.whenReady().then(async () => {
   // LP des parties déjà connues, à partir des relevés de rang existants
   if (store.data.players.reduce((n, p) => n + lpMod.attributeLp(store.data, p.id), 0)) store.save();
   registerIpc();
+  protocol.handle('clip', req => {
+    const parts = decodeURIComponent(new URL(req.url).pathname).split('/').filter(Boolean);
+    if (parts.length !== 2 || !/^[\w-]+$/.test(parts[0]) || !/^[\w-]+\.webm$/.test(parts[1])) return new Response('', { status: 404 });
+    return net.fetch(pathToFileURL(path.join(videosDir(), parts[0], parts[1])).toString());
+  });
   createWindow();
   refreshDDragon();
   scheduleAutoSync();

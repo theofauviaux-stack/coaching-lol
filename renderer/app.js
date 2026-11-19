@@ -679,23 +679,37 @@ function momentDetail(x) {
   if (x.type === 'niveau') return x.vs ? 'Son vis-à-vis : niveau 6 à ' + esc(x.vs) : '';
   return x.zone ? esc(x.zone) : '';
 }
+const clipFor = (m, x) => (x && m.clips ? m.clips.find(c => x.t / 1000 >= c.start - 1 && x.t / 1000 <= c.end + 1) : null);
+function momentsVideo(m, x, c) {
+  const S = state.moments;
+  const from = Math.max(0, Math.round(x.t / 1000 - c.start - 6));
+  return `<div class="mo-video"><video src="clip://v/${esc(S.videoKey)}/${esc(c.file)}" data-from="${from}" controls autoplay muted playsinline></video>
+    <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay${m.camera ? ' · caméra sur le joueur' : ''}</div></div>`;
+}
 function momentsHtml() {
   const S = state.moments;
-  const head = t => `<div class="mo-head"><h2>Moments clés</h2>${t}<span class="spacer"></span>
-    ${S.data ? `<button class="btn" data-action="mo-copy">${icon('copy', 15)} Copier pour l'analyse</button>` : ''}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>`;
+  const film = S.data && !S.vstatus ? (S.data.clips && S.data.clips.length
+    ? `<button class="btn ghost" data-action="mo-film" data-tip="Filmer à nouveau depuis le replay">${icon('play', 15)} Refilmer</button><button class="icon-btn" data-action="mo-unfilm" data-tip="Supprimer les vidéos de cette partie">${icon('trash', 16)}</button>`
+    : `<button class="btn" data-action="mo-film" data-tip="Le client LoL télécharge le replay, l'ouvre, et l'app filme 30 s autour de chaque moment (morts, objectifs, kills)">${icon('play', 15)} Filmer les moments <span class="chip" style="padding:0 7px">bêta</span></button>`) : '';
+  const head = t => `<div class="mo-head"><h2>Moments clés</h2>${t}<span class="spacer"></span>${film}
+    ${S.data ? `<button class="btn" data-action="mo-copy">${icon('copy', 15)} Copier pour l'analyse</button>` : ''}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
+    ${S.vstatus ? `<div class="mo-vstatus"><span class="spinner"></span><span>${esc(S.vstatus)}</span><span class="faint small">Laisse le jeu s'ouvrir : l'app pilote le replay, puis le referme.</span></div>` : ''}`;
   if (S.loading) return head('') + '<div class="empty"><span class="spinner"></span> Lecture de la partie chez Riot…</div>';
   if (S.error) return head('') + `<div class="empty">${esc(S.error)}</div>`;
   const m = S.data;
   const me = m.participants.find(p => p.id === m.me), opp = m.participants.find(p => p.id === m.opp);
   const mo = m.moments[S.sel] || null;
+  const clip = clipFor(m, mo);
+  const view = clip && S.view !== 'carte' ? 'video' : 'carte';
   const fmtN = n => Number(n).toLocaleString('fr-FR');
   const lane = (k, l) => { const a = m.lane[k]; if (!a) return ''; const d = a.opp ? a.me.gold - a.opp.gold : null; return `<div><span>À ${l} min</span><b>${a.me.cs} CS · ${fmtN(a.me.gold)} or</b>${d === null ? '' : `<em class="${d >= 0 ? 'ok' : 'red'}">${d >= 0 ? '+' : ''}${fmtN(d)} or</em>`}</div>`; };
   const rows = m.moments.map((x, i) => `<div class="mo-row ${i === S.sel ? 'on' : ''}" data-action="mo-sel" data-v="${i}">
-      <span class="mo-t">${mmss(x.t)}</span><span class="mo-ico ${x.tone}">${icon(MO_ICON[x.type] || 'info', 14)}</span>
+      <span class="mo-t">${mmss(x.t)}${clipFor(m, x) ? `<i class="mo-has">${icon('play', 10)}</i>` : ''}</span><span class="mo-ico ${x.tone}">${icon(MO_ICON[x.type] || 'info', 14)}</span>
       <div class="mo-txt"><b>${moTitle(x)}</b><div class="small muted">${momentDetail(x)}</div>${x.tags && x.tags.length && x.type !== 'objectif' ? `<div class="mo-tags">${x.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
   return head(`<span class="muted small">${champ(me.champion)}${opp ? ' contre ' + champ(opp.champion) : ''} · ${m.win ? 'Victoire' : 'Défaite'} · ${m.kda.join('/')} · ${mmss(m.duration * 1000)}</span>`) + `
     <div class="mo-body">
-      <div>${momentsMap(m, mo)}
+      <div>${clip ? `<div class="seg mo-seg"><button class="${view === 'video' ? 'on' : ''}" data-action="mo-view" data-v="video">${icon('play', 13)} Vidéo</button><button class="${view === 'carte' ? 'on' : ''}" data-action="mo-view" data-v="carte">Carte</button></div>` : ''}
+        ${view === 'video' ? momentsVideo(m, mo, clip) : momentsMap(m, mo)}
         <div class="mo-sum">${lane('at10', 10)}${lane('at15', 15)}<div><span>Vision</span><b>${m.vision.placed} wards · ${m.vision.control} pink${m.vision.control > 1 ? 's' : ''}</b><em class="muted">${m.vision.killed} détruite${m.vision.killed > 1 ? 's' : ''}</em></div></div>
         <div class="faint tiny" style="margin-top:8px">« Copier pour l'analyse » met tout le dossier dans le presse-papiers : colle-le dans ta conversation avec Claude.</div></div>
       <div class="mo-list">${rows || '<div class="empty">Aucun moment notable.</div>'}</div>
@@ -713,10 +727,34 @@ async function openMoments(matchId) {
   if (!r || !r.ok) state.moments.error = r ? r.message : 'Erreur inconnue.';
   else {
     const first = r.moments.moments.findIndex(x => x.type === 'mort');
-    Object.assign(state.moments, { data: r.moments, text: r.text, sel: first >= 0 ? first : 0 });
+    Object.assign(state.moments, { data: r.moments, text: r.text, videoKey: r.videoKey, vstatus: r.filming || null, sel: first >= 0 ? first : 0 });
   }
   show();
 }
+function showMoments() {
+  const sc = $('.mo-list') ? $('.mo-list').scrollTop : 0;
+  openModal(momentsHtml());
+  $('#modal-box').style.width = 'min(1120px, 95vw)';
+  if ($('.mo-list')) $('.mo-list').scrollTop = sc;
+  const v = $('.mo-video video');
+  if (v) v.addEventListener('loadedmetadata', () => { try { v.currentTime = Number(v.dataset.from) || 0; } catch (e) { /* vidéo non positionnable */ } }, { once: true });
+}
+// avancement de l'enregistrement des vidéos (envoyé par l'app pendant qu'elle pilote le replay)
+window.api.onVideoStatus(async v => {
+  const S = state.moments;
+  const here = S && S.data && $('#modal-box .mo-head') && S.matchId === v.matchId && player() && player().id === v.playerId;
+  if (v.error) { if (here) { S.vstatus = null; showMoments(); } toast('Vidéos : ' + v.error, 'err', 9000); return; }
+  if (v.done) {
+    toast('Vidéos : ' + v.text, 'ok', 7000);
+    if (here) {
+      const r = await window.api.getMoments(v.playerId, v.matchId);
+      if (r && r.ok) Object.assign(S, { data: r.moments, vstatus: null, view: 'video' });
+      showMoments();
+    }
+    return;
+  }
+  if (here) { S.vstatus = v.text; const el = $('.mo-vstatus span:nth-child(2)'); if (el) el.textContent = v.text; else showMoments(); }
+});
 
 async function setGameField(field, value) {
   const g = state.drawer && D().games.find(x => x.matchId === state.drawer.matchId);
@@ -1401,7 +1439,26 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'moments': openMoments(id); break;
-    case 'mo-sel': if (state.moments && state.moments.data) { state.moments.sel = Number(el.dataset.v); const sc = $('.mo-list') ? $('.mo-list').scrollTop : 0; openModal(momentsHtml()); $('#modal-box').style.width = 'min(1120px, 95vw)'; if ($('.mo-list')) $('.mo-list').scrollTop = sc; } break;
+    case 'mo-sel': if (state.moments && state.moments.data) { state.moments.sel = Number(el.dataset.v); showMoments(); } break;
+    case 'mo-view': if (state.moments) { state.moments.view = el.dataset.v; showMoments(); } break;
+    case 'mo-film': {
+      const S = state.moments, p = player();
+      if (!S || !p) break;
+      S.vstatus = 'Préparation…';
+      showMoments();
+      const r = await window.api.recordVideos(p.id, S.matchId);
+      if (!r || !r.ok) { S.vstatus = null; showMoments(); toast(r ? r.message : 'Erreur inconnue.', 'err', 9000); }
+      break;
+    }
+    case 'mo-unfilm': {
+      const S = state.moments, p = player();
+      if (!S || !p || !confirm('Supprimer les vidéos de cette partie ?')) break;
+      await window.api.deleteVideos(p.id, S.matchId);
+      const r = await window.api.getMoments(p.id, S.matchId);
+      if (r && r.ok) Object.assign(S, { data: r.moments, view: 'carte' });
+      showMoments();
+      break;
+    }
     case 'mo-copy': if (state.moments && state.moments.text) copyText(state.moments.text, 'Dossier de la partie copié : colle-le dans ta conversation avec Claude.'); break;
     case 'live-refresh': { el.disabled = true; el.innerHTML = '<span class="spinner"></span> Vérification…'; apply(await window.api.refreshLive()); break; }
     case 'live-watch': {
