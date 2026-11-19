@@ -1,0 +1,156 @@
+// Test de bout en bout des analyses de parties : faux serveur Supabase (base + stockage des vidéos), faux Riot,
+// faux client LoL et faux jeu (replays), app du coach + app d'un joueur lancées en même temps.
+// Usage : node tests/e2e-analyses.js
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
+const { emptyData } = require('../src/store');
+const { startFake } = require('./fake-supabase');
+
+const DIR = '/tmp/e2e-analyses';
+const NOW = Date.now();
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const partie = require('./fixtures/partie-moments')('P-UAWAWA');
+
+// ---------------------------------------------------------------- faux Riot (partie + timeline), client LoL et jeu
+const calls = { match: 0, lcu: [], replay: [] };
+const rp = { state: 'download', polls: 0, watching: false, loading: 3, time: 0, selection: '' };
+function startLol() {
+  const srv = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', c => { raw += c; });
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) : null;
+      const send = (code, b) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(b === undefined ? '' : JSON.stringify(b)); };
+      if (req.url.startsWith('/lol/match/v5/matches/EUW1_7300000099')) { calls.match++; return send(200, req.url.endsWith('/timeline') ? partie.timeline : partie.match); }
+      if (req.url.startsWith('/lol-replays/')) {
+        calls.lcu.push(req.method + ' ' + req.url);
+        if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: true, isPatching: false });
+        if (req.url === '/lol-replays/v1/metadata/7300000099') {
+          if (rp.state === 'downloading' && ++rp.polls > 2) rp.state = 'watch';
+          return send(200, { gameId: 7300000099, state: rp.state, downloadProgress: rp.polls / 3 });
+        }
+        if (req.url === '/lol-replays/v1/rofls/7300000099/download') { rp.state = 'downloading'; return send(204); }
+        if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
+        return send(404, {});
+      }
+      if (req.url.startsWith('/replay/')) {
+        calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
+        if (!rp.watching || rp.loading-- > 0) return send(503, {});
+        if (req.url === '/replay/playback') {
+          if (req.method === 'POST' && body && typeof body.time === 'number') rp.time = body.time;
+          return send(200, { time: rp.time, seeking: false, paused: false, speed: 1, length: 1200 });
+        }
+        if (req.url === '/replay/render') {
+          if (req.method === 'POST' && body && body.selectionName === 'Darius') rp.selection = 'Darius';
+          return send(200, { selectionName: rp.selection, cameraAttached: !!rp.selection });
+        }
+      }
+      return send(404, { status: { message: 'Data not found', status_code: 404 } });
+    });
+  });
+  return new Promise(r => srv.listen(0, '127.0.0.1', () => r({ url: 'http://127.0.0.1:' + srv.address().port, close: () => srv.close() })));
+}
+
+function launch(phase, dataDir, env) {
+  return new Promise(resolve => {
+    const p = spawn('xvfb-run', ['-a', '-s', '-screen 0 1440x900x24', path.join(__dirname, '..', 'node_modules/.bin/electron'), path.join(__dirname, '..'), '--no-sandbox'], {
+      env: Object.assign({}, process.env, { PHASE: phase, SYNC_DIR: DIR, COACHING_LOL_DATA: dataDir, COACHING_LOL_FAST: '1', COACHING_LOL_TEST: path.join(__dirname, 'ui-analyses.js') }, env),
+      stdio: 'ignore'
+    });
+    p.on('exit', resolve);
+  });
+}
+
+(async () => {
+  fs.rmSync(DIR, { recursive: true, force: true });
+  for (const d of ['coach', 'joueur']) fs.mkdirSync(path.join(DIR, d), { recursive: true });
+  const fake = await startFake();
+  const lol = await startLol();
+  const cloudEnv = { COACHING_LOL_CLOUD: JSON.stringify({ url: fake.url, publicKey: 'cle-publique-test' }) };
+
+  // ordinateur du coach : un joueur, une partie récente, clé Riot, jeton d'envoi enregistré
+  const TOKEN = crypto.randomBytes(32).toString('hex');
+  await fake.db.query(`insert into push_keys (hash) values ($1)`, [crypto.createHash('sha256').update(TOKEN).digest('hex')]);
+  const dd = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'ddragon.json'), 'utf8'));
+  const c = emptyData();
+  Object.assign(c.settings, dd, { coachCode: '4821', pushToken: TOKEN, apiKey: 'RGAPI-test-analyses' });
+  c.settings.items = { 1055: ['Lame de Doran', 450], 2003: ['Potion de soin', 50], 3133: ['Marteau de guerre de Caulfield', 1100], 3071: ['Couperet noir', 3000] };
+  c.players.push({ id: 'p1', riotId: 'UCE Uawawa#000', region: 'euw', role: 'Top', puuid: 'P-UAWAWA', code: '7391', objectives: {}, createdAt: NOW - 86400e3 });
+  c.games.push({ matchId: 'EUW1_7300000099', playerId: 'p1', date: NOW - 3600000, role: 'Top', champion: 'Darius', opponent: 'Garen', win: false, duration: 20, kills: 1, deaths: 2, assists: 0, teamKills: 3,
+    cs: 140, gold: 7400, damage: 9000, vision: 12, wardsPlaced: 4, wardsKilled: 1, pinks: 1, level: 13, side: 'Bleu', cs10: 70, goldDiff10: -200, xpDiff10: 0, goldDiff15: -300, deaths15: 1, lpDelta: null, mental: null, objectiveMet: null, comment: '' });
+  // vieille partie (plus de 30 jours) : ses moments ne partent pas
+  c.games.push(Object.assign({}, c.games[0], { matchId: 'EUW1_7200000001', date: NOW - 40 * 86400e3 }));
+  fs.writeFileSync(path.join(DIR, 'coach', 'coaching-data.json'), JSON.stringify(c));
+
+  // ordinateur du joueur : fausse installation de League of Legends (organisation Mac)
+  const game = path.join(DIR, 'Jeux', 'League of Legends.app');
+  fs.mkdirSync(path.join(game, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS'), { recursive: true });
+  fs.mkdirSync(path.join(game, 'Contents/LoL/Config'), { recursive: true });
+  fs.writeFileSync(path.join(game, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(game, 'Contents/LoL/Config/LeagueClientSettings.yaml'), 'install:\n    globals:\n        locale: "fr_FR"\n');
+  const j = emptyData();
+  Object.assign(j.settings, dd, { lolPath: path.join(DIR, 'Jeux') });
+  fs.writeFileSync(path.join(DIR, 'joueur', 'coaching-data.json'), JSON.stringify(j));
+
+  const coachDone = launch('coach', path.join(DIR, 'coach'), Object.assign({ COACHING_LOL_RIOT: lol.url }, cloudEnv));
+  // moments envoyés au serveur par l'app du coach (calculés chez « Riot »), puis le joueur ouvre son app
+  const t0 = Date.now();
+  while (!(await fake.db.query(`select 1 from moments where match_id = 'EUW1_7300000099'`)).rows.length) {
+    if (Date.now() - t0 > 90000) throw new Error('moments jamais envoyés au serveur');
+    await wait(500);
+  }
+  const joueurDone = launch('joueur', path.join(DIR, 'joueur'), Object.assign({ COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url }, cloudEnv));
+  await Promise.all([coachDone, joueurDone]);
+  lol.close();
+  const rc = JSON.parse(fs.readFileSync(path.join(DIR, 'resultat-coach.json'), 'utf8'));
+  const rj = JSON.parse(fs.readFileSync(path.join(DIR, 'resultat-joueur.json'), 'utf8'));
+  assert.ok(!rc.exception, 'coach : ' + rc.exception);
+  assert.ok(!rj.exception, 'joueur : ' + rj.exception);
+
+  // moments sur le serveur : seulement les parties récentes, sans les vidéos locales
+  const mom = (await fake.db.query(`select match_id, data from moments`)).rows;
+  assert.deepStrictEqual(mom.map(x => x.match_id), ['EUW1_7300000099']);
+  assert.ok(!('clips' in mom[0].data) && mom[0].data.moments.length > 5);
+  // joueur : menu, tournage, choix, envoi
+  assert.ok(rj.menu.includes('Analyses'), rj.menu.join(','));
+  assert.ok(rj.boutons.some(b => /Filmer les moments/.test(b)) && !rj.boutons.some(b => /Copier/.test(b)), rj.boutons.join(' | '));
+  assert.ok(/4 extraits filmés/.test(rj.finTournage), rj.finTournage);
+  assert.deepStrictEqual(rj.fichiers, ['01_6m10.webm', '02_8m40.webm', '03_13m40.webm', '04_15m40.webm']);
+  assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
+  assert.strictEqual(rj.cartes, 4);
+  assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
+  assert.ok(/envoyée au coach/.test(rj.messageEnvoi), rj.messageEnvoi);
+  assert.ok(/Je veux travailler mes placements de wards/.test(rj.filGeneral), rj.filGeneral);
+  assert.strictEqual(fake.hits.uploads, 2, 'seules les 2 vidéos choisies sont envoyées');
+  // coach : notification, liste, vidéo en ligne, réponse
+  assert.ok(/Partie à analyser — UCE Uawawa t'envoie Darius contre Garen \(2 vidéos\)/.test(rc.notification), rc.notification);
+  assert.strictEqual(rc.pastille, '1');
+  assert.ok(/UCE Uawawa.*Darius contre Garen.*2.*Nouvelle/.test(rc.liste[0]), rc.liste[0]);
+  assert.ok(/Je veux travailler mes placements de wards/.test(rc.filGeneral), rc.filGeneral);
+  assert.deepStrictEqual(rc.filMoment, ['Je pensais que leur jungler était bot, je n\'avais pas de ward.']);
+  assert.ok(rc.video.largeur > 0 && /^clip:\/\/r\/[0-9a-f-]{36}\/01_6m10\.webm$/.test(rc.video.src), JSON.stringify(rc.video));
+  assert.strictEqual(rc.filmes, 5, 'moments couverts par les 2 vidéos envoyées');
+  // discussion dans les deux sens, sans recharger la vidéo
+  assert.ok(/Réponse du coach — Regarde la mini-carte/.test(rj.notification), rj.notification);
+  assert.deepStrictEqual(rj.filMoment, ['Toi : Je pensais que leur jungler était bot, je n\'avais pas de ward.', 'Coach : Regarde la mini-carte à 6:10 : Kha\'Zix était top. Ward la rivière avant 6:00.']);
+  assert.ok(rj.videoEnLigne.largeur > 0 && rj.videoEnLigne.src.startsWith('clip://r/'), JSON.stringify(rj.videoEnLigne));
+  assert.deepStrictEqual(rc.filApres, ['UCE Uawawa', 'Toi (coach)', 'UCE Uawawa']);
+  assert.strictEqual(rc.videoGardee, true, 'la vidéo n\'est pas rechargée quand un message arrive');
+  // fin : discussion gardée, vidéos effacées du serveur
+  assert.ok(/Analyse terminée/.test(rc.fin), rc.fin);
+  assert.ok(/Analyse terminée/.test(rj.fin), rj.fin);
+  assert.ok(/Le coach a terminé l'analyse de Darius contre Garen/.test(rj.notifFin), rj.notifFin);
+  assert.ok(/Darius contre Garen.*effacées.*5.*Terminée/.test(rj.liste[0]), rj.liste[0]);
+  const a = (await fake.db.query(`select status, clips_state, (select count(*) from analysis_comments) as n from analyses`)).rows;
+  assert.deepStrictEqual(a.map(x => [x.status, x.clips_state, Number(x.n)]), [['terminee', 'effacees', 4]]);
+  assert.strictEqual(fake.files.size, 0, 'vidéos effacées du stockage');
+  assert.ok(calls.match >= 2, 'moments calculés par l\'app du coach');
+  fake.close();
+  console.log(JSON.stringify({ coach: rc, joueur: rj }, null, 1));
+  console.log('✅ Analyses de parties de bout en bout (joueur filme et envoie, coach répond et termine) : OK');
+  process.exit(0);
+})().catch(e => { console.error(e); process.exit(1); });

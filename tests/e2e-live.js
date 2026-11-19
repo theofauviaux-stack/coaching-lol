@@ -208,20 +208,7 @@ exit 1
   assert.ok(r.moments.copie.startsWith('DOSSIER DE PARTIE') && r.moments.copie.includes('6:30 — Mort : tué par Kha\'Zix — top lane'), r.moments.copie.slice(0, 400));
   assert.strictEqual(calls.match, 2, 'partie et timeline demandées une seule fois (ensuite lues sur le disque)');
   assert.ok(r.moments.fichier, 'moments enregistrés sur l\'ordinateur du coach');
-  // vidéos des moments à partir du replay
-  assert.ok(!r.videos.erreur, r.videos.erreur);
-  assert.deepStrictEqual(r.videos.extraits.map(c => [c.start, c.end]), [[370, 440], [520, 550], [820, 850], [940, 1010]]);
-  assert.ok(r.videos.fichiers.length === 4 && r.videos.fichiers.every(f => f.taille > 1000), JSON.stringify(r.videos.fichiers));
-  assert.ok(/EnableReplayApi=1/.test(r.videos.gameCfg), 'Replay API activée dans game.cfg');
-  assert.ok(r.videos.etapes.some(t => /Téléchargement du replay/.test(t)) && r.videos.etapes.some(t => /Enregistrement \d\/4/.test(t)), r.videos.etapes.join(' | '));
-  assert.ok(/4 extraits filmés/.test(r.videos.fin), r.videos.fin);
-  assert.strictEqual(r.videos.camera, 'Darius');
-  assert.ok(r.videos.video && r.videos.video.includes('clip://v/p1_EUW1_7300000099/01_6m10.webm'), r.videos.video);
-  assert.ok(r.videos.lecture > 0, 'la vidéo se lit dans l\'app (durée ' + r.videos.lecture + ')');
-  assert.strictEqual(calls.lcu.filter(x => x.includes('/download')).length, 1);
-  assert.ok(calls.lcu.every(x => x.endsWith('Basic ' + Buffer.from('riot:test').toString('base64'))), 'mot de passe du client envoyé');
-  assert.ok(calls.replay.includes('POST /replay/playback {"time":940,"paused":false,"speed":1}'), calls.replay.slice(-6).join(' | '));
-  assert.strictEqual(r.videos.apresSuppression, 0, 'vidéos supprimées');
+  assert.strictEqual(r.boutonFilmer, false, 'pas de tournage côté coach');
   // rangs gardés en mémoire : une seule demande par joueur malgré les vérifications toutes les 2 s
   assert.ok(Object.keys(calls.league).filter(k => !k.startsWith('P-')).every(k => calls.league[k] === 1), JSON.stringify(calls.league));
   assert.ok(calls.spectator['P-UAWAWA'] >= 3, 'vérification régulière');

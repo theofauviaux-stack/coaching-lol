@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld('api', {
   recordVideos: (playerId, matchId) => call('videos:record', { playerId, matchId }),
   deleteVideos: (playerId, matchId) => call('videos:delete', { playerId, matchId }),
   onVideoStatus: cb => ipcRenderer.on('video:status', (e, v) => cb(v)),
+  refreshAnalyses: () => call('analyses:refresh'),
+  getAnalysis: id => call('analysis:get', { id }),
+  sendAnalysis: (matchId, picks, note) => call('analysis:send', { matchId, picks, note }),
+  commentAnalysis: (id, t, text) => call('analysis:comment', { id, t, text }),
+  closeAnalysis: id => call('analysis:close', { id }),
+  setLolPath: p => call('lol:path', { path: p }),
+  onAnalysisStatus: cb => ipcRenderer.on('analysis:status', (e, v) => cb(v)),
   onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))
 });
