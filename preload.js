@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   exportAnalysis: id => call('analysis:export', { id }),
   onExportStatus: cb => ipcRenderer.on('analysis:export', (e, v) => cb(v)),
   setLolPath: p => call('lol:path', { path: p }),
-  openScreenSettings: () => call('mac:screen-settings'),
+  openScreenSettings: panel => call('mac:screen-settings', { panel }),
   showJournal: () => call('videos:journal'),
   relaunch: () => call('app:relaunch'),
   onAnalysisStatus: cb => ipcRenderer.on('analysis:status', (e, v) => cb(v)),

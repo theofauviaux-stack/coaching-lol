@@ -35,10 +35,10 @@ module.exports = async function ({ app, win, fs, path }) {
       out.boutons = await js(`[...document.querySelectorAll('.mo-head .btn')].map(b => b.textContent.replace(/\\s+/g, ' ').trim())`);
       await shot('a1-moments-joueur');
       // encadré « macOS bloque l'enregistrement de l'écran » (affiché sur Mac quand l'autorisation manque)
-      await js(`state.moments.screenPerm = true; showMoments(); 0`);
+      await js(`state.moments.perm = 'ecran'; showMoments(); 0`);
       out.encadre = await js(`document.querySelector('.mo-perm') ? document.querySelector('.mo-perm').textContent.replace(/\\s+/g, ' ').trim() : null`);
       await shot('a1b-autorisation-ecran');
-      await js(`state.moments.screenPerm = false; showMoments(); 0`);
+      await js(`state.moments.perm = null; showMoments(); 0`);
       // filmer depuis le replay (faux client LoL + faux jeu)
       await js(`window.__vp = []; window.api.onVideoStatus(v => { if (v.text && !v.done && !v.error) window.__vp.push([v.text, v.progress]); }); 0`);
       await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
@@ -51,6 +51,7 @@ module.exports = async function ({ app, win, fs, path }) {
       out.videoLocale = await videoOk();
       out.fichiers = fs.readdirSync(path.join(data, 'videos', 'p1_EUW1_7300000099')).sort();
       out.journal = fs.readFileSync(path.join(data, 'videos', 'journal.txt'), 'utf8');
+      out.touches = fs.readFileSync(path.join(data, 'videos', 'touches.txt'), 'utf8').trim().split('\n');
       // choisir 2 vidéos sur 4, les commenter, envoyer
       await js(`document.querySelector('[data-action="mo-send"]').click(); 0`);
       await until(`document.querySelectorAll('.sd-card').length > 0`);

@@ -41,7 +41,7 @@ function startLol() {
         if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
         return send(404, {});
       }
-      if (req.url === '/liveclientdata/playerlist') return rp.watching ? send(200, [{ championName: 'Garen', riotIdGameName: 'Demacia' }, { championName: 'Darius', riotIdGameName: 'UCE Uawawa', summonerName: 'UCE Uawawa#000' }]) : send(503, {});
+      if (req.url === '/liveclientdata/playerlist') return rp.watching ? send(200, [{ team: 'ORDER', championName: 'Darius', riotIdGameName: 'UCE Uawawa' }, { team: 'ORDER', championName: 'LeeSin' }, { team: 'CHAOS', championName: 'Garen', riotIdGameName: 'Demacia' }]) : send(503, {});
       if (req.url.startsWith('/replay/')) {
         calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
         if (!rp.watching || rp.loading-- > 0) return send(503, {});
@@ -134,10 +134,10 @@ function launch(phase, dataDir, env) {
   assert.ok(rj.barre && rj.barre.largeur > 0, JSON.stringify(rj.barre));
   assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
   assert.deepStrictEqual(rj.fichiers, ['01_5m55.webm', '02_8m25.webm', '03_13m25.webm', '04_15m25.webm'], 'extraits commencés 35 s avant chaque moment');
-  assert.ok(!calls.replay.some(x => /"selectionName".*"cameraAttached"|"cameraAttached".*"selectionName"/.test(x)), 'sélection et attache séparées');
-  assert.ok(calls.replay.includes('POST /replay/render {"selectionName":"UCE Uawawa"}') && calls.replay.includes('POST /replay/render {"cameraMode":"top","cameraAttached":true}'), 'caméra sur le joueur');
+  assert.deepStrictEqual(rj.touches, ['1', '1', '1', '1'], 'touche du joueur (1er de l\'équipe bleue) avant chaque moment');
+  assert.ok(!calls.replay.some(x => x.startsWith('POST /replay/render')), 'plus de sélection par l\'API');
   assert.ok(calls.replay.includes('POST /replay/playback {"time":355,"paused":true,"speed":1}') && calls.replay.includes('POST /replay/playback {"paused":false,"speed":1}'), 'pause au début de l\'extrait puis lecture');
-  assert.ok(/caméra « UCE Uawawa ».*"ok":true/.test(rj.journal) && /» Enregistrement 4\/4/.test(rj.journal), rj.journal);
+  assert.ok(/touche du joueur "1"/.test(rj.journal) && /caméra après la touche 1/.test(rj.journal) && /» Enregistrement 4\/4/.test(rj.journal), rj.journal);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
   assert.strictEqual(rj.cartes, 4);
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);

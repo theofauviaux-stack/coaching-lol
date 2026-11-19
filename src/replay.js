@@ -140,75 +140,62 @@ async function recordGame(io, job, opt = {}) {
     m = await meta();
     if ((m ? m.state : null) !== lastState) { lastState = m ? m.state : null; log('état du replay', m); }
   }
-  // 3. lancement et attente de la Replay API
-  status('Ouverture du replay dans League of Legends…', 0.41);
-  await io.lcu('POST', `/lol-replays/v1/rofls/${job.gameId}/watch`, { componentType: 'replay-button_match-history' });
-  await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && p.length > 0 ? p : null; }, o.loadTimeout,
-    'Le replay ne s\'est pas ouvert, ou la Replay API ne répond pas (EnableReplayApi=1 dans game.cfg).');
-  // caméra uniquement sur le champion du joueur. Noms possibles de la « sélection » : ceux que donne le jeu pour
-  // ce champion (liste des joueurs du replay), puis le pseudo et le champion.
-  const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const champs = [job.champion, job.championName].map(norm).filter(Boolean);
-  let names = [];
-  try {
-    const list = await io.replay('GET', '/liveclientdata/playerlist');
-    const me = (Array.isArray(list) ? list : []).find(p => champs.includes(norm(p.championName)) || champs.includes(norm(String(p.rawChampionName || '').split('_').pop())));
-    if (me) names.push(me.riotIdGameName, me.riotId, me.summonerName, String(me.summonerName || '').split('#')[0], me.championName);
-    log('joueurs du replay', (Array.isArray(list) ? list : []).map(p => ({ champion: p.championName, riotId: p.riotId, nom: p.riotIdGameName || p.summonerName })));
-  } catch (e) { log('joueurs du replay', 'indisponible : ' + e.message); }
-  names = [...new Set(names.concat([job.gameName, job.champion, job.championName]).filter(Boolean))];
-  let attached = null;
-  // 1) sélectionner le champion, 2) attacher la caméra à la sélection : deux requêtes séparées (envoyées ensemble,
-  // le jeu attache la caméra à la sélection précédente, c'est-à-dire à rien) ; 3) vérifier
-  const attachOnce = async n => {
-    await io.replay('POST', '/replay/render', { selectionName: n });
-    await io.replay('POST', '/replay/render', { cameraMode: 'top', cameraAttached: true });
-    const r = await io.replay('GET', '/replay/render');
-    const ok = !!(r && r.cameraAttached !== false && norm(r.selectionName) && names.some(x => norm(x) === norm(r.selectionName)));
-    log('caméra « ' + n + ' »', { ok, selectionName: r && r.selectionName, cameraAttached: r && r.cameraAttached, cameraMode: r && r.cameraMode });
-    return ok;
-  };
-  const attach = async () => {
-    for (const n of attached ? [attached].concat(names.filter(x => x !== attached)) : names) {
-      try { if (await attachOnce(n)) { attached = n; return true; } } catch (e) { /* nom suivant */ }
-    }
-    return false;
-  };
-  // le replay vient de s'ouvrir : les champions peuvent mettre quelques secondes à apparaître
-  const ta = io.now();
-  while (!(await attach())) {
-    if (io.now() - ta > o.attachTimeout) {
-      await io.killGame().catch(() => {});
-      throw new Error('La caméra n\'a pas pu suivre ' + (job.championName || job.champion) + ' dans le replay (noms essayés : ' + names.join(', ') + ').');
-    }
-    await io.sleep(o.poll);
-  }
-  // 4. un extrait par fenêtre
+  // à partir d'ici le replay est ouvert : en cas d'erreur, on le ferme
+  let key = job.playerKey || null;
   const clips = [];
-  let done = 0;
-  const at = d => 0.45 + 0.53 * Math.min(1, d / total);
-  for (let i = 0; i < windows.length; i++) {
-    const w = windows[i];
-    const label = `Enregistrement ${i + 1}/${windows.length}…`;
-    status(label, at(done));
-    // replay en pause au début de l'extrait, caméra sur le champion, puis lecture et enregistrement
-    await io.replay('POST', '/replay/playback', { time: w.start, paused: true, speed: 1 });
-    await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && !p.seeking && Math.abs(p.time - w.start) < 2 ? p : null; }, o.seekTimeout, 'Le replay ne répond plus.');
-    if (!(await attach())) throw new Error('La caméra a perdu ' + (job.championName || job.champion) + ' dans le replay.');
-    await io.replay('POST', '/replay/playback', { paused: false, speed: 1 });
-    await attachOnce(attached).catch(() => false); // la reprise de lecture peut décrocher la caméra
-    const file = job.file(i, w);
-    let ticks = 0;
-    await io.record(w.end - w.start, file, f => {
-      status(label, at(done + f * (w.end - w.start)));
-      if (++ticks % 3 === 0 && attached) attachOnce(attached).catch(() => {}); // garde la caméra sur le champion
-    });
-    done += w.end - w.start;
-    clips.push(Object.assign({ file }, w));
+  try {
+    // 3. lancement et attente de la Replay API
+    status('Ouverture du replay dans League of Legends…', 0.41);
+    await io.lcu('POST', `/lol-replays/v1/rofls/${job.gameId}/watch`, { componentType: 'replay-button_match-history' });
+    await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && p.length > 0 ? p : null; }, o.loadTimeout,
+      'Le replay ne s\'est pas ouvert, ou la Replay API ne répond pas (EnableReplayApi=1 dans game.cfg).');
+    // caméra sur le champion du joueur. L'API du replay ne sait pas choisir le joueur suivi : on fait comme dans le
+    // jeu, un double appui sur la touche du joueur (1 à 5 : équipe bleue ; touches Q W E R T : équipe rouge, position
+    // physique), qui le sélectionne et centre la caméra sur lui en continu. Ordre des joueurs : celui du replay.
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const champs = [job.champion, job.championName].map(norm).filter(Boolean);
+    try {
+      const list = await io.replay('GET', '/liveclientdata/playerlist');
+      const arr = Array.isArray(list) ? list : [];
+      const me = arr.find(p => champs.includes(norm(p.championName)) || champs.includes(norm(String(p.rawChampionName || '').split('_').pop())));
+      if (me && me.team) {
+        const idx = arr.filter(p => p.team === me.team).indexOf(me);
+        if (idx >= 0 && idx < 5) key = (me.team === 'CHAOS' ? 'qwert' : '12345')[idx];
+      }
+      log('joueurs du replay', arr.map(p => ({ equipe: p.team, champion: p.championName, nom: p.riotIdGameName || p.summonerName })));
+    } catch (e) { log('joueurs du replay', 'indisponible : ' + e.message); }
+    if (!key) throw new Error('Impossible de trouver ' + (job.championName || job.champion) + ' parmi les joueurs du replay.');
+    log('touche du joueur', key);
+    const select = async () => {
+      await io.selectPlayer(key); // erreur claire si la touche ne peut pas être envoyée (fenêtre, autorisation)
+      const r = await io.replay('GET', '/replay/render').catch(() => null);
+      log('caméra après la touche ' + key, r && { selectionName: r.selectionName, cameraAttached: r.cameraAttached, cameraMode: r.cameraMode });
+    };
+
+    // 4. un extrait par fenêtre
+    let done = 0;
+    const at = d => 0.45 + 0.53 * Math.min(1, d / total);
+    for (let i = 0; i < windows.length; i++) {
+      const w = windows[i];
+      const label = `Enregistrement ${i + 1}/${windows.length}…`;
+      status(label, at(done));
+      // replay en pause au début de l'extrait, caméra sur le champion, puis lecture et enregistrement
+      await io.replay('POST', '/replay/playback', { time: w.start, paused: true, speed: 1 });
+      await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && !p.seeking && Math.abs(p.time - w.start) < 2 ? p : null; }, o.seekTimeout, 'Le replay ne répond plus.');
+      await select(); // avant chaque moment : le joueur est sélectionné, la caméra centrée sur lui
+      await io.replay('POST', '/replay/playback', { paused: false, speed: 1 });
+      const file = job.file(i, w);
+      await io.record(w.end - w.start, file, f => status(label, at(done + f * (w.end - w.start))));
+      done += w.end - w.start;
+      clips.push(Object.assign({ file }, w));
+    }
+  } catch (e) {
+    await io.killGame().catch(() => {});
+    throw e;
   }
   status('Fermeture du replay…', 0.99);
   await io.killGame().catch(() => {});
-  return { clips, camera: attached };
+  return { clips, camera: key };
 }
 
 module.exports = { pickMoments, clipWindows, lockfileInfo, lcuFromArgs, enableReplayApi, recordGame, BEFORE, AFTER, REPLAY_ERRORS };

@@ -973,7 +973,7 @@ async function lcuCreds() {
   }
   const out = await new Promise(resolve => {
     const { execFile } = require('child_process');
-    if (process.platform === 'win32') execFile('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "name=\'LeagueClientUx.exe\'" | Select-Object -ExpandProperty CommandLine'], (e, o) => resolve(String(o || '')));
+    if (process.platform === 'win32') execFile('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from("Get-CimInstance Win32_Process -Filter \"name='LeagueClientUx.exe'\" | Select-Object -ExpandProperty CommandLine", 'utf16le').toString('base64')], { windowsHide: true }, (e, o) => resolve(String(o || '')));
     else execFile('ps', ['-A', '-o', 'args'], { maxBuffer: 16 * 1024 * 1024 }, (e, o) => resolve(String(o || '').split('\n').filter(l => l.includes('LeagueClientUx')).join('\n')));
   });
   const i = replayMod.lcuFromArgs(out);
@@ -1019,6 +1019,51 @@ async function recordWindow(seconds, file, onTick) {
   fs.writeFileSync(file, Buffer.from(data));
 }
 function sendVideo(v) { if (win && !win.isDestroyed()) win.webContents.send('video:status', v); }
+// Sélection du joueur dans le replay : double appui sur sa touche de joueur (touches physiques : 1-5 pour l'équipe
+// bleue, Q W E R T en QWERTY = A Z E R T en AZERTY pour la rouge). Le jeu le sélectionne et centre la caméra sur lui.
+const SCAN_WIN = { 1: 0x02, 2: 0x03, 3: 0x04, 4: 0x05, 5: 0x06, q: 0x10, w: 0x11, e: 0x12, r: 0x13, t: 0x14 };
+const KEYCODE_MAC = { 1: 18, 2: 19, 3: 20, 4: 21, 5: 23, q: 12, w: 13, e: 14, r: 15, t: 17 };
+function selectPlayerInReplay(key) {
+  return new Promise((resolve, reject) => {
+    if (process.env.COACHING_LOL_TEST) {
+      try { fs.appendFileSync(path.join(videosDir(), 'touches.txt'), key + '\n'); } catch (e) { /* test */ }
+      return resolve();
+    }
+    const { execFile } = require('child_process');
+    if (process.platform === 'win32') {
+      const sc = SCAN_WIN[key];
+      const ps = [
+        "$sig = '[DllImport(\"user32.dll\")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo); [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);'",
+        '$u = Add-Type -MemberDefinition $sig -Name Clavier -Namespace CoachingLoL -PassThru',
+        "$p = Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1",
+        "if (-not $p) { Write-Output 'PAS_DE_JEU'; exit 2 }",
+        '$u::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); $u::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)', // Alt : autorise le passage au premier plan
+        '$u::SetForegroundWindow($p.MainWindowHandle) | Out-Null',
+        'Start-Sleep -Milliseconds 350',
+        'foreach ($i in 1..2) { $u::keybd_event(0, ' + sc + ', 8, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40; $u::keybd_event(0, ' + sc + ', 10, [UIntPtr]::Zero); Start-Sleep -Milliseconds 110 }',
+        "Write-Output 'OK'"
+      ].join('; ');
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { timeout: 20000, windowsHide: true }, (e, out, err) => {
+        const o = String(out || '');
+        if (/OK/.test(o)) return resolve();
+        reject(new Error(/PAS_DE_JEU/.test(o) ? 'La fenêtre du replay est introuvable.' : 'Impossible d\'envoyer la touche au replay (' + String(err || (e && e.message) || o).trim().slice(0, 200) + ').'));
+      });
+    } else if (process.platform === 'darwin') {
+      const code = KEYCODE_MAC[key];
+      execFile('pgrep', ['-x', 'LeagueofLegends'], (e1, out1) => {
+        const pid = parseInt(String(out1 || '').trim().split('\n')[0], 10);
+        const target = pid ? 'first process whose unix id is ' + pid : 'first process whose name is "LeagueofLegends"';
+        const script = 'tell application "System Events"\nset frontmost of (' + target + ') to true\ndelay 0.35\nkey code ' + code + '\ndelay 0.11\nkey code ' + code + '\nend tell';
+        execFile('osascript', ['-e', script], { timeout: 20000 }, (e, out, err) => {
+          if (!e) return resolve();
+          const msg = String(err || e.message);
+          if (/not allowed|1002|-1719|-1743|assistive|accessibilit|autoris/i.test(msg)) return reject(new Error('ACCES: macOS n\'autorise pas encore Coaching LoL à utiliser le clavier dans le replay.'));
+          reject(new Error('Impossible d\'envoyer la touche au replay (' + msg.trim().slice(0, 200) + ').'));
+        });
+      });
+    } else resolve();
+  });
+}
 async function checkScreenPermission() {
   if (process.platform !== 'darwin') return;
   if (systemPreferences.getMediaAccessStatus('screen') === 'granted') return;
@@ -1036,6 +1081,10 @@ async function recordVideos({ playerId, matchId }) {
   if (!ins) throw new Error('League of Legends est introuvable sur cet ordinateur : indique son emplacement ci-dessous.');
   if (!process.env.COACHING_LOL_TEST && await gameRunning()) throw new Error('Une partie ou un replay est déjà ouvert : ferme-le puis réessaie.');
   await checkScreenPermission();
+  // Mac : le choix du joueur dans le replay passe par le clavier (autorisation « Accessibilité »)
+  if (process.platform === 'darwin' && !process.env.COACHING_LOL_TEST && !systemPreferences.isTrustedAccessibilityClient(true)) {
+    throw new Error('ACCES: macOS n\'autorise pas encore Coaching LoL à utiliser le clavier dans le replay.');
+  }
   // Replay API : EnableReplayApi=1 dans game.cfg (lu au lancement du jeu)
   const cfgFile = path.join(path.dirname(ins.config), 'game.cfg');
   let cfg = '';
@@ -1067,10 +1116,12 @@ async function recordVideos({ playerId, matchId }) {
         lcu: (method, p, body) => localJson(creds.base, method, p, body, creds.password),
         replay: (method, p, body) => localJson(REPLAY_BASE, method, p, body),
         record: (sec, file, onTick) => recordWindow(sec, file, onTick),
+        selectPlayer: key => selectPlayerInReplay(key),
         killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status,
         log: (what, data) => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + what + (data === undefined ? '' : ' ' + JSON.stringify(data)) + '\n'); } catch (e) { /* journal facultatif */ } }
       }, {
         gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: 420, gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
+        playerKey: (me.teamId === 200 || (!me.teamId && me.id > 5) ? 'qwert' : '12345')[m.participants.filter(p => p.teamId === me.teamId).sort((a, b) => a.id - b.id).findIndex(p => p.id === me.id)] || null,
         label: champName(me.champion) + (m.opp ? ' contre ' + champName((m.participants.find(p => p.id === m.opp) || {}).champion) : '') + (gm && gm.date ? ' du ' + new Date(gm.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(' ', ' à ') : ''), championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
         file: (i, w) => path.join(dir, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
       }, FAST ? { poll: 250 } : {});
@@ -1078,7 +1129,7 @@ async function recordVideos({ playerId, matchId }) {
       m.camera = r.camera;
       delete m.pending;
       writeMoments(playerId, m);
-      sendVideo({ playerId, matchId, done: true, text: r.clips.length + ' extrait' + (r.clips.length > 1 ? 's' : '') + ' filmé' + (r.clips.length > 1 ? 's' : '') + '.' + (r.camera ? '' : ' Le jeu n\'a pas accepté de suivre le joueur : caméra libre.') });
+      sendVideo({ playerId, matchId, done: true, text: r.clips.length + ' extrait' + (r.clips.length > 1 ? 's' : '') + ' filmé' + (r.clips.length > 1 ? 's' : '') + '.' });
     } catch (e) {
       note('ERREUR ' + e.message);
       sendVideo({ playerId, matchId, error: e.message, journal: true });
@@ -1480,8 +1531,8 @@ function registerIpc() {
     shell.showItemInFolder(f);
     return { ok: true };
   });
-  handle('mac:screen-settings', async () => {
-    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  handle('mac:screen-settings', async q => {
+    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + (q && q.panel === 'acces' ? 'Privacy_Accessibility' : 'Privacy_ScreenCapture'));
     return { ok: true };
   });
   handle('app:relaunch', () => {

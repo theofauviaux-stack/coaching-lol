@@ -689,7 +689,7 @@ function momentsVideo(m, x, c) {
   const from = Math.max(0, Math.round(x.t / 1000 - c.start - 30)); // 30 s avant le moment : on voit ce qui l'amène
   const src = S.mode === 'analysis' ? `clip://r/${esc(S.analysis.id)}/${esc(c.file)}` : `clip://v/${esc(S.videoKey)}/${esc(c.file)}`;
   return `<div class="mo-video"><video src="${src}" data-from="${from}" controls autoplay muted playsinline></video>
-    <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay${m.camera ? ' · caméra sur le joueur' : ''}</div></div>`;
+    <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay · caméra sur le joueur</div></div>`;
 }
 function momentsButtons(S) {
   const m = S.data;
@@ -721,11 +721,17 @@ function momentsHead(S, sub) {
   return `<div class="mo-head"><h2>${title}</h2>${sub || ''}<span class="spacer"></span>${momentsButtons(S)}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
     ${busy ? `<div class="mo-vstatus"><div class="mo-vline"><span class="spinner"></span><span class="mo-vtext">${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : S.xstatus ? 'Ne ferme pas l\'app pendant l\'export.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span><b class="mo-vpct">${Math.round((prog || 0) * 100)} %</b></div>
       <div class="mo-bar"><i style="width:${Math.max(2, Math.round((prog || 0) * 100))}%"></i></div></div>` : ''}
-    ${S.screenPerm && !busy ? `<div class="mo-lol mo-perm">${icon('alert', 15)}<div><b>macOS bloque l'enregistrement de l'écran.</b>
+    ${S.perm && !busy ? `<div class="mo-lol mo-perm">${icon('alert', 15)}<div>${S.perm === 'acces'
+      ? `<b>macOS bloque l'usage du clavier dans le replay</b> (l'app appuie sur la touche de ton joueur pour que la caméra le suive).
+      <ol><li>Ouvre les réglages (bouton à droite) : <i>Accessibilité</i>.</li>
+      <li>Coche <b>Coaching LoL</b> (s'il n'y est pas, ajoute-le avec <b>+</b> depuis Applications). S'il y est déjà mais que ça ne marche pas, enlève-le avec <b>−</b> puis rajoute-le.</li>
+      <li>Si macOS demande aussi d'autoriser Coaching LoL à contrôler « System Events », accepte.</li>
+      <li>Relance l'app, puis clique de nouveau sur « Filmer les moments ».</li></ol>`
+      : `<b>macOS bloque l'enregistrement de l'écran.</b>
       <ol><li>Ouvre les réglages (bouton à droite) : <i>Enregistrement de l'écran</i>.</li>
       <li>Si Coaching LoL est déjà dans la liste, sélectionne-le et enlève-le avec le bouton <b>−</b>.</li>
       <li>Relance l'app, puis clique de nouveau sur « Filmer les moments » et choisis <b>Autoriser</b> (ou coche Coaching LoL dans la liste).</li>
-      <li>Relance l'app une dernière fois : macOS ne prend l'autorisation en compte qu'au redémarrage.</li></ol></div>
+      <li>Relance l'app une dernière fois : macOS ne prend l'autorisation en compte qu'au redémarrage.</li></ol>`}</div>
       <div class="mo-perm-btns"><button class="btn" data-action="mo-screen-settings">Ouvrir les réglages</button><button class="btn primary" data-action="mo-relaunch">Relancer l'app</button></div></div>` : ''}
     ${S.verror && !busy ? `<div class="mo-lol mo-err">${icon('alert', 15)}<span>${esc(S.verror)}</span><button class="btn" data-action="mo-journal" data-tip="Le détail des étapes du dernier tournage : à envoyer au coach si ça bloque">Voir le journal</button></div>` : ''}
     ${lol ? `<div class="mo-lol">${icon('alert', 15)}<span>League of Legends introuvable sur cet ordinateur. Emplacement :</span>
@@ -892,7 +898,15 @@ const momentsOpen = () => !!(state.moments && $('#modal-box .mo-head'));
 window.api.onVideoStatus(async v => {
   const S = state.moments;
   const here = momentsOpen() && S.mode === 'moments' && S.data && S.matchId === v.matchId && player() && player().id === v.playerId;
-  if (v.error) { if (here) { S.vstatus = null; S.verror = v.error; showMoments(); } toast('Vidéos : ' + v.error, 'err', 9000); return; }
+  if (v.error) {
+    if (here) {
+      S.vstatus = null;
+      if (/^ACCES:/.test(v.error)) S.perm = 'acces'; else S.verror = v.error;
+      showMoments();
+    }
+    if (!/^ACCES:/.test(v.error)) toast('Vidéos : ' + v.error, 'err', 9000);
+    return;
+  }
   if (v.done) {
     toast('Vidéos : ' + v.text, 'ok', 7000);
     if (here) {
@@ -1673,7 +1687,7 @@ document.addEventListener('click', async e => {
     case 'analysis-open': openAnalysis(id); break;
     case 'mo-send': if (state.moments && state.moments.data) { const S = state.moments; S.mode = 'send'; S.sendLabel = $('.mo-head .muted') ? $('.mo-head .muted').textContent : ''; showMoments(); } break;
     case 'mo-back': if (state.moments) { state.moments.mode = 'moments'; showMoments(); } break;
-    case 'mo-screen-settings': window.api.openScreenSettings(); break;
+    case 'mo-screen-settings': window.api.openScreenSettings(state.moments && state.moments.perm); break;
     case 'mo-journal': { const r = await window.api.showJournal(); if (r && r.ok === false) toast(r.message, 'err'); break; }
     case 'mo-relaunch': window.api.relaunch(); break;
     case 'mo-lolpath': {
@@ -1742,13 +1756,13 @@ document.addEventListener('click', async e => {
       if (!S || !p) break;
       S.vstatus = 'Préparation…';
       S.vprogress = 0.01;
-      S.screenPerm = false;
+      S.perm = null;
       S.verror = null;
       showMoments();
       const r = await window.api.recordVideos(p.id, S.matchId);
       if (!r || !r.ok) {
         S.vstatus = null;
-        if (r && /^ECRAN:/.test(r.message)) { S.screenPerm = true; showMoments(); break; }
+        if (r && /^(ECRAN|ACCES):/.test(r.message)) { S.perm = /^ACCES/.test(r.message) ? 'acces' : 'ecran'; showMoments(); break; }
         const g = await window.api.getMoments(p.id, S.matchId);
         if (g && g.ok) S.lol = g.lol;
         showMoments();
