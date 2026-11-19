@@ -112,6 +112,30 @@ module.exports = async function ({ app, win, fs, path }) {
     out.vide = await js(`document.querySelector('.lv-empty') ? document.querySelector('.lv-empty').textContent.replace(/\\s+/g, ' ').trim() : ''`);
     out.badgeVide = await js(`document.querySelector('.nav-badge') ? document.querySelector('.nav-badge').textContent : null`);
     await shot('l8-personne');
+    // moments clés d'une partie (fenêtre ouverte depuis le détail de la partie)
+    await js(`state.playerId = 'p1'; state.page = 'parties'; render(); document.querySelector('[data-action="game"]').click(); 0`);
+    await wait(500);
+    await js(`document.querySelector('[data-action="moments"]').click(); 0`);
+    await until(`document.querySelectorAll('.mo-row').length > 0`, 20000);
+    await wait(800);
+    const mo = {};
+    mo.lignes = await js(`document.querySelectorAll('.mo-row').length`);
+    mo.titres = await js(`[...document.querySelectorAll('.mo-row b')].map(b => b.textContent.trim())`);
+    mo.premier = await js(`document.querySelector('.mo-row.on .mo-t').textContent.trim()`);
+    mo.pins = await js(`document.querySelectorAll('.mo-pin').length`);
+    await shot('l9-moments');
+    await js(`[...document.querySelectorAll('.mo-row')].find(r => r.querySelector('.mo-t').textContent.trim() === '12:00').click(); 0`);
+    await wait(700);
+    mo.carteApresClic = await js(`document.querySelector('.mo-maptime b').textContent.trim()`);
+    await shot('l10-moments-dragon');
+    await js(`document.querySelector('[data-action="mo-copy"]').click(); 0`);
+    await wait(600);
+    mo.copie = require('electron').clipboard.readText();
+    // deuxième ouverture : lue sur le disque
+    await js(`closeModal(); document.querySelector('[data-action="moments"]').click(); 0`);
+    await until(`document.querySelectorAll('.mo-row').length > 0`, 20000);
+    mo.fichier = fs.existsSync(path.join(data, 'moments', 'p1_EUW1_7300000099.json'));
+    out.moments = mo;
   } catch (e) {
     out.exception = e.stack || String(e);
     try { await shot('erreur'); } catch (x) { /* rien */ }

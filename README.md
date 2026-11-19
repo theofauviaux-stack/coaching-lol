@@ -39,6 +39,12 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - « Regarder » lance League of Legends en mode spectateur avec la clé d'observation donnée par Riot (`spectator.<plateforme>.lol.pvp.net:8080`), 3 min de retard comme toujours en classée. Si le jeu se ferme dans les 30 s (échec fréquent au premier lancement), l'app le relance d'elle-même, 3 essais au maximum, et jamais si une fenêtre de jeu est déjà ouverte. Le jeu doit être installé et à jour : il est cherché dans Applications (Mac) ou C:\Riot Games (Windows), sinon à l'emplacement indiqué dans Paramètres › Général › Mode spectateur.
 - Les joueurs ne voient pas cette page : la clé API Riot reste sur l'ordinateur du coach.
 
+## Moments clés d'une partie
+
+- Parties › une partie › « Moments clés de la partie » (coach) : morts (zone, ennemis impliqués, alliés à côté, objectif perdu ensuite, étiquettes gank / seul / combat d'équipe / jungle ennemie), kills, objectifs (présent ou absent), retours à la base avec les achats, niveau 6 comparé au vis-à-vis, lane à 10 et 15 min, vision. Mini-carte avec la position des 10 joueurs au moment choisi (Riot donne une position par minute : positions interpolées).
+- Calculés à la synchro à partir de la timeline déjà téléchargée (aucune requête en plus) ; pour les parties plus anciennes, à la première ouverture (2 requêtes). Un fichier par partie dans le dossier `moments/` des données du coach (src/moments.js).
+- « Copier pour l'analyse » : dossier texte de la partie à coller dans Claude (calibration de l'analyse avec le coach).
+
 ## Installer
 
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :

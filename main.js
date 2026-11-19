@@ -11,6 +11,7 @@ const access = require('./src/access');
 const playersMod = require('./src/players');
 const lpMod = require('./src/lp');
 const liveMod = require('./src/live');
+const momentsMod = require('./src/moments');
 const { spawn } = require('child_process');
 
 const REPO = 'theofauviaux-stack/coaching-lol';
@@ -404,7 +405,7 @@ async function runSync(playerIds) {
         // lots de 30 parties, enregistrés au fur et à mesure, jusqu'à ce que tout l'historique soit vérifié
         let r, guard = 0;
         do {
-          r = await syncPlayer(store.data, client, p, { maxGames: store.data.settings.maxGamesPerSync || 30 });
+          r = await syncPlayer(store.data, client, p, { maxGames: store.data.settings.maxGamesPerSync || 30, onTimeline: saveMomentsFrom });
           store.save();
           if (session && session.source === 'local') refreshView();
         } while (r.remaining > 0 && ++guard < 20);
@@ -560,6 +561,39 @@ async function resolveSmurfs(text, region, previous, mainRiotId) {
   return out;
 }
 
+// ---------------------------------------------------------------- moments clés d'une partie
+// Un fichier par partie et par joueur (moments/<joueur>_<partie>.json) : calculé à la synchro (la timeline est
+// déjà téléchargée), sinon à la demande (2 requêtes Riot). Reste sur l'ordinateur du coach.
+const momentsDir = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'moments');
+const momentsFile = (playerId, matchId) => path.join(momentsDir(), String(playerId).replace(/[^\w-]/g, '') + '_' + String(matchId).replace(/[^\w-]/g, '') + '.json');
+function saveMomentsFrom(match, tl, player) {
+  const m = momentsMod.buildMoments(match, tl, player.puuid, store.data.settings.items || {});
+  if (!m) return null;
+  fs.mkdirSync(momentsDir(), { recursive: true });
+  fs.writeFileSync(momentsFile(player.id, m.matchId), JSON.stringify(m));
+  return m;
+}
+async function getMoments({ playerId, matchId }) {
+  requireEdit();
+  const player = store.data.players.find(p => p.id === playerId);
+  if (!player) throw new Error('Joueur introuvable.');
+  let m = null;
+  try { m = JSON.parse(fs.readFileSync(momentsFile(playerId, matchId), 'utf8')); } catch (e) { /* pas encore calculés */ }
+  if (!m) {
+    const key = getSecret('apiKey');
+    if (!key) throw new Error('Ajoute ta clé API Riot dans Paramètres pour calculer les moments clés.');
+    if (!player.puuid) throw new Error('Compte Riot du joueur pas encore trouvé : lance une synchronisation.');
+    const client = new RiotClient(key, { delayMs: 200, base: RIOT_BASE });
+    const match = await client.match(matchId, player.region);
+    const tl = match ? await client.timeline(matchId, player.region) : null;
+    if (!match || !tl) throw new Error('Riot ne donne plus le détail de cette partie (trop ancienne ?).');
+    m = saveMomentsFrom(match, tl, player);
+    if (!m) throw new Error('Le joueur n\'apparaît pas dans cette partie.');
+  }
+  const text = momentsMod.toText(m, { player: player.riotId, champName });
+  return { ok: true, moments: m, text };
+}
+
 // Postes des champions (pour mettre les lanes face à face) : table Meraki relue une fois par jour,
 // sinon celle livrée avec l'app (src/role-rates.json)
 async function refreshRoleRates() {
@@ -632,7 +666,7 @@ async function refreshDDragon() {
     const res = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
     const v = (await res.json())[0];
     const s = store.data.settings;
-    if (v && (v !== s.ddVersion || !s.champs || !s.champKeys || !s.spellKeys || !s.perkIcons)) {
+    if (v && (v !== s.ddVersion || !s.champs || !s.champKeys || !s.spellKeys || !s.perkIcons || !s.items)) {
       // noms français des champions (l'API Riot donne « MonkeyKing », « JarvanIV »… : on affiche « Wukong », « Jarvan IV »)
       try {
         const cj = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/champion.json`)).json();
@@ -641,6 +675,13 @@ async function refreshDDragon() {
         for (const c of Object.values(cj.data || {})) { champs[c.id.toLowerCase()] = [c.id, c.name]; keys[c.key] = c.id; }
         if (Object.keys(champs).length) { s.champs = champs; s.champKeys = keys; }
       } catch (e) { /* on garde les noms bruts */ }
+      // moments clés : nom et prix des objets (retours à la base)
+      try {
+        const ij = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/item.json`)).json();
+        const it = {};
+        for (const [id, x] of Object.entries(ij.data || {})) if (x.gold && x.gold.purchasable) it[id] = [x.name, x.gold.total];
+        if (Object.keys(it).length) s.items = it;
+      } catch (e) { /* retours sans le détail des achats */ }
       // parties en direct : sorts d'invocateur (numéro → image) et runes (numéro → image)
       try {
         const sj = await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/summoner.json`)).json();
@@ -805,6 +846,7 @@ function registerIpc() {
   handle('player:delete', id => {
     requireEdit();
     playersMod.deletePlayer(store.data, id);
+    try { for (const f of fs.readdirSync(momentsDir())) if (f.startsWith(String(id).replace(/[^\w-]/g, '') + '_')) fs.unlinkSync(path.join(momentsDir(), f)); } catch (e) { /* pas de moments */ }
     return { ok: true, data: changed(1000) };
   });
 
@@ -914,6 +956,7 @@ function registerIpc() {
 
   handle('live:refresh', async () => { requireEdit(); await pollLive(); return { ok: true, data: viewData() }; });
   handle('live:watch', gameId => watchGame(gameId));
+  handle('moments:get', q => getMoments(q || {}));
 
   handle('open:external', url => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { ok: true }; });
 }

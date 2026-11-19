@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
   refreshBookings: () => call('booking:refresh'),
   refreshLive: () => call('live:refresh'),
   watchLive: gameId => call('live:watch', gameId),
+  getMoments: (playerId, matchId) => call('moments:get', { playerId, matchId }),
   onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))
 });

@@ -43,7 +43,8 @@ const GAMES = {
 };
 const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram', 'S-QUEST': 'smurf' };
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
-const calls = { spectator: {}, league: {} };
+const calls = { spectator: {}, league: {}, match: 0 };
+const partieMoments = require('./fixtures/partie-moments')('P-UAWAWA');
 function rankFor(puuid) {
   if (puuid === 'E-JGL') return []; // non classé
   if (puuid === 'P-KIOGA') return [{ queueType: 'RANKED_SOLO_5x5', tier: 'EMERALD', rank: 'II', leaguePoints: 47, wins: 61, losses: 52 }];
@@ -62,6 +63,10 @@ function startRiot() {
     if ((m = req.url.match(/\/riot\/account\/v1\/accounts\/by-riot-id\/([^/]+)\/([^/?]+)/))) {
       const id = decodeURIComponent(m[1]) + '#' + decodeURIComponent(m[2]);
       return id === 'Quest Smurf#EUW' ? send(200, { puuid: 'S-QUEST', gameName: 'Quest Smurf', tagLine: 'EUW' }) : send(404, { status: { message: 'Data not found', status_code: 404 } });
+    }
+    if (req.url.startsWith('/lol/match/v5/matches/EUW1_7300000099')) {
+      calls.match++;
+      return send(200, req.url.endsWith('/timeline') ? partieMoments.timeline : partieMoments.match);
     }
     if ((m = req.url.match(/\/lol\/spectator\/v5\/active-games\/by-summoner\/([^/?]+)/))) {
       calls.spectator[m[1]] = (calls.spectator[m[1]] || 0) + 1;
@@ -100,6 +105,9 @@ exit 1
   for (const [riotId, role] of Object.entries(roles)) d.players.push({ id: 'p' + (++n), riotId, region: 'euw', role, puuid: puuids[riotId], code: String(5100 + n), objectives: {}, createdAt: NOW });
   Object.assign(d.settings, JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'ddragon.json'), 'utf8')));
   d.settings.coachCode = '4821';
+  d.settings.items = { 1055: ['Lame de Doran', 450], 2003: ['Potion de soin', 50], 3133: ['Marteau de guerre de Caulfield', 1100], 3071: ['Couperet noir', 3000] };
+  d.games.push({ matchId: 'EUW1_7300000099', playerId: 'p1', date: NOW - 3600000, role: 'Top', champion: 'Darius', opponent: 'Garen', win: false, duration: 20, kills: 1, deaths: 2, assists: 0, teamKills: 3,
+    cs: 140, gold: 7400, damage: 9000, vision: 12, wardsPlaced: 4, wardsKilled: 1, pinks: 1, level: 13, side: 'Bleu', cs10: 70, goldDiff10: -200, xpDiff10: 0, goldDiff15: -300, deaths15: 1, lpDelta: null, mental: null, objectiveMet: null, comment: '' });
   d.settings.apiKey = 'RGAPI-test-en-direct';
   d.settings.lolPath = path.join(DIR, 'Jeux');
   fs.writeFileSync(path.join(DIR, 'coach', 'coaching-data.json'), JSON.stringify(d));
@@ -160,6 +168,15 @@ exit 1
   assert.ok(/Partie classée en cours/.test(r.notification) && /UCE Uawawa/.test(r.notification), r.notification);
   assert.ok(/UCE Questinou sur son smurf Quest Smurf#EUW \(Jhin\)/.test(r.notificationSmurf), r.notificationSmurf);
   assert.ok(/Aucun de tes joueurs/.test(r.vide), r.vide);
+  // moments clés d'une partie
+  assert.ok(r.moments.lignes >= 10, JSON.stringify(r.moments));
+  assert.ok(r.moments.titres.includes('Mort : tué par Kha\'Zix') && r.moments.titres.includes('Larves du Néant perdues'), r.moments.titres.join(' | '));
+  assert.strictEqual(r.moments.premier, '6:30', 'la première mort est sélectionnée');
+  assert.strictEqual(r.moments.carteApresClic, '12:00');
+  assert.strictEqual(r.moments.pins, 10);
+  assert.ok(r.moments.copie.startsWith('DOSSIER DE PARTIE') && r.moments.copie.includes('6:30 — Mort : tué par Kha\'Zix — top lane'), r.moments.copie.slice(0, 400));
+  assert.strictEqual(calls.match, 2, 'partie et timeline demandées une seule fois (ensuite lues sur le disque)');
+  assert.ok(r.moments.fichier, 'moments enregistrés sur l\'ordinateur du coach');
   // rangs gardés en mémoire : une seule demande par joueur malgré les vérifications toutes les 2 s
   assert.ok(Object.keys(calls.league).filter(k => !k.startsWith('P-')).every(k => calls.league[k] === 1), JSON.stringify(calls.league));
   assert.ok(calls.spectator['P-UAWAWA'] >= 3, 'vérification régulière');

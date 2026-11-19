@@ -106,6 +106,7 @@ async function syncPlayer(data, client, player, opts = {}) {
     let tl = null;
     try { tl = await client.timeline(id, player.region); } catch (e) { if (e.code === 'KEY') throw e; }
     const g = gameFromMatch(match, tl, p, player.id);
+    if (tl && opts.onTimeline) { try { opts.onTimeline(match, tl, player, g); } catch (e) { /* moments facultatifs */ } }
     data.games.push(g);
     added.push(g);
   }

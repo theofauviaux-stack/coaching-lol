@@ -629,6 +629,7 @@ function renderDrawer() {
   $('#drawer').innerHTML = `<div class="row"><span class="chip ${g.win ? 'accent' : 'red'}">${g.win ? 'Victoire' : 'Défaite'}</span><span class="muted small">${dateTimeFr(g.date)} · ${g.duration} min</span><span class="spacer"></span><button class="icon-btn" data-action="close-drawer">${icon('close', 18)}</button></div>
     <div class="game-head">${img(g.champion, '')}<div><h2 style="margin:0">${champ(g.champion)}</h2><div class="muted small">${esc(g.role)} · côté ${esc(g.side || '?')} · niveau ${g.level || '?'}</div></div><span class="spacer"></span>
       ${g.opponent ? `<div class="vs" style="text-align:center"><div class="faint tiny">contre</div>${img(g.opponent, '')}<div class="small">${champ(g.opponent)}</div></div>` : ''}</div>
+    ${edit && isCoach() ? `<button class="btn primary mo-open" data-action="moments" data-id="${esc(g.matchId)}">${icon('target', 15)} Moments clés de la partie</button>` : ''}
     <div class="statgrid">
       ${cell('K / D / A', `${g.kills} / ${g.deaths} / ${g.assists}`)}${cell('KDA', Stats.fmt(M.KDA(g), 'dec2'))}${cell('Kill participation', Stats.fmt(M.KP(g), 'pct'))}
       ${cell('CS', `${g.cs} <span class="muted small">(${Stats.fmt(M['CS/min'](g), 'dec2')}/min)</span>`)}${cell('CS à 10 min', Stats.fmt(g.cs10, 'int'))}${cell('Morts avant 15 min', g.deaths15 === null || g.deaths15 === undefined ? '—' : g.deaths15)}
@@ -640,6 +641,81 @@ function renderDrawer() {
   $('#drawer').classList.remove('hidden');
   $('#drawer-back').classList.remove('hidden');
   hookImages();
+}
+
+// ======================================================================== MOMENTS CLÉS d'une partie (coach)
+const MAPB = { min: -120, w: 14990, h: 15100 }; // bornes de la mini-carte de Riot
+const mapPct = (x, y) => [(x - MAPB.min) / MAPB.w * 100, 100 - (y - MAPB.min) / MAPB.h * 100];
+const mmss = ms => { const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const MO_ICON = { mort: 'skull', kill: 'sword', objectif: 'target', retour: 'home', niveau: 'up' };
+const moTitle = x => esc(x.title).replace(/(tué par|Kill sur) (\w+)/, (a, b, c) => b + ' ' + champ(c));
+function trackAt(m, id, t) {
+  const tr = m.track || [];
+  const i = Math.max(0, Math.min(tr.length - 1, Math.floor(t / 60000)));
+  const a = tr[i] && tr[i].p[id], b = tr[i + 1] && tr[i + 1].p[id];
+  if (a && b && tr[i + 1].t > tr[i].t) { const k = Math.max(0, Math.min(1, (t - tr[i].t) / (tr[i + 1].t - tr[i].t))); return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]; }
+  return a || b || null;
+}
+function momentsMap(m, mo) {
+  const t = mo ? mo.t : 0;
+  const v = D().settings.ddVersion;
+  const pins = m.participants.map(pp => {
+    const q = trackAt(m, pp.id, t);
+    if (!q) return '';
+    const [l, tp] = mapPct(q[0], q[1]);
+    return `<div class="mo-pin ${pp.teamId === m.teamId ? 'ally' : 'enemy'} ${pp.id === m.me ? 'me' : ''}" style="left:${l}%;top:${tp}%" data-tip="${esc(champInfo(pp.champion) ? champInfo(pp.champion)[1] : pp.champion)}${pp.name ? ' · ' + esc(pp.name) : ''}">${img(pp.champion, '')}</div>`;
+  }).join('');
+  let ev = '';
+  if (mo && mo.x !== null && mo.x !== undefined) { const [l, tp] = mapPct(mo.x, mo.y); ev = `<div class="mo-ev ${mo.tone}" style="left:${l}%;top:${tp}%"></div>`; }
+  return `<div class="mo-map" ${v ? `style="background-image:url(https://ddragon.leagueoflegends.com/cdn/${v}/img/map/map11.png)"` : ''}>${pins}${ev}
+    <div class="mo-maptime"><b>${mmss(t)}</b> positions approximatives (Riot en donne une par minute)</div></div>`;
+}
+function momentDetail(x) {
+  const cl = list => list.map(c => champ(c)).join(', ');
+  if (x.type === 'mort') return [x.zone, x.involved && x.involved.length ? 'Ennemis : ' + cl(x.involved) : '', 'Alliés à côté : ' + (x.allies && x.allies.length ? cl(x.allies) : 'aucun'),
+    x.after && x.after.length ? 'Ensuite : ' + x.after.map(a => esc(a.what) + ' ' + a.s + ' s après').join(', ') : ''].filter(Boolean).join(' · ');
+  if (x.type === 'objectif') return x.tags.includes('présent') ? 'Il était là' : 'Absent' + (x.where ? ' (' + esc(x.where) + ')' : '');
+  if (x.type === 'retour') return x.items && x.items.length ? esc(x.items.join(', ')) : '';
+  if (x.type === 'niveau') return x.vs ? 'Son vis-à-vis : niveau 6 à ' + esc(x.vs) : '';
+  return x.zone ? esc(x.zone) : '';
+}
+function momentsHtml() {
+  const S = state.moments;
+  const head = t => `<div class="mo-head"><h2>Moments clés</h2>${t}<span class="spacer"></span>
+    ${S.data ? `<button class="btn" data-action="mo-copy">${icon('copy', 15)} Copier pour l'analyse</button>` : ''}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>`;
+  if (S.loading) return head('') + '<div class="empty"><span class="spinner"></span> Lecture de la partie chez Riot…</div>';
+  if (S.error) return head('') + `<div class="empty">${esc(S.error)}</div>`;
+  const m = S.data;
+  const me = m.participants.find(p => p.id === m.me), opp = m.participants.find(p => p.id === m.opp);
+  const mo = m.moments[S.sel] || null;
+  const fmtN = n => Number(n).toLocaleString('fr-FR');
+  const lane = (k, l) => { const a = m.lane[k]; if (!a) return ''; const d = a.opp ? a.me.gold - a.opp.gold : null; return `<div><span>À ${l} min</span><b>${a.me.cs} CS · ${fmtN(a.me.gold)} or</b>${d === null ? '' : `<em class="${d >= 0 ? 'ok' : 'red'}">${d >= 0 ? '+' : ''}${fmtN(d)} or</em>`}</div>`; };
+  const rows = m.moments.map((x, i) => `<div class="mo-row ${i === S.sel ? 'on' : ''}" data-action="mo-sel" data-v="${i}">
+      <span class="mo-t">${mmss(x.t)}</span><span class="mo-ico ${x.tone}">${icon(MO_ICON[x.type] || 'info', 14)}</span>
+      <div class="mo-txt"><b>${moTitle(x)}</b><div class="small muted">${momentDetail(x)}</div>${x.tags && x.tags.length && x.type !== 'objectif' ? `<div class="mo-tags">${x.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
+  return head(`<span class="muted small">${champ(me.champion)}${opp ? ' contre ' + champ(opp.champion) : ''} · ${m.win ? 'Victoire' : 'Défaite'} · ${m.kda.join('/')} · ${mmss(m.duration * 1000)}</span>`) + `
+    <div class="mo-body">
+      <div>${momentsMap(m, mo)}
+        <div class="mo-sum">${lane('at10', 10)}${lane('at15', 15)}<div><span>Vision</span><b>${m.vision.placed} wards · ${m.vision.control} pink${m.vision.control > 1 ? 's' : ''}</b><em class="muted">${m.vision.killed} détruite${m.vision.killed > 1 ? 's' : ''}</em></div></div>
+        <div class="faint tiny" style="margin-top:8px">« Copier pour l'analyse » met tout le dossier dans le presse-papiers : colle-le dans ta conversation avec Claude.</div></div>
+      <div class="mo-list">${rows || '<div class="empty">Aucun moment notable.</div>'}</div>
+    </div>`;
+}
+async function openMoments(matchId) {
+  const p = player();
+  if (!p) return;
+  state.moments = { matchId, loading: true };
+  const show = () => { openModal(momentsHtml()); $('#modal-box').style.width = 'min(1120px, 95vw)'; };
+  show();
+  const r = await window.api.getMoments(p.id, matchId);
+  if (!state.moments || state.moments.matchId !== matchId) return;
+  state.moments.loading = false;
+  if (!r || !r.ok) state.moments.error = r ? r.message : 'Erreur inconnue.';
+  else {
+    const first = r.moments.moments.findIndex(x => x.type === 'mort');
+    Object.assign(state.moments, { data: r.moments, text: r.text, sel: first >= 0 ? first : 0 });
+  }
+  show();
 }
 
 async function setGameField(field, value) {
@@ -1324,6 +1400,9 @@ document.addEventListener('click', async e => {
       apply(await window.api.booking(act, id, start), msg);
       break;
     }
+    case 'moments': openMoments(id); break;
+    case 'mo-sel': if (state.moments && state.moments.data) { state.moments.sel = Number(el.dataset.v); const sc = $('.mo-list') ? $('.mo-list').scrollTop : 0; openModal(momentsHtml()); $('#modal-box').style.width = 'min(1120px, 95vw)'; if ($('.mo-list')) $('.mo-list').scrollTop = sc; } break;
+    case 'mo-copy': if (state.moments && state.moments.text) copyText(state.moments.text, 'Dossier de la partie copié : colle-le dans ta conversation avec Claude.'); break;
     case 'live-refresh': { el.disabled = true; el.innerHTML = '<span class="spinner"></span> Vérification…'; apply(await window.api.refreshLive()); break; }
     case 'live-watch': {
       const old = el.innerHTML;

@@ -440,3 +440,33 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .lv-row.mirror .lv-cname { justify-content: flex-end; }
 .lv-row.mirror .lv-champ { justify-self: end; }
 .lv-row.mirror .lv-key { right: auto; left: -6px; }
+
+/* ------------------------------------------------------------------ moments clés d'une partie */
+.mo-open { width: 100%; justify-content: center; margin: 4px 0 14px; }
+.mo-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.mo-head h2 { margin: 0; }
+.mo-body { display: grid; grid-template-columns: 430px minmax(0, 1fr); gap: 18px; align-items: start; }
+.mo-map { position: relative; width: 430px; height: 430px; border-radius: 10px; border: 1px solid var(--line); background: #0b1013 center / cover no-repeat; overflow: hidden; }
+.mo-pin { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; border: 2px solid var(--blue); overflow: hidden; background: #000; transition: left .35s var(--ease), top .35s var(--ease); z-index: 2; }
+.mo-pin.enemy { border-color: var(--red); }
+.mo-pin.me { border-color: var(--accent); width: 36px; height: 36px; margin: -18px 0 0 -18px; z-index: 3; box-shadow: 0 0 0 3px rgba(195, 236, 127, .35); }
+.mo-pin img { width: 100%; height: 100%; display: block; }
+.mo-ev { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; border: 2px dashed var(--amber); z-index: 1; animation: pulse 1.6s infinite; }
+.mo-ev.bad { border-color: var(--red); } .mo-ev.good { border-color: var(--accent); }
+.mo-maptime { position: absolute; left: 8px; bottom: 8px; right: 8px; padding: 5px 9px; border-radius: 7px; background: rgba(8, 11, 13, .82); font-size: 11.5px; color: var(--muted); z-index: 4; }
+.mo-maptime b { color: var(--text); font: 800 13px Manrope, sans-serif; margin-right: 6px; }
+.mo-sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.mo-sum > div { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; }
+.mo-sum span { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.mo-sum b { font-size: 13px; } .mo-sum em { font-style: normal; font-size: 12px; font-weight: 700; }
+.mo-list { max-height: 560px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.mo-row { display: grid; grid-template-columns: 44px 26px minmax(0, 1fr); gap: 8px; align-items: start; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.mo-row:last-child { border-bottom: 0; }
+.mo-row:hover { background: var(--panel); }
+.mo-row.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+.mo-t { font: 800 13px Manrope, sans-serif; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.mo-ico { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; background: var(--panel-2); color: var(--muted); }
+.mo-ico.bad { color: var(--red); background: rgba(239, 141, 145, .12); } .mo-ico.good { color: var(--accent); background: var(--accent-dim); }
+.mo-txt b { font-size: 13.5px; }
+.mo-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.mo-tags span { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 11px; }
