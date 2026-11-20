@@ -16,6 +16,19 @@ const raw = {
 const players = [{ id: 'p-kioga', puuid: 'A1', riotId: 'UCE Kioga#EUWWW' }, { id: 'p-autre', puuid: 'ZZ', riotId: 'Autre#EUW' }];
 const keys = { 64: 'LeeSin', 103: 'Ahri', 121: 'Khazix', 157: 'Yasuo', 238: 'Zed', 86: 'Garen' };
 
+// ---------------- files suivies : classée Solo/Duo et personnalisée (pas ARAM, normale, Flex)
+assert.strictEqual(live.isWatched(raw), true);
+assert.strictEqual(live.isWatched({ gameQueueConfigId: 0, gameType: 'CUSTOM_GAME' }), true, 'personnalisée');
+assert.strictEqual(live.isWatched({ gameQueueConfigId: 0 }), true, 'file 0 sans gameType');
+assert.strictEqual(live.isWatched({ gameQueueConfigId: 450, gameType: 'MATCHED_GAME' }), false, 'ARAM ignorée');
+assert.strictEqual(live.isWatched({ gameQueueConfigId: 440 }), false, 'Flex ignorée');
+assert.strictEqual(live.isWatched(null), false);
+const perso = live.buildGame(Object.assign({}, raw, { gameQueueConfigId: 0, gameType: 'CUSTOM_GAME', gameMode: 'ARAM', bannedChampions: [],
+  participants: [P('A1', 100, 64, 'UCE Kioga#EUWWW'), Object.assign(P(null, 200, 86, ''), { bot: true })] }), players, {}, keys);
+assert.deepStrictEqual([perso.custom, perso.mode, perso.allies.length, perso.enemies.length, perso.enemies[0].bot], [true, 'ARAM', 1, 1, true]);
+assert.strictEqual(live.buildGame(raw, players, {}, keys).custom, false);
+assert.ok(/spectateurs doivent être autorisés/.test(live.checkGame({ gameId: 1, platformId: 'EUW1', key: '', custom: true })));
+
 // ---------------- rang Solo/Duo
 assert.strictEqual(live.soloRank([{ queueType: 'RANKED_FLEX_SR', tier: 'GOLD', rank: 'I', leaguePoints: 3 }]), null);
 const r = live.soloRank([{ queueType: 'RANKED_SOLO_5x5', tier: 'EMERALD', rank: 'II', leaguePoints: 47, wins: 60, losses: 52 }]);

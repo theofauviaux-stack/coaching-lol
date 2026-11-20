@@ -516,7 +516,7 @@ async function pollLive() {
       if ([...found.values()].some(f => (f.raw.participants || []).some(x => x.puuid === a.puuid))) continue;
       try {
         const raw = await client.activeGame(a.puuid, a.region);
-        if (raw && raw.gameQueueConfigId === liveMod.QUEUE_SOLO && !found.has(raw.gameId)) found.set(raw.gameId, { raw, region: a.region });
+        if (liveMod.isWatched(raw) && !found.has(raw.gameId)) found.set(raw.gameId, { raw, region: a.region });
       } catch (e) {
         error = e.message;
         if (e.code === 'KEY' || e.code === 'NO_KEY') break;
@@ -542,7 +542,7 @@ async function pollLive() {
     if (!live.first && isCoach()) {
       for (const g of games.filter(x => !before.has(x.gameId))) {
         const who = g.allies.concat(g.enemies).filter(x => x.playerId).map(x => (x.smurf ? playerName(x.playerId) + ' sur son smurf ' + x.smurf : x.gameName || playerName(x.playerId)) + ' (' + champName(x.champion) + ')');
-        notifyCoach('Partie classée en cours', who.join(', ') + ' · ouvre « En direct » pour la regarder');
+        notifyCoach(g.custom ? 'Partie personnalisée en cours' : 'Partie classée en cours', who.join(', ') + ' · ouvre « En direct » pour la regarder');
       }
     }
     if (live.games.some(g => !after.has(g.gameId))) setTimeout(pollRanks, FAST ? 2000 : 2 * 60 * 1000);

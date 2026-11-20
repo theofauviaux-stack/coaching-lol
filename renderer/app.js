@@ -1515,19 +1515,19 @@ function perkImg(id, cls) {
 }
 function liveChip(p) {
   const g = isCoach() && canEdit() ? liveOf(p.id) : null;
-  return g ? `<span class="live-chip" data-action="go" data-page="direct" data-tip="Partie classée en cours : clique pour la voir"><span class="pulse"></span>En partie <span class="lv-tick" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</span></span>` : '';
+  return g ? `<span class="live-chip" data-action="go" data-page="direct" data-tip="${g.custom ? 'Partie personnalisée' : 'Partie classée'} en cours : clique pour la voir"><span class="pulse"></span>En partie <span class="lv-tick" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</span></span>` : '';
 }
 const ownerName = pid => { const p = D().players.find(y => y.id === pid); return p ? gameName(p) : '?'; };
 // mirror : ligne de l'adversaire, dans l'autre sens (champion à droite), pour les voir face à face
 function liveRow(x, mirror = false, end = false) {
   const games = x.rank ? x.rank.wins + x.rank.losses : 0;
   const wr = games ? Math.round(x.rank.wins / games * 100) : null;
-  const name = x.hidden ? '<span class="faint">Joueur masqué</span>' : `<b>${esc(x.gameName)}</b><span class="faint">#${esc(x.tagLine)}</span>`;
+  const name = x.bot ? '<span class="faint">Bot</span>' : x.hidden ? '<span class="faint">Joueur masqué</span>' : `<b>${esc(x.gameName)}</b><span class="faint">#${esc(x.tagLine)}</span>`;
   const cells = [
     `<div class="lv-champ">${x.champion ? img(x.champion, 'lv-cimg') : '<span class="lv-cimg"></span>'}${perkImg(x.keystone, 'lv-key')}</div>`,
     `<div class="lv-spells">${spellImg(x.spells[0])}${spellImg(x.spells[1])}</div>`,
     `<div class="lv-who"><div class="lv-name">${name}</div><div class="lv-cname">${x.champion ? champ(x.champion) : 'Champion inconnu'}${perkImg(x.subStyle, 'lv-sub')}${x.smurf ? `<span class="lv-smurf">smurf de ${esc(ownerName(x.playerId))}</span>` : ''}</div></div>`,
-    `<div class="lv-rank">${x.rank ? `<b>${esc(x.rank.label)}</b> <span class="muted">${x.rank.lp} LP</span><div class="small"><span class="${wr >= 50 ? 'ok' : 'red'}">${wr} %</span> <span class="faint">sur ${games} parties</span></div>` : '<span class="faint">Non classé</span>'}</div>`
+    `<div class="lv-rank">${x.bot ? '<span class="faint">—</span>' : x.rank ? `<b>${esc(x.rank.label)}</b> <span class="muted">${x.rank.lp} LP</span><div class="small"><span class="${wr >= 50 ? 'ok' : 'red'}">${wr} %</span> <span class="faint">sur ${games} parties</span></div>` : '<span class="faint">Non classé</span>'}</div>`
   ];
   return `<div class="lv-row ${x.playerId ? 'me' : ''} ${mirror ? 'mirror' : ''} ${end ? 'end' : ''}" ${x.playerId ? `data-action="open-player" data-id="${x.playerId}" data-tip="Ouvrir son tableau de bord"` : ''}>
     ${(mirror ? cells.reverse() : cells).join('')}
@@ -1549,7 +1549,7 @@ function liveCard(g) {
   return `<div class="lv-card">
     <div class="lv-head">
       <span class="pulse"></span>
-      <div><div class="lv-title">${title}</div><div class="muted small">Classée Solo/Duo · ${esc(g.platformId)} · ${started}</div></div>
+      <div><div class="lv-title">${title}</div><div class="muted small">${g.custom ? `<span class="chip accent lv-perso">Personnalisée</span> ${g.mode === 'ARAM' ? 'ARAM · ' : ''}` : 'Classée Solo/Duo · '}${esc(g.platformId)} · ${started}</div></div>
       <span class="spacer"></span>
       <div class="lv-clock" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</div>
       <button class="btn primary lv-watch" data-action="live-watch" data-id="${g.gameId}">${icon('play', 15)} Regarder</button>
@@ -1564,20 +1564,20 @@ function liveCard(g) {
       <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>${g.allies.map(x => liveRow(x)).join('')}</div>
       <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(enemySide)}"></span><b>Adversaires</b><span class="faint small">côté ${side(enemySide)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span></div>${g.enemies.map(x => liveRow(x)).join('')}</div>
     </div>`}
-    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}Regarder ouvre League of Legends en mode spectateur, avec 3 minutes de retard (règle de Riot pour les classées). Le jeu doit être installé et à jour sur cet ordinateur.</div>
+    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}${g.custom ? 'Partie personnalisée : Regarder ouvre League of Legends en mode spectateur si le salon autorise les spectateurs. Riot ne publie pas les statistiques des parties personnalisées : elles n\'apparaîtront pas dans « Parties ».' : 'Regarder ouvre League of Legends en mode spectateur, avec 3 minutes de retard (règle de Riot pour les classées).'} Le jeu doit être installé et à jour sur cet ordinateur.</div>
   </div>`;
 }
 function pageDirect() {
   const L = LIVE();
-  const head = '<h1>En direct</h1><div class="sub">Les parties classées Solo/Duo en cours de tes joueurs, avec leurs adversaires. Vérification automatique chaque minute.</div>';
+  const head = '<h1>En direct</h1><div class="sub">Les parties classées Solo/Duo et personnalisées en cours de tes joueurs, avec leurs adversaires. Vérification automatique chaque minute.</div>';
   if (!L || !L.enabled) return head + `<div class="empty">Ajoute ta clé API Riot dans Paramètres › Général pour voir les parties en direct.</div>`;
   const games = L.games || [];
   const status = `<div class="lv-status"><span class="dot ${L.error ? 'err' : 'on'}"></span><span>${L.error ? 'Dernière vérification impossible : ' + esc(L.error) : L.checkedAt ? 'Vérifié ' + esc(ago(L.checkedAt)) : 'Première vérification en cours…'}</span><span class="spacer"></span><button class="btn" data-action="live-refresh">${icon('sync', 15)} Vérifier maintenant</button></div>`;
   const playing = new Set(games.flatMap(g => g.playerIds));
   const idle = D().players.filter(p => !playing.has(p.id));
-  const idleList = idle.length && games.length ? `<h2>${icon('players', 17)} Pas en partie classée</h2><div class="lv-idle">${idle.map(p => `<span class="chip" data-action="open-player" data-id="${p.id}">${esc(gameName(p))}</span>`).join('')}</div>` : '';
+  const idleList = idle.length && games.length ? `<h2>${icon('players', 17)} Pas en partie</h2><div class="lv-idle">${idle.map(p => `<span class="chip" data-action="open-player" data-id="${p.id}">${esc(gameName(p))}</span>`).join('')}</div>` : '';
   return head + status + (games.length ? games.map(liveCard).join('')
-    : `<div class="empty lv-empty">${icon('radio', 26)}<b>Aucun de tes joueurs n'est en partie classée Solo/Duo.</b><span>Dès que l'un d'eux lance une partie, elle s'affiche ici avec ses adversaires (et tu reçois une notification).</span></div>`) + idleList;
+    : `<div class="empty lv-empty">${icon('radio', 26)}<b>Aucun de tes joueurs n'est en partie classée Solo/Duo ou personnalisée.</b><span>Dès que l'un d'eux lance une partie, elle s'affiche ici avec ses adversaires (et tu reçois une notification).</span></div>`) + idleList;
 }
 
 const PAGES = { accueil: pageAccueil, direct: pageDirect, analyses: pageAnalyses, dashboard: pageDashboard, parties: pageParties, seances: pageSeances, objectifs: pageObjectifs, joueurs: pageJoueurs, parametres: pageParametres };

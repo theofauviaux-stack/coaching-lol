@@ -502,6 +502,7 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .an-claude b { color: var(--text); }
 .an-claude .btn { flex: none; }
 .table td.an-del { width: 44px; text-align: right; }
+.lv-perso { font-size: 10.5px; padding: 1px 7px; vertical-align: 1px; }
 .table td.an-del .icon-btn { opacity: .55; }
 .table tr:hover td.an-del .icon-btn { opacity: 1; }
 .an-reply textarea { flex: 1; resize: vertical; min-height: 40px; }

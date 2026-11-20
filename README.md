@@ -30,9 +30,9 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - Le joueur retrouve la séance chez lui (rappel « Fiche à remplir » sur son accueil), fait les exercices puis remplit sa fiche : scores, ressenti, ce qu'il retient. Le coach la voit dans la séance et reçoit une notification.
 - Les fiches passent par la base en ligne (table `reports`) : un joueur ne peut écrire que dans ses propres fiches.
 
-## En direct (parties classées en cours)
+## En direct (parties classées et personnalisées en cours)
 
-- Page « En direct » (coach, sur son ordinateur) : chaque minute, l'app demande à l'API Riot (spectator-v5) si un joueur suivi est en partie. Seules les classées Solo/Duo (file 420) sont affichées, avec les deux équipes : champions, pseudos, rang Solo/Duo (gardé 30 min), sorts, runes, bans et chrono.
+- Page « En direct » (coach, sur son ordinateur) : chaque minute, l'app demande à l'API Riot (spectator-v5) si un joueur suivi est en partie. Sont affichées les classées Solo/Duo (file 420) et, depuis la 1.6.11, les parties personnalisées (`gameType` « CUSTOM_GAME », file 0 ; étiquette « Personnalisée », notification « Partie personnalisée en cours », bots affichés « Bot ») ; les autres files (normales, ARAM, Flex) sont ignorées. Une personnalisée ne se regarde que si le salon autorise les spectateurs, et Riot ne publie pas ses statistiques ensuite (elle n'entre pas dans « Parties »). Chaque partie est affichée avec les deux équipes : champions, pseudos, rang Solo/Duo (gardé 30 min), sorts, runes, bans et chrono.
 - Les deux équipes sont face à face, poste par poste (top contre top, jungle contre jungle…). Riot ne donne pas les postes pendant la partie : ils sont devinés d'après la part de chaque poste pour le champion (table Meraki Analytics, relue chaque jour, copie dans `src/role-rates.json`), le Châtiment (jungle), les autres sorts et le rôle coaché de nos joueurs.
 - Pastille « En partie » sur l'accueil, compteur dans le menu, notification quand une partie commence. Quand elle se termine, le rang est relevé 2 min plus tard (LP de la partie au plus juste).
 - Smurfs : dans la fiche d'un joueur (Joueurs › Modifier), un pseudo par ligne. Ils sont surveillés comme le compte principal sur la page En direct (étiquette « smurf de … »), mais leurs parties n'entrent pas dans les stats. Ils ne partent pas sur le serveur en ligne.
