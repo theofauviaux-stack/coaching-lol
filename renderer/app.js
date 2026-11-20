@@ -219,6 +219,7 @@ function render() {
   if (!d) return;
   hideTip();
   if (d.locked) {
+    state.shown = null; // après la connexion, la page sera recréée (avec son animation d'entrée)
     $('#app').classList.add('hidden');
     closeDrawer(true); closeModal();
     $('#login').classList.remove('hidden');
@@ -226,6 +227,7 @@ function render() {
     return;
   }
   $('#login').classList.add('hidden');
+  if ($('#login').firstChild) $('#login').innerHTML = '';
   $('#app').classList.remove('hidden');
   if (d.session.role === 'joueur') state.playerId = d.session.playerId;
   if (state.playerId && !player()) state.playerId = null;
@@ -235,7 +237,14 @@ function render() {
   renderSidebar();
   renderTopbar();
   const focus = rememberFocus();
-  $('#page').innerHTML = `<div class="wrap">${PAGES[state.page]()}</div>`;
+  const html = `<div class="wrap">${PAGES[state.page]()}</div>`;
+  const view = [state.page, state.playerId, state.settingsTab].join('|');
+  if (!state.shown || state.shown.view !== view || !$('#page .wrap')) {
+    $('#page').innerHTML = html; // nouvelle page : on la crée (petite animation d'entrée)
+  } else {
+    morph($('#page'), html); // même page, nouvelles données : on ne touche qu'à ce qui a changé
+  }
+  state.shown = { view };
   window.api.uiState({ page: state.page, playerId: state.playerId, settingsTab: state.settingsTab, period: state.period });
   restoreFocus(focus);
   if (state.drawer) renderDrawer();
@@ -255,7 +264,62 @@ function restoreFocus(f) {
   try { el.setSelectionRange(f.start, f.end); } catch (e) { /* champ sans curseur */ }
 }
 function hookImages() {
-  document.querySelectorAll('img').forEach(i => i.addEventListener('error', () => { i.style.visibility = 'hidden'; }, { once: true }));
+  document.querySelectorAll('img').forEach(i => {
+    if (!i.dataset.hk) { i.dataset.hk = '1'; i.addEventListener('error', () => { i.style.visibility = 'hidden'; }); }
+    if (i.complete && i.getAttribute('src') && !i.naturalWidth) i.style.visibility = 'hidden';
+  });
+}
+
+// Mise à jour « sans saut » : au lieu de tout recréer (images rechargées, animation d'entrée rejouée,
+// survol perdu), on compare le nouveau contenu à l'ancien et on ne modifie que ce qui a changé.
+function morph(el, html) {
+  const next = document.createElement('div');
+  next.innerHTML = html;
+  morphChildren(el, next);
+}
+function nodeKey(n) {
+  if (n.nodeType !== 1) return null;
+  if (n.id) return '#' + n.id;
+  const k = n.getAttribute('data-id') || n.getAttribute('data-page') || n.getAttribute('data-mid');
+  return k ? n.tagName + '|' + (n.getAttribute('data-action') || '') + '|' + k : null;
+}
+function morphChildren(cur, next) {
+  const old = Array.from(cur.childNodes);
+  const keyed = new Map();
+  for (const n of old) { const k = nodeKey(n); if (k) { if (!keyed.has(k)) keyed.set(k, []); keyed.get(k).push(n); } }
+  const used = new Set();
+  let ptr = 0;
+  const wanted = Array.from(next.childNodes);
+  wanted.forEach((y, i) => {
+    const k = nodeKey(y);
+    let x = null;
+    if (k) {
+      const q = keyed.get(k);
+      while (q && q.length && !x) { const c = q.shift(); if (!used.has(c)) x = c; }
+    } else {
+      while (ptr < old.length && (used.has(old[ptr]) || nodeKey(old[ptr]))) ptr++;
+      const c = old[ptr];
+      if (c && c.nodeType === y.nodeType && (c.nodeType !== 1 || c.tagName === y.tagName)) { x = c; ptr++; }
+    }
+    const at = cur.childNodes[i] || null;
+    if (!x) { cur.insertBefore(y, at); return; }
+    used.add(x);
+    if (x !== at) cur.insertBefore(x, at);
+    morphNode(x, y);
+  });
+  while (cur.childNodes.length > wanted.length) cur.removeChild(cur.lastChild);
+}
+function morphNode(x, y) {
+  if (x.nodeType !== 1) { if (x.nodeValue !== y.nodeValue) x.nodeValue = y.nodeValue; return; }
+  for (const a of Array.from(x.attributes)) if (!y.hasAttribute(a.name) && a.name !== 'data-hk') x.removeAttribute(a.name);
+  for (const a of Array.from(y.attributes)) if (x.getAttribute(a.name) !== a.value) x.setAttribute(a.name, a.value);
+  const tag = x.tagName;
+  if (tag === 'TEXTAREA') { if (x.value !== y.value) x.value = y.value; return; }
+  morphChildren(x, y);
+  if (tag === 'INPUT') {
+    if (x.type === 'checkbox' || x.type === 'radio') x.checked = y.checked;
+    else if (x.value !== y.value) x.value = y.value;
+  } else if (tag === 'SELECT' && x.value !== y.value) x.value = y.value;
 }
 const isTyping = () => {
   const a = document.activeElement;
@@ -278,13 +342,13 @@ function renderLogin() {
   let msg = state.loginMsg;
   if (!msg && d.blockedMs) msg = 'Trop d\'essais. Réessaie dans ' + Math.ceil(d.blockedMs / 1000) + ' s.';
   const foot = !d.coachMachine && !d.cloudConfigured ? 'Cet ordinateur n\'est relié à aucun coach.' : 'Coaching LoL · version ' + esc(d.appVersion);
-  $('#login').innerHTML = `<div class="login-card">
+  morph($('#login'), `<div class="login-card">
     <div class="logo">${brandLogo(54, 'Coaching LoL')}</div>
     <h1>${title}</h1><div class="sub">${sub}</div>
     <div class="boxes ${state.shake ? 'shake' : ''}">${boxes}</div>
     <div class="login-msg ${msg ? '' : 'info'}">${state.busy ? '<span class="spinner"></span>' : esc(msg)}</div>
     <div class="keypad">${keys}</div>
-    <div class="login-foot">${foot}</div></div>`;
+    <div class="login-foot">${foot}</div></div>`);
 }
 
 function pressKey(k) {
@@ -359,14 +423,14 @@ function renderSidebar() {
   const who = coach
     ? `<div class="avatar">${icon('crown', 16)}</div><div class="who"><b>Coach</b><small>${canEdit() ? 'Tous les joueurs' : 'Lecture seule'}</small></div>`
     : `<div class="avatar">${me ? esc(initials(gameName(me))) : '?'}</div><div class="who"><b>${me ? esc(me.riotId) : 'Joueur'}</b><small>${me ? esc(me.role) : ''}</small></div>`;
-  $('#sidebar').innerHTML = `
+  morph($('#sidebar'), `
     <div class="brand"><div class="logo">${brandLogo(32)}</div><div class="txt"><div class="name">Coaching LoL</div><div class="tag">${coach ? 'Espace coach' : 'Espace joueur'}</div></div>
       <button class="collapse" data-action="collapse" title="Réduire le menu">${icon('chevron', 14)}</button></div>
     ${nav}
     <div class="bottom">
       <div class="profile">${who}<button class="icon-btn" data-action="logout" title="Changer de profil">${icon('logout', 17)}</button></div>
       <div class="version">Version ${esc(d.appVersion)}</div>
-    </div>`;
+    </div>`);
 }
 
 function renderTopbar() {
@@ -387,8 +451,8 @@ function renderTopbar() {
   } else if (bk && (bk.mine || []).some(b => b.status === 'en_cours')) {
     live = '<div class="live"><span class="pulse"></span>En coaching</div>';
   }
-  $('#topbar').innerHTML = `<div class="crumbs">Coaching LoL ${icon('chevron', 14)} <b>${esc(pg ? pg.label : '')}</b>${perPlayer && p && isCoach() ? ` ${icon('chevron', 14)} ${esc(p.riotId)}` : ''}</div>
-    <span class="spacer"></span>${live}${ro}${sw}`;
+  morph($('#topbar'), `<div class="crumbs">Coaching LoL ${icon('chevron', 14)} <b>${esc(pg ? pg.label : '')}</b>${perPlayer && p && isCoach() ? ` ${icon('chevron', 14)} ${esc(p.riotId)}` : ''}</div>
+    <span class="spacer"></span>${live}${ro}${sw}`);
 }
 
 // ======================================================================== ACCUEIL
@@ -627,7 +691,7 @@ function renderDrawer() {
        ${g.objectiveMet === true || g.objectiveMet === false ? `<label>Objectif de la partie</label><div>${g.objectiveMet ? 'Atteint' : 'Pas atteint'}</div>` : ''}
        ${g.comment ? `<label>Commentaire du coach</label><div class="note">${esc(g.comment)}</div>` : ''}
        ${!g.mental && !g.comment && g.objectiveMet !== true && g.objectiveMet !== false ? '<div class="muted small">Pas encore de commentaire du coach sur cette partie.</div>' : ''}`;
-  $('#drawer').innerHTML = `<div class="row"><span class="chip ${g.win ? 'accent' : 'red'}">${g.win ? 'Victoire' : 'Défaite'}</span><span class="muted small">${dateTimeFr(g.date)} · ${g.duration} min</span><span class="spacer"></span><button class="icon-btn" data-action="close-drawer">${icon('close', 18)}</button></div>
+  morph($('#drawer'), `<div class="row"><span class="chip ${g.win ? 'accent' : 'red'}">${g.win ? 'Victoire' : 'Défaite'}</span><span class="muted small">${dateTimeFr(g.date)} · ${g.duration} min</span><span class="spacer"></span><button class="icon-btn" data-action="close-drawer">${icon('close', 18)}</button></div>
     <div class="game-head">${img(g.champion, '')}<div><h2 style="margin:0">${champ(g.champion)}</h2><div class="muted small">${esc(g.role)} · côté ${esc(g.side || '?')} · niveau ${g.level || '?'}</div></div><span class="spacer"></span>
       ${g.opponent ? `<div class="vs" style="text-align:center"><div class="faint tiny">contre</div>${img(g.opponent, '')}<div class="small">${champ(g.opponent)}</div></div>` : ''}</div>
     ${(edit && isCoach()) || isPlayerSpace() ? `<button class="btn primary mo-open" data-action="moments" data-id="${esc(g.matchId)}">${icon('target', 15)} Moments clés de la partie</button>` : ''}
@@ -638,7 +702,7 @@ function renderDrawer() {
       ${cell('Vision', `${g.vision} <span class="muted small">(${Stats.fmt(M['Vision/min'](g), 'dec2')}/min)</span>`)}${cell('Wards posées / détruites', `${g.wardsPlaced ?? '—'} / ${g.wardsKilled ?? '—'}`)}${cell('Pinks', g.pinks ?? '—')}
       ${cell('Dégâts/min', Stats.fmt(M['Dégâts/min'](g), 'int'))}${cell('Or/min', Stats.fmt(M['Or/min'](g), 'int'))}${cell('LP', lpCell(g))}
     </div>
-    <h2>Suivi</h2>${suivi}`;
+    <h2>Suivi</h2>${suivi}`);
   $('#drawer').classList.remove('hidden');
   $('#drawer-back').classList.remove('hidden');
   hookImages();

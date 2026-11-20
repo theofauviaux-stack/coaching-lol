@@ -95,6 +95,22 @@ module.exports = async function ({ app, win, fs, path }) {
     await js(`[...document.querySelectorAll('.lv-card')].find(x => x.textContent.includes('smurf')).scrollIntoView({ block: 'start' }); 0`);
     await shot('l6c-en-direct-smurf');
     await js(`document.querySelector('#page').scrollTop = 0; 0`);
+    // nouvelles données (synchro) sur la même page : rien n'est recréé, seul ce qui change bouge (pas de saut)
+    await js(`state.page = 'accueil'; render(); 0`);
+    await wait(500);
+    await js(`window.__n = { wrap: document.querySelector('#page .wrap'), row: document.querySelector('#page .row-link'), img: document.querySelector('#page img'), logo: document.querySelector('#sidebar .brand-logo'), nav: document.querySelector('#sidebar .nav.active') }; 0`);
+    const avant = await js(`JSON.parse(JSON.stringify(state.data))`);
+    const apres = JSON.parse(JSON.stringify(avant));
+    apres.players[0].riotId = 'Renommé Pendant#SYNC';
+    win.webContents.send('data:changed', apres);
+    await wait(600);
+    out.stable = await js(`({ wrap: document.querySelector('#page .wrap') === __n.wrap, img: !__n.img || document.querySelector('#page img') === __n.img || document.contains(__n.img),
+      logo: document.querySelector('#sidebar .brand-logo') === __n.logo, nav: document.querySelector('#sidebar .nav.active') === __n.nav,
+      lignes: !!__n.row && document.contains(__n.row),
+      nom: document.querySelector('#page').textContent.includes('Renommé Pendant') })`);
+    win.webContents.send('data:changed', avant);
+    await wait(400);
+    out.stableRetour = await js(`({ wrap: document.querySelector('#page .wrap') === __n.wrap, nom: !document.querySelector('#page').textContent.includes('Renommé Pendant') })`);
     // la partie de Kioga et HaveHope se termine ; Uawawa lance une partie (notification)
     await js(`state.page = 'direct'; render(); 0`);
     await riot('/__fin');

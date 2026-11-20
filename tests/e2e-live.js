@@ -157,6 +157,8 @@ exit 1
   const r = JSON.parse(fs.readFileSync(path.join(DIR, 'resultat.json'), 'utf8'));
   assert.ok(!r.exception, r.exception);
   assert.strictEqual(r.parties, 2, 'deux parties classées : l\'ARAM de Questinou est ignorée');
+  assert.deepStrictEqual(r.stable, { wrap: true, img: true, logo: true, nav: true, lignes: true, nom: true }, 'mise à jour sans recréer la page : ' + JSON.stringify(r.stable));
+  assert.deepStrictEqual(r.stableRetour, { wrap: true, nom: true });
   assert.deepStrictEqual(r.pastilles.sort(), ['HaveHope#305', 'UCE KasKet#BOMBA', 'UCE Kioga#EUWWW'], 'pastille « En partie » sur l\'accueil');
   assert.strictEqual(r.badge, '2');
   assert.strictEqual(r.cartes.length, 2);
