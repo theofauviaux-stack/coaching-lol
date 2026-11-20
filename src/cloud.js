@@ -98,6 +98,7 @@ class CloudClient {
   coachAnalysisGet(key, id) { return this.rpc('coach_analysis_get', { p_key: key, p_id: id }); }
   coachAnalysisComment(key, id, t, text) { return this.rpc('coach_analysis_comment', { p_key: key, p_id: id, p_t: t, p_text: text }); }
   coachAnalysisClose(key, id) { return this.rpc('coach_analysis_close', { p_key: key, p_id: id }); }
+  coachAnalysisDelete(key, id) { return this.rpc('coach_analysis_delete', { p_key: key, p_id: id }); }
   coachClipsPurge(key) { return this.rpc('coach_clips_purge', { p_key: key }); }
   coachClipsGone(key, id) { return this.rpc('coach_clips_gone', { p_key: key, p_id: id }); }
   momentsGet(token, matchId) { return this.rpc('moments_get', { p_token: token, p_match: matchId }); }

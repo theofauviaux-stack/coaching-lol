@@ -167,6 +167,30 @@ const { prepareDb, storageOp } = require('./fake-supabase');
   assert.deepStrictEqual((await r(`coach_clips_purge($1)`, [KEY])).purge.map(x => x.id), [d.id]);
   assert.strictEqual((await r(`analysis_comment($1, $2, null, 'toujours ouverte')`, [t1, d.id])).ok, true);
 
+  // --- suppression par le coach : l'analyse disparaît des deux côtés, messages tout de suite, vidéos puis ligne par la purge
+  const s1 = await create(t1);
+  for (const f of clips) await upload(s1.id + '/' + f.file);
+  await r(`analysis_ready($1, $2)`, [t1, s1.id]);
+  await r(`coach_analysis_comment($1, $2, null, 'à supprimer')`, [KEY, s1.id]);
+  assert.strictEqual((await r(`coach_analysis_delete('mauvais', $1)`, [s1.id])).error, 'jeton_inconnu');
+  const sd = await r(`coach_analysis_delete($1, $2)`, [KEY, s1.id]);
+  assert.deepStrictEqual([sd.ok, sd.clipsState, sd.files], [true, 'a_effacer', ['01_6m10.webm', '02_8m40.webm']]);
+  assert.ok(!(await r(`coach_analyses($1)`, [KEY])).analyses.some(x => x.id === s1.id), 'plus dans la liste du coach');
+  assert.ok(!(await r(`analyses_mine($1)`, [t1])).analyses.some(x => x.id === s1.id), 'plus dans la liste du joueur');
+  assert.strictEqual(Number((await one(`select count(*) as n from analysis_comments where analysis_id = $1`, [s1.id])).n), 0, 'messages effacés');
+  assert.strictEqual((await r(`analysis_comment($1, $2, null, 'encore ?')`, [t1, s1.id])).error, 'analyse_fermee');
+  pg = (await r(`coach_clips_purge($1)`, [KEY])).purge;
+  const ps = pg.find(x => x.id === s1.id);
+  await del(ps.files.map(f => s1.id + '/' + f));
+  assert.ok(![...files.keys()].some(k => k.includes(s1.id)), 'vidéos effacées du stockage');
+  await r(`coach_clips_gone($1, $2)`, [KEY, s1.id]);
+  assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [s1.id])).n), 0, 'analyse supprimée');
+  // vidéos déjà effacées : suppression immédiate ; analyse inconnue : erreur
+  await db.query(`update analyses set clips_state = 'effacees' where id = $1`, [d.id]);
+  assert.deepStrictEqual((await r(`coach_analysis_delete($1, $2)`, [KEY, d.id])).files, []);
+  assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [d.id])).n), 0);
+  assert.strictEqual((await r(`coach_analysis_delete($1, $2)`, [KEY, d.id])).error, 'analyse_inconnue');
+
   // --- fonctions internes fermées au public
   for (const f of ['_analysis_json', '_comment_add']) {
     const g = await one(`select has_function_privilege('anon', p.oid, 'execute') as ok from pg_proc p where proname = $1`, [f]);

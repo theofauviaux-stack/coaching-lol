@@ -501,6 +501,9 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .an-claude > div { flex: 1; }
 .an-claude b { color: var(--text); }
 .an-claude .btn { flex: none; }
+.table td.an-del { width: 44px; text-align: right; }
+.table td.an-del .icon-btn { opacity: .55; }
+.table tr:hover td.an-del .icon-btn { opacity: 1; }
 .an-reply textarea { flex: 1; resize: vertical; min-height: 40px; }
 .sd-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; max-height: 52vh; overflow-y: auto; }
 .sd-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; }

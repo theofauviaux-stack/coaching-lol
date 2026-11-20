@@ -199,6 +199,27 @@ module.exports = async function ({ app, win, fs, path }) {
       lo.envoi = (await toasts()).find(t => /envoyée au coach/.test(t));
       await shot('a10-joueur-sur-ordi-coach');
       out.local = lo;
+      // le coach supprime cette 2e analyse : elle disparaît, messages et vidéos effacés, dossier pour Claude retiré
+      await js(`closeModal(); document.querySelector('[data-action="logout"]').click(); 0`);
+      await until(`state.data.locked`, 10000);
+      await type('4821');
+      await until(`state.data.coach && state.data.analyses && state.data.analyses.list.length === 1 && state.data.analyses.list[0].status === 'ouverte'`, 60000);
+      const sup = { note: await js(`state.data.analyses.list[0].note`) };
+      const id8 = (await js(`state.data.analyses.list[0].id`)).slice(0, 8);
+      for (const t0 = Date.now(); !fs.readdirSync(cdir).some(n => n.endsWith('[' + id8 + ']')) && Date.now() - t0 < 30000;) await wait(300);
+      sup.dossierAvant = fs.readdirSync(cdir).some(n => n.endsWith('[' + id8 + ']'));
+      await js(`state.page = 'analyses'; render(); 0`);
+      await wait(500);
+      sup.boutons = await js(`document.querySelectorAll('.table [data-action="an-delete"]').length`);
+      await js(`document.querySelector('.table [data-action="an-delete"]').click(); 0`);
+      try { await until(`state.data.analyses.list.length === 0`, 20000); } catch (e) { throw new Error(e.message + ' ; messages : ' + JSON.stringify((await toasts()).slice(-3))); }
+      await until(`window.__toasts.some(t => /Analyse supprimée/.test(t))`, 10000);
+      sup.message = (await toasts()).find(t => /Analyse supprimée/.test(t));
+      sup.dossierApres = fs.readdirSync(cdir).some(n => n.endsWith('[' + id8 + ']'));
+      sup.vide = await js(`document.querySelector('.empty') ? document.querySelector('.empty').textContent.trim() : ''`);
+      await shot('a11-apres-suppression');
+      await wait(4000); // purge des vidéos sur le serveur
+      out.suppression = sup;
     }
   } catch (e) {
     out.exception = e.stack || String(e);

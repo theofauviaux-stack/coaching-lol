@@ -760,8 +760,9 @@ function momentsButtons(S) {
   if (!m || S.loading) return '';
   if (S.mode === 'analysis') {
     if (S.me === 'coach') {
-      return S.analysis.status === 'ouverte'
-        ? `<button class="btn" data-action="an-close" data-tip="Ferme la discussion ; le joueur pourra exporter vidéos + débrief sur son ordinateur">${icon('check', 15)} Terminer l'analyse</button>` : '';
+      return (S.analysis.status === 'ouverte'
+        ? `<button class="btn" data-action="an-close" data-tip="Ferme la discussion ; le joueur pourra exporter vidéos + débrief sur son ordinateur">${icon('check', 15)} Terminer l'analyse</button>` : '')
+        + `<button class="icon-btn" data-action="an-delete" data-id="${esc(S.analysis.id)}" data-tip="Supprimer l'analyse (discussion et vidéos), pour toi et pour le joueur">${icon('trash', 16)}</button>`;
     }
     return S.analysis.status === 'terminee' && !S.xstatus
       ? `<button class="btn primary" data-action="an-export" data-tip="Enregistre les vidéos et le débrief dans un dossier de ton ordinateur, puis supprime l'analyse de l'app">${icon('download', 15)} Exporter sur mon ordinateur</button>` : '';
@@ -1028,7 +1029,9 @@ async function analysisLiveUpdate() {
   const S = state.moments;
   if (!momentsOpen() || S.mode !== 'analysis' || !S.analysis || S.refreshing) return;
   const a = D().analyses && D().analyses.list.find(x => x.id === S.analysis.id);
+  if (!a && S.deleting) return;
   if (!a && D().analyses && D().analyses.loaded && !S.xstatus && S.me === 'coach') { closeModal(); toast('Le joueur a exporté cette analyse sur son ordinateur : elle est supprimée de l\'app.', 'ok', 8000); return; }
+  if (!a && D().analyses && D().analyses.loaded && !S.xstatus && S.me === 'joueur') { closeModal(); toast('Le coach a supprimé cette analyse.', 'ok', 8000); return; }
   if (!a || (a.comments.length === S.analysis.comments.length && a.status === S.analysis.status)) return;
   S.refreshing = true;
   const r = await window.api.getAnalysis(S.analysis.id);
@@ -1063,7 +1066,8 @@ function pageAnalyses() {
       <td class="l muted">${dateTimeFr(a.createdAt)}</td>
       <td>${a.clipsState === 'en_ligne' ? nV + ' ' + icon('video', 13, 'muted') : '<span class="faint">effacées</span>'}</td>
       <td>${a.comments.length + (a.note ? 1 : 0)} ${icon('chat', 13, 'muted')}</td>
-      <td><span class="chip ${cls}">${txt}</span>${C && C.ready[a.id] ? ` <span class="chip accent" data-tip="Claude a proposé des réponses : elles t'attendent en brouillon">${icon('sparkles', 12)} Claude</span>` : ''}</td></tr>`;
+      <td><span class="chip ${cls}">${txt}</span>${C && C.ready[a.id] ? ` <span class="chip accent" data-tip="Claude a proposé des réponses : elles t'attendent en brouillon">${icon('sparkles', 12)} Claude</span>` : ''}</td>
+      ${coach ? `<td class="an-del"><button class="icon-btn" data-action="an-delete" data-id="${esc(a.id)}" title="Supprimer l'analyse" aria-label="Supprimer l'analyse">${icon('trash', 15)}</button></td>` : ''}</tr>`;
   }).join('');
   const intro = coach
     ? 'Parties envoyées par les joueurs : regarde leurs vidéos et réponds sur chaque moment. « Terminer l\'analyse » garde la discussion et efface les vidéos du serveur.'
@@ -1074,7 +1078,7 @@ function pageAnalyses() {
       ${C.error ? `<div class="red small" style="margin-top:4px">${esc(C.error)}</div>` : ''}</div><button class="btn" data-action="claude-folder">${icon('folder', 15)} Ouvrir le dossier</button></div>` : '';
   return `<h1>Analyses</h1><div class="sub">${intro}</div>
     ${A.error ? `<div class="note" style="margin-bottom:12px">${icon('alert', 14)} ${esc(A.error)}</div>` : ''}${claudeBox}
-    ${rows ? `<table class="table"><tr>${coach ? '<th class="l">Joueur</th>' : ''}<th class="l">Partie</th><th class="l">Envoyée le</th><th>Vidéos</th><th>Messages</th><th>Statut</th></tr>${rows}</table>`
+    ${rows ? `<table class="table"><tr>${coach ? '<th class="l">Joueur</th>' : ''}<th class="l">Partie</th><th class="l">Envoyée le</th><th>Vidéos</th><th>Messages</th><th>Statut</th>${coach ? '<th></th>' : ''}</tr>${rows}</table>`
       : `<div class="empty">${A.loaded ? (coach ? 'Aucune partie envoyée pour l\'instant.' : 'Tu n\'as pas encore envoyé de partie.') : '<span class="spinner"></span> Chargement…'}</div>`}`;
 }
 
@@ -1806,6 +1810,21 @@ document.addEventListener('click', async e => {
       if (S.fromClaude) S.fromClaude[S.sel] = false;
       setAnalysis(r);
       updateAnalysisParts();
+      break;
+    }
+    case 'an-delete': {
+      const id = el.dataset.id;
+      const a = D().analyses && D().analyses.list.find(x => x.id === id);
+      const pl = a && (D().players || []).find(p => p.id === a.playerId);
+      if (!id || !confirm('Supprimer l\'analyse' + (a ? ' « ' + a.label + ' »' + (pl ? ' de ' + gameNameOf(pl.riotId) : '') : '') + ' ?\n\nLa discussion et les vidéos sont effacées, pour toi et pour le joueur. C\'est définitif.')) break;
+      const S = state.moments;
+      const inside = !!(S && S.analysis && S.analysis.id === id && momentsOpen());
+      if (inside) S.deleting = true;
+      el.disabled = true;
+      const r = await window.api.deleteAnalysis(id);
+      if (!r || !r.ok) { el.disabled = false; if (inside) S.deleting = false; toast(r ? r.message : 'Erreur inconnue.', 'err', 9000); break; }
+      if (inside) closeModal();
+      apply(r, 'Analyse supprimée : elle disparaît aussi chez le joueur.');
       break;
     }
     case 'an-ai-clear': {

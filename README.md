@@ -55,6 +55,8 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - Conditions côté joueur : client LoL ouvert et connecté, aucune partie en cours, replay disponible (patch en cours seulement, 10 téléchargements par heure chez Riot). Sur Mac, autoriser Coaching LoL dans Réglages Système › Confidentialité et sécurité › Enregistrement de l'écran (une fois : depuis la 1.6.2, l'app est signée avec une exigence d'identité fixe, `build/signer-mac.js`, et l'autorisation reste valable après les mises à jour).
 - Base : `supabase/analyses.sql` (à exécuter une fois dans le SQL Editor, relançable). Uniquement des API locales officielles de Riot (client et Replay API) : pas de lecture de la mémoire du jeu. Code : src/replay.js, renderer/recorder.*.
 
+Le coach peut **supprimer** une analyse (corbeille dans la liste « Analyses » ou dans la fenêtre de l'analyse) : elle disparaît chez lui et chez le joueur (prévenu), les messages sont effacés aussitôt et les vidéos par la purge (`coach_analysis_delete`, depuis la 1.6.10 : relancer `supabase/analyses.sql`).
+
 ### Analyses par Claude (sans API)
 
 Sur l'ordinateur du coach, chaque partie envoyée par un joueur est préparée dans `~/Coaching LoL/Analyses pour Claude/` (dossier personnel, hors iCloud) : un dossier par partie avec `a-analyser.json` (moments, vidéos, commentaires du joueur), `dossier.txt`, `partie.json` et `videos/`. À la racine : `methode-coach.md` (la méthode du coach, modifiable) et `LISEZ-MOI.txt`.

@@ -734,6 +734,7 @@ async function refreshAnalyses() {
         else if (old && fresh.length) notifyCoach(me === 'coach' ? 'Réponse de ' + playerName(a.playerId) : 'Réponse du coach', excerpt(fresh[fresh.length - 1].text));
         else if (old && me === 'joueur' && old.status !== 'terminee' && a.status === 'terminee') notifyCoach('Analyse terminée', 'Le coach a terminé l\'analyse de ' + gameLabel(a) + '.');
       }
+      if (me === 'joueur') for (const old of analyses.list) if (!list.some(a => a.id === old.id)) notifyCoach('Analyse supprimée', 'Le coach a supprimé l\'analyse de ' + gameLabel(old) + '.');
     }
     analyses.list = list;
     analyses.loaded = true;
@@ -785,6 +786,31 @@ async function closeAnalysis({ id }) {
   refreshView();
   purgeClips();
   return { ok: true, analysis: r.analysis };
+}
+// suppression par le coach : l'analyse disparaît chez lui et chez le joueur ; messages effacés aussitôt,
+// vidéos effacées par la purge (lancée tout de suite), dossier pour Claude retiré
+async function deleteAnalysis({ id }) {
+  requireEdit();
+  if (!cloud || !isCoachMachine()) throw new Error('La suppression se fait depuis l\'ordinateur du coach.');
+  const key = String(id || '');
+  try {
+    await cloud.coachAnalysisDelete(getPushToken(), key);
+  } catch (e) {
+    if (e.code === 'MISSING') throw new Error('Le serveur n\'est pas encore à jour pour la suppression : relance supabase/analyses.sql dans Supabase.');
+    if (!/n'existe plus/.test(e.message)) throw e;
+  }
+  analyses.list = analyses.list.filter(a => a.id !== key);
+  const all = readClaudeDrafts();
+  if (all[key]) { delete all[key]; writeClaudeDrafts(all); }
+  try {
+    const base = claudeDir();
+    const name = fs.existsSync(base) ? claudeFolders(base).get(key.slice(0, 8)) : null;
+    if (name) fs.rmSync(path.join(base, name), { recursive: true, force: true });
+  } catch (e) { /* dossier occupé : la prochaine passe retirera les vidéos */ }
+  delete claudeState.ready[key];
+  refreshView();
+  purgeClips();
+  return { ok: true, data: viewData() };
 }
 // vidéos à effacer du serveur (analyses terminées, plus de 30 jours, envois abandonnés)
 async function purgeClips() {
@@ -867,6 +893,7 @@ async function prepareClaudeFolder(base, a) {
   fs.writeFileSync(path.join(tmp, 'dossier.txt'), momentsMod.toText(m, { player: playerName(full.playerId), champName }));
   fs.writeFileSync(path.join(tmp, 'partie.json'), JSON.stringify(m, null, 1));
   fs.writeFileSync(path.join(tmp, claudeMod.MANIFEST), JSON.stringify(claudeMod.manifest(full, m, { playerName: playerName(full.playerId), label, champName }), null, 2));
+  if (!analyses.list.some(x => x.id === full.id && x.status === 'ouverte')) { fs.rmSync(tmp, { recursive: true, force: true }); return null; } // supprimée entre-temps
   fs.renameSync(tmp, path.join(base, name)); // le dossier n'apparaît qu'une fois complet
   return name;
 }
@@ -1430,11 +1457,21 @@ async function checkUpdatesNow() {
   }
 }
 
+// Réseau des mises à jour : d'abord la pile de Chromium (proxy, certificats et DNS du système, comme le navigateur),
+// sinon celle de Node. La cause précise d'un échec est gardée : « fetch failed » seul n'aide personne.
+const netReason = e => { const c = e && e.cause; return String((e && e.message) || 'erreur réseau') + (c && (c.code || c.message) ? ' (' + (c.code || c.message) + ')' : ''); };
+async function webFetch(url, opts = {}) {
+  try {
+    return await net.fetch(url, opts);
+  } catch (e1) {
+    try { return await fetch(url, opts); } catch (e2) { throw new Error('GitHub injoignable : ' + netReason(e1) + ' / ' + netReason(e2)); }
+  }
+}
 async function checkMacUpdate() {
   if (macUpdate.state === 'ready' || macUpdate.state === 'downloading') return;
   let info;
   try {
-    const res = await fetch(`https://github.com/${REPO}/releases/latest/download/latest-mac.yml`, { headers: { 'User-Agent': 'coaching-lol' } });
+    const res = await webFetch(`https://github.com/${REPO}/releases/latest/download/latest-mac.yml`, { headers: { 'User-Agent': 'coaching-lol' } });
     if (!res.ok) throw new Error('réponse ' + res.status);
     info = mu.parseLatestMacYml(await res.text());
   } catch (e) { return Object.assign(updateInfo, { state: 'error', error: e.message }); }
@@ -1445,7 +1482,7 @@ async function checkMacUpdate() {
   macUpdate.state = 'downloading'; macUpdate.version = info.version;
   Object.assign(updateInfo, { state: 'downloading', version: info.version, error: '' });
   try {
-    macUpdate.newApp = await mu.prepareUpdate({ repo: REPO, info, workDir: macWorkDir() });
+    macUpdate.newApp = await mu.prepareUpdate({ repo: REPO, info, workDir: macWorkDir(), fetchImpl: webFetch });
     macUpdate.state = 'ready';
     updateInfo.state = 'ready';
   } catch (e) {
@@ -1654,6 +1691,7 @@ function registerIpc() {
   handle('analysis:send', q => sendAnalysis(q || {}));
   handle('analysis:comment', q => commentAnalysis(q || {}));
   handle('analysis:close', q => closeAnalysis(q || {}));
+  handle('analysis:delete', q => deleteAnalysis(q || {}));
   handle('analysis:export', q => exportAnalysis(q || {}));
   handle('claude:open', async () => { requireEdit(); fs.mkdirSync(claudeDir(), { recursive: true }); const e = await shell.openPath(claudeDir()); if (e) throw new Error(e); return { ok: true }; });
   handle('claude:dismiss', async q => { requireEdit(); claudeDraftUsed(String((q || {}).id || ''), (q || {}).t === null || (q || {}).t === undefined ? null : Number(q.t)); await syncClaudeFolder(); return { ok: true }; });

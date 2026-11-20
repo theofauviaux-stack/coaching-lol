@@ -187,6 +187,31 @@ begin
   return jsonb_build_object('ok', true, 'analysis', (select _analysis_json(a, false) from analyses a where a.id = p_id));
 end $$;
 
+-- suppression par le coach : l'analyse quitte les deux apps (même état qu'après un export), ses messages sont
+-- effacés tout de suite, ses vidéos par la purge de l'app du coach, puis la ligne elle-même (coach_clips_gone)
+create or replace function public.coach_analysis_delete(p_key text, p_id uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_a analyses;
+begin
+  if not public._coach_ok(p_key) then
+    return jsonb_build_object('error', 'jeton_inconnu');
+  end if;
+  update analyses set status = 'exportee', updated_at = now(),
+    clips_state = case when clips_state in ('envoi', 'en_ligne') then 'a_effacer' else clips_state end
+  where id = p_id
+  returning * into v_a;
+  if v_a.id is null then
+    return jsonb_build_object('error', 'analyse_inconnue');
+  end if;
+  delete from analysis_comments where analysis_id = p_id;
+  if v_a.clips_state = 'effacees' then
+    delete from analyses where id = p_id;
+  end if;
+  return jsonb_build_object('ok', true, 'clipsState', v_a.clips_state,
+    'files', case when v_a.clips_state = 'a_effacer' then (select coalesce(jsonb_agg(c->>'file'), '[]'::jsonb) from jsonb_array_elements(v_a.clips) c) else '[]'::jsonb end);
+end $$;
+
 -- vidéos à effacer : analyses terminées depuis 7 jours sans export, de plus de 30 jours, exportées, ou envois abandonnés
 create or replace function public.coach_clips_purge(p_key text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -400,7 +425,7 @@ declare f text;
 begin
   foreach f in array array[
     'coach_moments_push(text, jsonb)', 'coach_analyses(text)', 'coach_analysis_get(text, uuid)',
-    'coach_analysis_comment(text, uuid, int, text)', 'coach_analysis_close(text, uuid)', 'coach_clips_purge(text)',
+    'coach_analysis_comment(text, uuid, int, text)', 'coach_analysis_close(text, uuid)', 'coach_analysis_delete(text, uuid)', 'coach_clips_purge(text)',
     'coach_clips_gone(text, uuid)', 'moments_get(text, text)', 'analysis_create(text, jsonb)', 'analysis_ready(text, uuid)',
     'analyses_mine(text)', 'analysis_get(text, uuid)', 'analysis_comment(text, uuid, int, text)',
     'analysis_export_done(text, uuid)', 'analysis_forget(text, uuid)'] loop

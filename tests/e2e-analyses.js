@@ -197,16 +197,19 @@ function launch(phase, dataDir, env) {
   assert.strictEqual(rj.videosLocales, false, 'vidéos locales supprimées');
   assert.ok(/a exporté cette analyse/.test(rc.apresExport), rc.apresExport);
   const a = (await fake.db.query(`select id, status, clips_state, note, (select count(*) from analysis_comments c where c.analysis_id = analyses.id) as n from analyses order by created_at`)).rows;
-  assert.deepStrictEqual(a.map(x => [x.status, x.clips_state, Number(x.n)]), [['ouverte', 'en_ligne', 0]], '1re analyse supprimée du serveur après l\'export');
-  assert.ok([...fake.files.keys()].every(k => k.startsWith('clips/' + a[0].id + '/')), 'vidéos de la 1re analyse effacées du stockage');
+  assert.deepStrictEqual(a, [], '1re analyse supprimée après l\'export, 2e supprimée par le coach');
+  assert.strictEqual(fake.files.size, 0, 'toutes les vidéos effacées du stockage');
   // le joueur sur l'ordinateur du coach : moments, tournage, envoi, page Analyses
   assert.ok(rc.local.menu.includes('Analyses'), rc.local.menu.join(','));
   assert.deepStrictEqual(rc.local.liste, [], 'analyse exportée : plus dans la liste');
   assert.ok(rc.local.boutons.some(b => /Filmer les moments/.test(b)), rc.local.boutons.join(' | '));
   assert.ok(/4 extraits filmés/.test(rc.local.tournage), rc.local.tournage);
   assert.ok(/envoyée au coach/.test(rc.local.envoi), rc.local.envoi);
-  assert.strictEqual(a[0].note, 'Envoyée depuis l\'ordinateur du coach.');
-  assert.strictEqual(fake.files.size, 4);
+  assert.strictEqual(rc.suppression.note, 'Envoyée depuis l\'ordinateur du coach.');
+  // suppression par le coach
+  assert.deepStrictEqual([rc.suppression.boutons, rc.suppression.dossierAvant, rc.suppression.dossierApres], [1, true, false]);
+  assert.ok(/Analyse supprimée : elle disparaît aussi chez le joueur/.test(rc.suppression.message), rc.suppression.message);
+  assert.ok(/Aucune partie envoyée/.test(rc.suppression.vide), rc.suppression.vide);
   assert.strictEqual(fake.hits.uploads, 6);
   assert.ok(calls.match >= 2, 'moments calculés par l\'app du coach');
   fake.close();
