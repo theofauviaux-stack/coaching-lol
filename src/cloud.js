@@ -26,7 +26,9 @@ const ERREURS = {
   analyse_fermee: 'Cette analyse est terminée : la discussion est fermée.',
   commentaire_invalide: 'Message vide ou trop long (2 000 caractères au plus).',
   export_impossible: 'Cette analyse ne peut pas être exportée (pas encore terminée par le coach, ou déjà exportée).',
-  videos_restantes: 'Les vidéos ne sont pas encore effacées du serveur.'
+  videos_restantes: 'Les vidéos ne sont pas encore effacées du serveur.',
+  partie_invalide: 'Partie illisible : elle n\'a pas pu être envoyée.',
+  trop_de_parties: 'Trop de parties personnalisées en attente : ton coach doit d\'abord ouvrir son app pour les reprendre.'
 };
 
 // Adresse du projet et clé publique : publiques par conception (les tables sont fermées, seules
@@ -99,6 +101,9 @@ class CloudClient {
   coachAnalysisComment(key, id, t, text) { return this.rpc('coach_analysis_comment', { p_key: key, p_id: id, p_t: t, p_text: text }); }
   coachAnalysisClose(key, id) { return this.rpc('coach_analysis_close', { p_key: key, p_id: id }); }
   coachAnalysisDelete(key, id) { return this.rpc('coach_analysis_delete', { p_key: key, p_id: id }); }
+  customGameAdd(token, matchId, game, moments) { return this.rpc('custom_game_add', { p_token: token, p_match: matchId, p_game: game, p_moments: moments || null }); }
+  coachCustomGames(key) { return this.rpc('coach_custom_games', { p_key: key }); }
+  coachCustomGamesDone(key, list) { return this.rpc('coach_custom_games_done', { p_key: key, p: list }); }
   coachClipsPurge(key) { return this.rpc('coach_clips_purge', { p_key: key }); }
   coachClipsGone(key, id) { return this.rpc('coach_clips_gone', { p_key: key, p_id: id }); }
   momentsGet(token, matchId) { return this.rpc('moments_get', { p_token: token, p_match: matchId }); }

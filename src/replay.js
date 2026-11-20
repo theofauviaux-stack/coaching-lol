@@ -95,7 +95,7 @@ async function recordGame(io, job, opt = {}) {
   // 2. téléchargement du replay. Le client ne connaît le replay d'une partie qu'une fois sa fiche créée
   // (ce que fait l'historique des parties quand on l'ouvre) : on la crée, puis on suit son état.
   const meta = () => io.lcu('GET', `/lol-replays/v1/metadata/${job.gameId}`).catch(() => null);
-  const body = { gameId: job.gameId, gameType: 'MATCHED_GAME', queueId: job.queueId || 420, gameEnd: job.gameEnd || 0, gameVersion: job.gameVersion || '' };
+  const body = { gameId: job.gameId, gameType: job.gameType || 'MATCHED_GAME', queueId: typeof job.queueId === 'number' ? job.queueId : 420, gameEnd: job.gameEnd || 0, gameVersion: job.gameVersion || '' };
   const create = async () => {
     // ce que fait l'historique des parties du client quand on clique sur une partie
     await io.lcu('GET', `/lol-match-history/v1/games/${job.gameId}`).catch(() => null);

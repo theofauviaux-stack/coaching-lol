@@ -57,6 +57,10 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 
 Le coach peut **supprimer** une analyse (corbeille dans la liste « Analyses » ou dans la fenêtre de l'analyse) : elle disparaît chez lui et chez le joueur (prévenu), les messages sont effacés aussitôt et les vidéos par la purge (`coach_analysis_delete`, depuis la 1.6.10 : relancer `supabase/analyses.sql`).
 
+### Parties personnalisées (scrims)
+
+Riot ne donne pas les parties personnalisées par son API. Depuis la 1.6.13, le joueur les importe lui-même : Parties › « Partie perso » liste les personnalisées de l'historique de son client LoL (ouvert et connecté sur son compte, vérifié par `/lol-summoner/v1/current-summoner`). « Ajouter » lit la partie et sa chronologie dans le client (`/lol-match-history/v1/games/{id}` et `/game-timelines/{id}`, format v4), les convertit au format match-v5 (`src/custom.js` : postes, équipe du tueur des monstres, niveaux déduits des points de compétence) puis calcule la partie et ses moments clés comme pour une classée. Elle part sur le serveur (`custom_game_add`, `supabase/personnalisees.sql`) et reste affichée chez le joueur en attendant ; l'app du coach la reprend (`coach_custom_games`, toutes les 2 min), l'ajoute à ses parties avec ses moments clés, puis l'efface du serveur. Seules les parties sur la Faille de l'invocateur sont prises en charge. Elles sont marquées « Perso » et ne comptent ni dans les statistiques ni dans les LP ; on peut les filmer (replay de type CUSTOM_GAME) et les envoyer en analyse.
+
 ### Analyses par Claude (sans API)
 
 Sur l'ordinateur du coach, chaque partie envoyée par un joueur est préparée dans `~/Coaching LoL/Analyses pour Claude/` (dossier personnel, hors iCloud) : un dossier par partie avec `a-analyser.json` (moments, vidéos, commentaires du joueur), `dossier.txt`, `partie.json` et `videos/`. À la racine : `methode-coach.md` (la méthode du coach, modifiable) et `LISEZ-MOI.txt`.

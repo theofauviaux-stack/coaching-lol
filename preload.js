@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
   commentAnalysis: (id, t, text) => call('analysis:comment', { id, t, text }),
   closeAnalysis: id => call('analysis:close', { id }),
   deleteAnalysis: id => ipcRenderer.invoke('analysis:delete', { id }),
+  listCustomGames: () => call('custom:list'),
+  addCustomGame: gameId => call('custom:add', { gameId }),
   exportAnalysis: id => call('analysis:export', { id }),
   onExportStatus: cb => ipcRenderer.on('analysis:export', (e, v) => cb(v)),
   setLolPath: p => call('lol:path', { path: p }),

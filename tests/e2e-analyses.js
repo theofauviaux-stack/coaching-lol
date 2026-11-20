@@ -19,6 +19,7 @@ const partie = require('./fixtures/partie-moments')('P-UAWAWA');
 const calls = { match: 0, lcu: [], replay: [] };
 // comme le vrai client : pas de fiche replay tant qu'on ne l'a pas créée, puis « checking », puis « download »
 const rp = { state: null, polls: 0, checks: 0, watching: false, loading: 3, time: 0, selection: '' };
+const perso = require('./fixtures/lcu-v4')('P-UAWAWA', 7300000777);
 function startLol() {
   const srv = http.createServer((req, res) => {
     let raw = '';
@@ -27,6 +28,11 @@ function startLol() {
       const body = raw ? JSON.parse(raw) : null;
       const send = (code, b) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(b === undefined ? '' : JSON.stringify(b)); };
       if (req.url.startsWith('/lol/match/v5/matches/EUW1_7300000099')) { calls.match++; return send(200, req.url.endsWith('/timeline') ? partie.timeline : partie.match); }
+      // client LoL du joueur : compte connecté et historique (une partie personnalisée)
+      if (req.url === '/lol-summoner/v1/current-summoner') return send(200, { gameName: 'UCE Uawawa', tagLine: '000', puuid: 'P-UAWAWA' });
+      if (req.url.startsWith('/lol-match-history/v1/products/lol/current-summoner/matches')) return send(200, perso.list);
+      if (req.url === '/lol-match-history/v1/games/7300000777') return send(200, perso.game);
+      if (req.url === '/lol-match-history/v1/game-timelines/7300000777') return send(200, perso.timeline);
       if (req.url.startsWith('/lol-replays/')) {
         calls.lcu.push(req.method + ' ' + req.url);
         if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: true, isPatching: false });
@@ -121,8 +127,10 @@ function launch(phase, dataDir, env) {
 
   // moments sur le serveur : seulement les parties récentes, sans les vidéos locales
   const mom = (await fake.db.query(`select match_id, data from moments`)).rows;
-  assert.deepStrictEqual(mom.map(x => x.match_id), ['EUW1_7300000099']);
-  assert.ok(!('clips' in mom[0].data) && mom[0].data.moments.length > 5);
+  assert.deepStrictEqual(mom.map(x => x.match_id).sort(), ['EUW1_7300000099', 'EUW1_7300000777'], 'la classée (envoyée par le coach) et la partie perso (envoyée par le joueur)');
+  const m99 = mom.find(x => x.match_id === 'EUW1_7300000099');
+  assert.ok(!('clips' in m99.data) && m99.data.moments.length > 5);
+  assert.strictEqual(mom.find(x => x.match_id === 'EUW1_7300000777').data.custom, true);
   // joueur : menu, tournage, choix, envoi
   assert.ok(rj.menu.includes('Analyses'), rj.menu.join(','));
   assert.ok(rj.boutons.some(b => /Filmer les moments/.test(b)) && !rj.boutons.some(b => /Copier/.test(b)), rj.boutons.join(' | '));
@@ -198,6 +206,23 @@ function launch(phase, dataDir, env) {
   assert.ok(/a exporté cette analyse/.test(rc.apresExport), rc.apresExport);
   const a = (await fake.db.query(`select id, status, clips_state, note, (select count(*) from analysis_comments c where c.analysis_id = analyses.id) as n from analyses order by created_at`)).rows;
   assert.deepStrictEqual(a, [], '1re analyse supprimée après l\'export, 2e supprimée par le coach');
+  // partie personnalisée : importée par le joueur depuis son client LoL, reprise par le coach
+  assert.strictEqual(rj.boutonPerso, true);
+  assert.strictEqual(rj.persoListe.length, 2, 'seulement les personnalisées (pas la classée) : ' + JSON.stringify(rj.persoListe));
+  assert.ok(/ Darius D 1\/2\/0\s?20 min Ajouter$/.test(rj.persoListe[0]), rj.persoListe[0]);
+  assert.ok(/ARAM.*non prise en charge/.test(rj.persoListe[1]), rj.persoListe[1]);
+  assert.ok(/Partie ajoutée avec ses moments clés/.test(rj.persoAjout), rj.persoAjout);
+  assert.deepStrictEqual(rj.persoApres, ['Ajoutée', 'non prise en charge']);
+  assert.deepStrictEqual(rj.persoPartie.g, { matchId: 'EUW1_7300000777', champion: 'Darius', opponent: 'Garen', kills: 1, deaths: 2, cs10: 70, pending: true });
+  assert.ok(/Darius contre Garen.*Perso/.test(rj.persoPartie.ligne), rj.persoPartie.ligne);
+  assert.ok(/et 1 personnalisée \(pas comptée dans les statistiques\)/.test(rj.persoPartie.sous), rj.persoPartie.sous);
+  assert.strictEqual(rj.persoMoments, true, 'moments clés enregistrés chez le joueur');
+  assert.ok(rj.persoMomentsLignes >= 10, 'moments clés de la partie perso : ' + rj.persoMomentsLignes);
+  assert.deepStrictEqual(rc.persoCoach, { matchId: 'EUW1_7300000777', playerId: 'p1', custom: true, lpDelta: null });
+  assert.strictEqual(rc.persoMomentsCoach, true, 'moments clés reçus par le coach');
+  assert.strictEqual(rc.persoStats, false, 'pas comptée dans les statistiques');
+  assert.ok(/Partie personnalisée ajoutée/.test(rc.persoNotif || ''), 'notification coach : ' + rc.persoNotif);
+  assert.strictEqual(Number((await fake.db.query(`select count(*) as n from custom_games`)).rows[0].n), 0, 'reprise par le coach : effacée du serveur');
   assert.strictEqual(fake.files.size, 0, 'toutes les vidéos effacées du stockage');
   // le joueur sur l'ordinateur du coach : moments, tournage, envoi, page Analyses
   assert.ok(rc.local.menu.includes('Analyses'), rc.local.menu.join(','));

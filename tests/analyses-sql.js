@@ -191,6 +191,26 @@ const { prepareDb, storageOp } = require('./fake-supabase');
   assert.strictEqual(Number((await one(`select count(*) as n from analyses where id = $1`, [d.id])).n), 0);
   assert.strictEqual((await r(`coach_analysis_delete($1, $2)`, [KEY, d.id])).error, 'analyse_inconnue');
 
+  // --- parties personnalisées importées par le joueur, reprises par le coach
+  const cgame = { matchId: 'EUW1_7300000777', playerId: 'p2', date: Date.now() - 3600e3, champion: 'Darius', kills: 1 };
+  const cmo = { matchId: 'EUW1_7300000777', gameId: 7300000777, duration: 1200, moments: [{ t: 390000, type: 'mort' }] };
+  assert.strictEqual((await r(`custom_game_add('mauvais', 'EUW1_7300000777', $1, $2)`, [JSON.stringify(cgame), JSON.stringify(cmo)])).error, 'session_expiree');
+  assert.strictEqual((await r(`custom_game_add($1, 'pas un id', $2, null)`, [t1, JSON.stringify(cgame)])).error, 'partie_invalide');
+  assert.strictEqual((await r(`custom_game_add($1, 'EUW1_7300000777', $2, null)`, [t1, JSON.stringify({ x: 'y'.repeat(9000) })])).error, 'partie_invalide');
+  assert.strictEqual((await r(`custom_game_add($1, 'EUW1_7300000777', $2, $3)`, [t1, JSON.stringify(cgame), JSON.stringify(cmo)])).ok, true);
+  assert.strictEqual((await r(`custom_game_add($1, 'EUW1_7300000777', $2, $3)`, [t1, JSON.stringify(cgame), JSON.stringify(cmo)])).ok, true, 'renvoi : remplacé');
+  assert.strictEqual((await r(`coach_custom_games('mauvais')`)).error, 'jeton_inconnu');
+  let cg = (await r(`coach_custom_games($1)`, [KEY])).games;
+  assert.strictEqual(cg.length, 1);
+  assert.deepStrictEqual([cg[0].game.playerId, cg[0].game.matchId, cg[0].game.custom, cg[0].moments.gameId], ['p1', 'EUW1_7300000777', true, 7300000777], 'joueur imposé par le jeton, pas par la partie envoyée');
+  assert.strictEqual((await r(`moments_get($1, 'EUW1_7300000777')`, [t1])).moments.moments[0].t, 390000, 'moments clés lisibles par le joueur (pour filmer et envoyer)');
+  assert.strictEqual((await r(`moments_get($1, 'EUW1_7300000777')`, [t2])).error, 'moments_absents', 'pas par un autre joueur');
+  assert.strictEqual((await r(`coach_custom_games_done($1, $2)`, [KEY, JSON.stringify([{ playerId: 'p1', matchId: 'EUW1_7300000777' }])])).ok, true);
+  assert.deepStrictEqual((await r(`coach_custom_games($1)`, [KEY])).games, [], 'reprise par le coach : effacée du serveur');
+  for (let i = 0; i < 30; i++) await r(`custom_game_add($1, $2, $3, null)`, [t2, 'EUW1_' + (8000000000 + i), JSON.stringify(cgame)]);
+  assert.strictEqual((await r(`custom_game_add($1, 'EUW1_8100000000', $2, null)`, [t2, JSON.stringify(cgame)])).error, 'trop_de_parties');
+  await r(`coach_custom_games_done($1, $2)`, [KEY, JSON.stringify(Array.from({ length: 30 }, (_, i) => ({ playerId: 'p2', matchId: 'EUW1_' + (8000000000 + i) })))]);
+
   // --- fonctions internes fermées au public
   for (const f of ['_analysis_json', '_comment_add']) {
     const g = await one(`select has_function_privilege('anon', p.oid, 'execute') as ok from pg_proc p where proname = $1`, [f]);

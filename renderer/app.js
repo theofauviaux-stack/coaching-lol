@@ -640,6 +640,7 @@ function pageParties() {
   if (!p) return `<h1>Parties</h1><div class="empty">Aucune donnée pour l'instant.</div>`;
   let gs = d.games.filter(g => g.playerId === p.id).sort((a, b) => b.date - a.date);
   const total = gs.length;
+  const persos = gs.filter(g => g.custom).length;
   if (state.gameFilter === 'w') gs = gs.filter(g => g.win);
   if (state.gameFilter === 'l') gs = gs.filter(g => !g.win);
   const q = state.q.trim().toLowerCase();
@@ -652,14 +653,14 @@ function pageParties() {
       <td>${Stats.fmt(Stats.METRICS['CS/min'](g), 'dec2')}</td><td>${Stats.fmt(Stats.METRICS['Vision/min'](g), 'dec2')}</td>
       <td class="${g.goldDiff15 > 0 ? 'ok' : g.goldDiff15 < 0 ? 'red' : ''}">${Stats.fmt(g.goldDiff15, 'diff')}</td>
       <td>${g.deaths15 === null || g.deaths15 === undefined ? '—' : g.deaths15}</td>
-      <td>${lpCell(g)}</td>
-      <td>${g.role !== p.role ? '<span class="chip">hors rôle</span>' : g.comment || g.mental ? icon('book', 15, 'muted') : ''}</td></tr>`).join('');
+      <td>${g.custom ? '<span class="faint">—</span>' : lpCell(g)}</td>
+      <td>${g.custom ? `<span class="chip accent" data-tip="${g.pending ? 'Partie personnalisée ajoutée : ton coach la reprend à sa prochaine ouverture de l\'app. ' : 'Partie personnalisée : '}pas comptée dans les statistiques ni les LP">Perso</span>` : g.role !== p.role ? '<span class="chip">hors rôle</span>' : g.comment || g.mental ? icon('book', 15, 'muted') : ''}</td></tr>`).join('');
   return `<h1>Parties</h1>
-    <div class="sub">${total} partie${total > 1 ? 's' : ''} classée${total > 1 ? 's' : ''} en solo. Clique sur une partie pour voir le détail${canEdit() ? ' et ajouter ton suivi' : ''}.
+    <div class="sub">${total - persos} partie${total - persos > 1 ? 's' : ''} classée${total - persos > 1 ? 's' : ''} en solo${persos ? ` et ${persos} personnalisée${persos > 1 ? 's' : ''} (pas comptée${persos > 1 ? 's' : ''} dans les statistiques)` : ''}. Clique sur une partie pour voir le détail${canEdit() ? ' et ajouter ton suivi' : ''}.
       <br><span class="small">LP : calculés automatiquement à partir du rang relevé toutes les 5 minutes (≈ = estimation). Inconnus pour les parties jouées avant le début du suivi.</span></div>
     <div class="row" style="margin-bottom:14px">
       <div class="seg">${[['all', 'Toutes'], ['w', 'Victoires'], ['l', 'Défaites']].map(([k, l]) => `<button class="${state.gameFilter === k ? 'on' : ''}" data-action="gfilter" data-v="${k}">${l}</button>`).join('')}</div>
-      <span class="spacer"></span><input id="q" data-input="q" placeholder="Chercher un champion…" value="${esc(state.q)}" style="width:240px"></div>
+      <span class="spacer"></span>${isPlayerSpace() ? `<button class="btn" data-action="custom-open" data-tip="Importer une partie personnalisée (scrim) depuis l'historique de ton client LoL">${icon('plus', 15)} Partie perso</button>` : ''}<input id="q" data-input="q" placeholder="Chercher un champion…" value="${esc(state.q)}" style="width:240px"></div>
     ${rows ? `<table class="table"><tr><th class="l">Date</th><th class="l">Partie</th><th>Rés.</th><th>K/D/A</th><th>KP</th><th>CS/min</th><th>Vision/min</th><th>Écart or 15</th><th>Morts &lt;15</th><th>LP</th><th></th></tr>${rows}</table>`
       : `<div class="empty">${total ? 'Aucune partie ne correspond.' : 'Les parties arrivent automatiquement après chaque partie classée.'}</div>`}`;
 }
@@ -691,7 +692,7 @@ function renderDrawer() {
        ${g.objectiveMet === true || g.objectiveMet === false ? `<label>Objectif de la partie</label><div>${g.objectiveMet ? 'Atteint' : 'Pas atteint'}</div>` : ''}
        ${g.comment ? `<label>Commentaire du coach</label><div class="note">${esc(g.comment)}</div>` : ''}
        ${!g.mental && !g.comment && g.objectiveMet !== true && g.objectiveMet !== false ? '<div class="muted small">Pas encore de commentaire du coach sur cette partie.</div>' : ''}`;
-  morph($('#drawer'), `<div class="row"><span class="chip ${g.win ? 'accent' : 'red'}">${g.win ? 'Victoire' : 'Défaite'}</span><span class="muted small">${dateTimeFr(g.date)} · ${g.duration} min</span><span class="spacer"></span><button class="icon-btn" data-action="close-drawer">${icon('close', 18)}</button></div>
+  morph($('#drawer'), `<div class="row"><span class="chip ${g.win ? 'accent' : 'red'}">${g.win ? 'Victoire' : 'Défaite'}</span><span class="muted small">${dateTimeFr(g.date)} · ${g.duration} min</span>${g.custom ? '<span class="chip" data-tip="Partie personnalisée : pas comptée dans les statistiques ni les LP">Perso</span>' : ''}<span class="spacer"></span><button class="icon-btn" data-action="close-drawer">${icon('close', 18)}</button></div>
     <div class="game-head">${img(g.champion, '')}<div><h2 style="margin:0">${champ(g.champion)}</h2><div class="muted small">${esc(g.role)} · côté ${esc(g.side || '?')} · niveau ${g.level || '?'}</div></div><span class="spacer"></span>
       ${g.opponent ? `<div class="vs" style="text-align:center"><div class="faint tiny">contre</div>${img(g.opponent, '')}<div class="small">${champ(g.opponent)}</div></div>` : ''}</div>
     ${(edit && isCoach()) || isPlayerSpace() ? `<button class="btn primary mo-open" data-action="moments" data-id="${esc(g.matchId)}">${icon('target', 15)} Moments clés de la partie</button>` : ''}
@@ -1595,6 +1596,42 @@ function openProposeModal(bookingId) {
   $('#modal-box').style.width = '920px';
 }
 
+// ======================================================================== parties personnalisées (import)
+function customsHtml() {
+  const C = state.customs || {};
+  let body;
+  if (C.loading) body = `<div class="cu-wait"><span class="spinner"></span> Lecture de ton historique dans le client LoL…</div>`;
+  else if (C.error) body = `<div class="mo-err">${icon('alert', 15)}<span>${esc(C.error)}</span></div><div class="actions" style="justify-content:flex-start"><button class="btn" data-action="custom-open">${icon('sync', 15)} Réessayer</button></div>`;
+  else if (!C.games.length) body = `<div class="empty">Aucune partie personnalisée dans tes 50 dernières parties.</div>`;
+  else {
+    body = `<table class="table cu-table"><tr><th class="l">Date</th><th class="l">Champion</th><th>Rés.</th><th>K/D/A</th><th>Durée</th><th></th></tr>${C.games.map(g => `<tr>
+      <td class="l muted">${dateTimeFr(g.date)}</td>
+      <td class="l">${g.champion ? img(g.champion) + champ(g.champion) : '<span class="faint">?</span>'}${g.sr ? '' : ` <span class="faint small">${esc(g.mode === 'ARAM' ? 'ARAM' : 'autre carte')}</span>`}</td>
+      <td><span class="res ${g.win ? 'V' : 'D'}">${g.win ? 'V' : 'D'}</span></td>
+      <td>${g.kda.join('/')}</td><td>${Math.floor(g.duration / 60)} min</td>
+      <td class="cu-act">${g.added ? '<span class="chip ok">Ajoutée</span>' : !g.sr ? '<span class="faint small" data-tip="Seules les parties sur la Faille de l\'invocateur sont prises en charge">non prise en charge</span>'
+        : C.adding === g.gameId ? '<span class="spinner"></span>' : `<button class="btn primary" data-action="custom-add" data-id="${g.gameId}" ${C.adding ? 'disabled' : ''}>Ajouter</button>`}</td></tr>`).join('')}</table>`;
+  }
+  return `<h1>Ajouter une partie personnalisée</h1>
+    <div class="muted" style="margin:6px 0 14px">Tes parties personnalisées (scrims) prises dans l'historique de ton client LoL. Une fois ajoutée, la partie apparaît dans « Parties » avec ses moments clés : tu peux la filmer et l'envoyer en analyse comme une classée. Ton coach la voit aussi. Elle ne compte pas dans tes statistiques.</div>
+    ${body}
+    <div class="faint small" style="margin-top:12px">Le client League of Legends doit être ouvert et connecté à ton compte.</div>
+    <div class="actions"><button class="btn ghost" data-action="close-modal">Fermer</button></div>`;
+}
+const customsShown = () => !$('#modal').classList.contains('hidden') && !!$('#modal-box .cu-marker');
+function showCustoms() {
+  const html = customsHtml() + '<i class="cu-marker"></i>';
+  if (customsShown()) { morph($('#modal-box'), html); hookImages(); } else openModal(html);
+  $('#modal-box').style.width = '760px';
+}
+async function openCustoms() {
+  state.customs = { loading: true };
+  showCustoms();
+  const r = await window.api.listCustomGames();
+  state.customs = r && r.ok ? { games: r.games || [] } : { error: r ? r.message : 'Erreur inconnue.' };
+  if (customsShown()) showCustoms();
+}
+
 // ======================================================================== modale
 function openModal(html) { $('#modal-box').innerHTML = html; $('#modal').classList.remove('hidden'); hookImages(); }
 function closeModal() {
@@ -1825,6 +1862,24 @@ document.addEventListener('click', async e => {
       if (!r || !r.ok) { el.disabled = false; if (inside) S.deleting = false; toast(r ? r.message : 'Erreur inconnue.', 'err', 9000); break; }
       if (inside) closeModal();
       apply(r, 'Analyse supprimée : elle disparaît aussi chez le joueur.');
+      break;
+    }
+    case 'custom-open': openCustoms(); break;
+    case 'custom-add': {
+      const C = state.customs;
+      if (!C || !C.games || C.adding) break;
+      const id = Number(el.dataset.id);
+      C.adding = id;
+      showCustoms();
+      const r = await window.api.addCustomGame(id);
+      C.adding = null;
+      if (!r || !r.ok) { toast(r ? r.message : 'Erreur inconnue.', 'err', 9000); showCustoms(); break; }
+      const g = C.games.find(x => x.gameId === id);
+      if (g) g.added = true;
+      state.data = r.data;
+      render();
+      showCustoms();
+      toast(r.moments ? 'Partie ajoutée avec ses moments clés : elle est dans « Parties ».' : 'Partie ajoutée (sans moments clés : le client LoL n\'a pas donné sa chronologie).', 'ok', 7000);
       break;
     }
     case 'an-ai-clear': {

@@ -41,7 +41,7 @@ const gameEnd = g => g.date + Math.round((g.duration || 0) * MIN);
 function attributeLp(data, playerId) {
   const snaps = data.ranks.filter(r => r.playerId === playerId && typeof r.wins === 'number' && r.score !== null && r.score !== undefined)
     .sort((a, b) => a.date - b.date);
-  const games = data.games.filter(g => g.playerId === playerId);
+  const games = data.games.filter(g => g.playerId === playerId && !g.custom); // pas de LP en partie personnalisée
   const others = data.ignored.filter(g => g.playerId === playerId && g.role !== 'supprimée');
   let n = 0;
   for (let i = 1; i < snaps.length; i++) {

@@ -14,7 +14,7 @@ const SIG = {
   coach_reports: { p_key: 'text' }, coach_report_save: { p_key: 'text', p_player: 'text', p_session: 'text', p: 'jsonb' },
   // analyses de parties et vidéos
   coach_moments_push: { p_key: 'text', p: 'jsonb' }, coach_analyses: { p_key: 'text' }, coach_analysis_get: { p_key: 'text', p_id: 'uuid' },
-  coach_analysis_comment: { p_key: 'text', p_id: 'uuid', p_t: 'int', p_text: 'text' }, coach_analysis_close: { p_key: 'text', p_id: 'uuid' }, coach_analysis_delete: { p_key: 'text', p_id: 'uuid' },
+  coach_analysis_comment: { p_key: 'text', p_id: 'uuid', p_t: 'int', p_text: 'text' }, coach_analysis_close: { p_key: 'text', p_id: 'uuid' }, coach_analysis_delete: { p_key: 'text', p_id: 'uuid' }, custom_game_add: { p_token: 'text', p_match: 'text', p_game: 'jsonb', p_moments: 'jsonb' }, coach_custom_games: { p_key: 'text' }, coach_custom_games_done: { p_key: 'text', p: 'jsonb' },
   coach_clips_purge: { p_key: 'text' }, coach_clips_gone: { p_key: 'text', p_id: 'uuid' },
   moments_get: { p_token: 'text', p_match: 'text' }, analysis_create: { p_token: 'text', p: 'jsonb' }, analysis_ready: { p_token: 'text', p_id: 'uuid' },
   analyses_mine: { p_token: 'text' }, analysis_get: { p_token: 'text', p_id: 'uuid' },
@@ -39,7 +39,7 @@ async function prepareDb(db, { twice = false } = {}) {
   await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
                  grant usage on schema public to anon, authenticated, service_role;`);
   await db.exec(STORAGE_SQL);
-  for (const f of ['schema.sql', 'analyses.sql']) {
+  for (const f of ['schema.sql', 'analyses.sql', 'personnalisees.sql']) {
     const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', f), 'utf8');
     await db.exec(sql);
     if (twice) await db.exec(sql); // relançable

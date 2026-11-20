@@ -103,6 +103,31 @@ module.exports = async function ({ app, win, fs, path }) {
       out.listeApres = await js(`document.querySelectorAll('.table tr.click').length`);
       out.videosLocales = fs.existsSync(path.join(data, 'videos', 'p1_EUW1_7300000099'));
       await shot('a8c-apres-export');
+      // partie personnalisée (scrim) importée depuis l'historique du client LoL
+      await js(`closeModal(); state.page = 'parties'; render(); 0`);
+      await wait(400);
+      out.boutonPerso = await js(`!!document.querySelector('[data-action="custom-open"]')`);
+      await js(`document.querySelector('[data-action="custom-open"]').click(); 0`);
+      await until(`!!document.querySelector('.cu-table') || !!document.querySelector('#modal-box .mo-err')`, 20000);
+      out.persoListe = await js(`[...document.querySelectorAll('.cu-table tr')].slice(1).map(r => r.textContent.replace(/\\s+/g, ' ').trim())`);
+      await shot('a9-perso-liste');
+      await js(`document.querySelector('[data-action="custom-add"]').click(); 0`);
+      await until(`window.__toasts.some(t => /Partie ajoutée/.test(t))`, 20000);
+      out.persoAjout = (await toasts()).find(t => /Partie ajoutée/.test(t));
+      out.persoApres = await js(`[...document.querySelectorAll('.cu-table .cu-act')].map(c => c.textContent.trim())`);
+      await js(`closeModal(); 0`);
+      await wait(500);
+      out.persoPartie = await js(`(() => { const g = state.data.games.find(x => x.custom); const tr = [...document.querySelectorAll('.table tr.click')].find(r => r.textContent.includes('Perso')); return { g: g && { matchId: g.matchId, champion: g.champion, opponent: g.opponent, kills: g.kills, deaths: g.deaths, cs10: g.cs10, pending: !!g.pending }, ligne: tr ? tr.textContent.replace(/\\s+/g, ' ').trim() : '', sous: document.querySelector('.sub').textContent.replace(/\\s+/g, ' ').trim() }; })()`);
+      out.persoMoments = fs.existsSync(path.join(data, 'moments', 'p1_EUW1_7300000777.json'));
+      await shot('a9b-perso-parties');
+      await js(`[...document.querySelectorAll('.table tr.click')].find(r => r.textContent.includes('Perso')).click(); 0`);
+      await until(`!!document.querySelector('[data-action="moments"]')`);
+      await js(`document.querySelector('[data-action="moments"]').click(); 0`);
+      await until(`document.querySelectorAll('.mo-row').length > 0`, 20000);
+      out.persoMomentsLignes = await js(`document.querySelectorAll('.mo-row').length`);
+      await shot('a9c-perso-moments');
+      await js(`closeModal(); 0`);
+      mark('perso-ajoutee');
     } else {
       await type('4821');
       await until(`state.data.coach && state.data.coach.cloud.linked`);
@@ -220,6 +245,14 @@ module.exports = async function ({ app, win, fs, path }) {
       await shot('a11-apres-suppression');
       await wait(4000); // purge des vidéos sur le serveur
       out.suppression = sup;
+      // partie personnalisée importée par le joueur : reprise dans les parties du coach
+      await waitFile('perso-ajoutee');
+      await until(`state.data.games.some(g => g.custom)`, 60000);
+      out.persoCoach = await js(`(() => { const g = state.data.games.find(x => x.custom); return { matchId: g.matchId, playerId: g.playerId, custom: g.custom, lpDelta: g.lpDelta }; })()`);
+      out.persoMomentsCoach = fs.existsSync(path.join(data, 'moments', 'p1_EUW1_7300000777.json'));
+      out.persoStats = await js(`Stats.playerGames(state.data, state.data.players.find(p => p.id === 'p1'), '').some(g => g.custom)`);
+      out.persoNotif = await js(`window.__toasts.find(t => /Partie personnalisée ajoutée/.test(t)) || ''`);
+      await wait(2500); // la partie part aussi dans le serveur (espace du joueur)
     }
   } catch (e) {
     out.exception = e.stack || String(e);

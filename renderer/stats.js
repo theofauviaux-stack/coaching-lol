@@ -65,7 +65,8 @@
   // Parties qui comptent : celles du joueur, au rôle coaché, depuis la date choisie, triées de la plus ancienne à la plus récente
   function playerGames(data, player, since) {
     const from = since ? new Date(since).getTime() : 0;
-    return data.games.filter(g => g.playerId === player.id && g.role === player.role && g.date >= from).sort((a, b) => a.date - b.date);
+    // les parties personnalisées (scrims) sont affichées, mais ne comptent pas dans les statistiques
+    return data.games.filter(g => g.playerId === player.id && g.role === player.role && !g.custom && g.date >= from).sort((a, b) => a.date - b.date);
   }
 
   function objectiveFor(data, player, label) {
@@ -129,7 +130,7 @@
     const metric = METRICS[session.kpi];
     if (!metric || !player) return { before: null, after: null, delta: null, ok: null };
     const t = new Date(session.date).getTime();
-    const gs = data.games.filter(g => g.playerId === player.id && g.role === player.role);
+    const gs = data.games.filter(g => g.playerId === player.id && g.role === player.role && !g.custom);
     const before = mean(gs.filter(g => g.date < t).map(metric));
     const after = mean(gs.filter(g => g.date >= t).map(metric));
     const delta = before !== null && after !== null ? after - before : null;

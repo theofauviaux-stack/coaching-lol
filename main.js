@@ -4,7 +4,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { Store } = require('./src/store');
 const { RiotClient } = require('./src/riot');
-const { syncPlayer } = require('./src/sync');
+const { syncPlayer, gameFromMatch } = require('./src/sync');
+const customMod = require('./src/custom');
 const mu = require('./src/macupdate');
 const cloudMod = require('./src/cloud');
 const access = require('./src/access');
@@ -96,6 +97,7 @@ function viewData() {
   d.bookings = bookingsView();
   d.analyses = analysesView();
   d.claude = claudeView();
+  if (session.role === 'joueur') mergePendingCustoms(d);
   if (session.source === 'cloud') d.reports = session.role === 'joueur' ? reports.mine.map(r => Object.assign({ playerId: session.playerId }, r)) : [];
   if (canEdit()) {
     const k = getSecret('apiKey');
@@ -670,7 +672,7 @@ async function pushMoments() {
       if (!player) continue;
       const k = g.playerId + '/' + g.matchId;
       let m = readMoments(g.playerId, g.matchId);
-      if (!m && getSecret('apiKey') && player.puuid && computed < 10) {
+      if (!m && !g.custom && getSecret('apiKey') && player.puuid && computed < 10) {
         computed++;
         try { m = await computeMoments(player, g.matchId); } catch (e) { /* partie indisponible chez Riot */ }
       }
@@ -787,6 +789,115 @@ async function closeAnalysis({ id }) {
   purgeClips();
   return { ok: true, analysis: r.analysis };
 }
+// ---------------------------------------------------------------- parties personnalisées (scrims)
+// Riot ne les donne pas par son API : le joueur les importe depuis l'historique de son client LoL. Elles partent sur
+// le serveur (résumé + moments clés) ; l'app du coach les reprend dans ses parties. En attendant, l'app du joueur
+// les garde dans « perso-en-attente.json » pour les montrer tout de suite.
+const pendingCustomFile = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'perso-en-attente.json');
+function readPendingCustoms() {
+  try { const a = JSON.parse(fs.readFileSync(pendingCustomFile(), 'utf8')); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function writePendingCustoms(a) {
+  fs.mkdirSync(path.dirname(pendingCustomFile()), { recursive: true });
+  fs.writeFileSync(pendingCustomFile(), JSON.stringify(a));
+}
+function mergePendingCustoms(d) {
+  const pend = readPendingCustoms();
+  if (!pend.length) return;
+  const left = pend.filter(g => !d.games.some(x => x.matchId === g.matchId && x.playerId === g.playerId));
+  for (const g of left) if (g.playerId === session.playerId) d.games.push(Object.assign({}, g, { pending: true }));
+  if (left.length !== pend.length) writePendingCustoms(left); // reprise par le coach : elle arrive par le serveur
+}
+function sessionPlayer() {
+  const list = session && session.source === 'cloud' ? (remoteData && remoteData.players) || [] : store.data.players;
+  return (list || []).find(p => p.id === (session && session.playerId)) || null;
+}
+// client LoL du joueur, connecté sur son compte
+async function playerLcu() {
+  if (!isPlayer()) throw new Error('Réservé à l\'espace joueur.');
+  if (!isPlayerOnline()) throw new Error('Connexion au serveur nécessaire : reconnecte-toi avec ton code.');
+  const creds = await lcuCreds();
+  if (!creds) throw new Error('Ouvre le client League of Legends (connecté à ton compte), puis réessaie.');
+  const lcu = p => localJson(creds.base, 'GET', p, undefined, creds.password);
+  const me = await lcu('/lol-summoner/v1/current-summoner').catch(() => null);
+  if (!me || !me.puuid) throw new Error('Le client League of Legends ne répond pas encore : attends qu\'il soit complètement ouvert, puis réessaie.');
+  const pl = sessionPlayer();
+  const norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
+  if (pl && pl.riotId && norm(me.gameName + '#' + me.tagLine) !== norm(pl.riotId)) {
+    throw new Error(`Ton client LoL est connecté sur ${me.gameName}#${me.tagLine} : connecte-toi avec ${pl.riotId} pour importer tes parties.`);
+  }
+  return { lcu, me, player: pl || { id: session.playerId } };
+}
+async function listCustomGames() {
+  const { lcu, player } = await playerLcu();
+  const resp = await lcu('/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=49');
+  const mine = (session.source === 'cloud' ? (remoteData && remoteData.games) || [] : store.data.games).concat(readPendingCustoms()).filter(g => g.playerId === player.id);
+  const games = customMod.listCustoms(resp, store.data.settings.champKeys || {}).map(g => Object.assign(g, { added: mine.some(x => String(x.matchId).endsWith('_' + g.gameId)) }));
+  return { ok: true, games };
+}
+async function addCustomGame({ gameId }) {
+  const { lcu, me, player } = await playerLcu();
+  const id = String(gameId || '');
+  if (!/^\d{5,15}$/.test(id)) throw new Error('Partie inconnue.');
+  const game = await lcu('/lol-match-history/v1/games/' + id).catch(() => null);
+  if (!game) throw new Error('Le client LoL ne donne pas cette partie (trop ancienne ?).');
+  const head = game.info || game;
+  if (!customMod.isCustom(head)) throw new Error('Ce n\'est pas une partie personnalisée : les classées arrivent toutes seules.');
+  if (head.mapId !== customMod.SR) throw new Error('Seules les parties sur la Faille de l\'invocateur peuvent être ajoutées.');
+  const rawTl = await lcu('/lol-match-history/v1/game-timelines/' + id).catch(() => null);
+  const { match, tl } = customMod.toV5(game, rawTl, store.data.settings.champKeys || {}, store.data.settings.roleRates || null);
+  const meP = match.info.participants.find(p => p.puuid === me.puuid);
+  if (!meP) throw new Error('Tu n\'apparais pas dans cette partie.');
+  const g = customMod.cleanGame(gameFromMatch(match, tl, meP, player.id));
+  if (!g) throw new Error('Partie illisible dans le client LoL.');
+  const m = tl ? momentsMod.buildMoments(match, tl, me.puuid, store.data.settings.items || {}) : null;
+  if (m) m.custom = true;
+  try {
+    await cloud.customGameAdd(playerToken(), g.matchId, g, m);
+  } catch (e) {
+    if (e.code === 'MISSING') throw new Error('Le serveur n\'est pas encore prêt pour les parties perso : préviens ton coach.');
+    throw e;
+  }
+  if (m) writeMoments(player.id, m);
+  writePendingCustoms(readPendingCustoms().filter(x => !(x.matchId === g.matchId && x.playerId === g.playerId)).concat([g]));
+  refreshView();
+  return { ok: true, data: viewData(), matchId: g.matchId, moments: !!m };
+}
+// ordinateur du coach : reprend les parties envoyées par les joueurs, puis les efface du serveur
+let customPulling = false;
+async function pullCustomGames() {
+  if (!cloud || !isCoachMachine() || customPulling) return;
+  const key = getPushToken();
+  if (!key) return;
+  customPulling = true;
+  try {
+    const r = await cloud.coachCustomGames(key);
+    const done = [], added = [];
+    for (const x of r.games || []) {
+      const g = customMod.cleanGame(x && x.game);
+      if (!g) continue;
+      done.push({ playerId: g.playerId, matchId: g.matchId });
+      if (!store.data.players.some(p => p.id === g.playerId)) continue;
+      if (x.moments && typeof x.moments === 'object' && x.moments.matchId === g.matchId) writeMoments(g.playerId, Object.assign({}, x.moments, { custom: true }));
+      if (store.data.games.some(y => y.matchId === g.matchId && y.playerId === g.playerId)) continue;
+      store.data.ignored = (store.data.ignored || []).filter(y => !(y.matchId === g.matchId && y.playerId === g.playerId));
+      store.data.games.push(g);
+      added.push(g);
+    }
+    if (added.length) {
+      store.save();
+      schedulePush(1500);
+      for (const g of added) notifyCoach('Partie personnalisée ajoutée', playerName(g.playerId) + ' : ' + champName(g.champion) + (g.opponent ? ' contre ' + champName(g.opponent) : '') + ' (' + (g.win ? 'victoire' : 'défaite') + ')');
+      if (session) refreshView();
+    }
+    if (done.length) await cloud.coachCustomGamesDone(key, done);
+  } catch (e) {
+    /* serveur pas encore à jour ou injoignable : nouvel essai au prochain passage */
+  } finally {
+    customPulling = false;
+  }
+}
+
 // suppression par le coach : l'analyse disparaît chez lui et chez le joueur ; messages effacés aussitôt,
 // vidéos effacées par la purge (lancée tout de suite), dossier pour Claude retiré
 async function deleteAnalysis({ id }) {
@@ -1278,7 +1389,7 @@ async function recordVideos({ playerId, matchId }) {
         killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status,
         log: (what, data) => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + what + (data === undefined ? '' : ' ' + JSON.stringify(data)) + '\n'); } catch (e) { /* journal facultatif */ } }
       }, {
-        gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: 420, gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
+        gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: m.custom ? 0 : 420, gameType: m.custom ? 'CUSTOM_GAME' : 'MATCHED_GAME', gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
         playerKey: (me.teamId === 200 || (!me.teamId && me.id > 5) ? 'qwert' : '12345')[m.participants.filter(p => p.teamId === me.teamId).sort((a, b) => a.id - b.id).findIndex(p => p.id === me.id)] || null,
         label: champName(me.champion) + (m.opp ? ' contre ' + champName((m.participants.find(p => p.id === m.opp) || {}).champion) : '') + (gm && gm.date ? ' du ' + new Date(gm.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(' ', ' à ') : ''), championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
         file: (i, w) => path.join(dir, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
@@ -1692,6 +1803,8 @@ function registerIpc() {
   handle('analysis:comment', q => commentAnalysis(q || {}));
   handle('analysis:close', q => closeAnalysis(q || {}));
   handle('analysis:delete', q => deleteAnalysis(q || {}));
+  handle('custom:list', () => listCustomGames());
+  handle('custom:add', q => addCustomGame(q || {}));
   handle('analysis:export', q => exportAnalysis(q || {}));
   handle('claude:open', async () => { requireEdit(); fs.mkdirSync(claudeDir(), { recursive: true }); const e = await shell.openPath(claudeDir()); if (e) throw new Error(e); return { ok: true }; });
   handle('claude:dismiss', async q => { requireEdit(); claudeDraftUsed(String((q || {}).id || ''), (q || {}).t === null || (q || {}).t === undefined ? null : Number(q.t)); await syncClaudeFolder(); return { ok: true }; });
@@ -1830,6 +1943,7 @@ app.whenReady().then(async () => {
         setInterval(refreshAnalyses, 1500);
         setTimeout(pushMoments, 1500);
         setInterval(pushMoments, 4000);
+        setInterval(pullCustomGames, 2000);
         setInterval(purgeClips, 3000);
       }
       return require(process.env.COACHING_LOL_TEST)({ app, win, store, fs, path });
@@ -1853,6 +1967,8 @@ app.whenReady().then(async () => {
     setInterval(refreshAnalyses, FAST ? 2000 : 45 * 1000);
     setTimeout(pushMoments, FAST ? 1500 : 60 * 1000);
     setInterval(pushMoments, 30 * 60 * 1000);
+    setTimeout(pullCustomGames, FAST ? 1000 : 20 * 1000);
+    setInterval(pullCustomGames, FAST ? 2000 : 2 * 60 * 1000);
     setTimeout(purgeClips, 2 * 60 * 1000);
     setInterval(purgeClips, 3600 * 1000);
     setTimeout(refreshRoleRates, 30 * 1000);
