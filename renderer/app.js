@@ -279,7 +279,7 @@ function renderLogin() {
   if (!msg && d.blockedMs) msg = 'Trop d\'essais. Réessaie dans ' + Math.ceil(d.blockedMs / 1000) + ' s.';
   const foot = !d.coachMachine && !d.cloudConfigured ? 'Cet ordinateur n\'est relié à aucun coach.' : 'Coaching LoL · version ' + esc(d.appVersion);
   $('#login').innerHTML = `<div class="login-card">
-    <div class="logo">${icon(setup ? 'shield' : 'lock', 26)}</div>
+    <div class="logo">${brandLogo(54, 'Coaching LoL')}</div>
     <h1>${title}</h1><div class="sub">${sub}</div>
     <div class="boxes ${state.shake ? 'shake' : ''}">${boxes}</div>
     <div class="login-msg ${msg ? '' : 'info'}">${state.busy ? '<span class="spinner"></span>' : esc(msg)}</div>
@@ -360,7 +360,7 @@ function renderSidebar() {
     ? `<div class="avatar">${icon('crown', 16)}</div><div class="who"><b>Coach</b><small>${canEdit() ? 'Tous les joueurs' : 'Lecture seule'}</small></div>`
     : `<div class="avatar">${me ? esc(initials(gameName(me))) : '?'}</div><div class="who"><b>${me ? esc(me.riotId) : 'Joueur'}</b><small>${me ? esc(me.role) : ''}</small></div>`;
   $('#sidebar').innerHTML = `
-    <div class="brand"><div class="logo">${icon('sword', 18)}</div><div class="txt"><div class="name">Coaching LoL</div><div class="tag">${coach ? 'Espace coach' : 'Espace joueur'}</div></div>
+    <div class="brand"><div class="logo">${brandLogo(32)}</div><div class="txt"><div class="name">Coaching LoL</div><div class="tag">${coach ? 'Espace coach' : 'Espace joueur'}</div></div>
       <button class="collapse" data-action="collapse" title="Réduire le menu">${icon('chevron', 14)}</button></div>
     ${nav}
     <div class="bottom">

@@ -94,6 +94,10 @@ npm test         # tests (API Riot simulée)
 npm run dist     # crée l'installateur pour ton système dans dist/
 ```
 
+### Logo et icône de l'application
+
+Le logo (l'œil « Vision », depuis la 1.6.7) est dessiné une seule fois dans `build/icon.svg`. Après une modification, lance `python3 tools/icones.py` (demande `rsvg-convert` et Pillow) : il refait l'icône Mac (`build/icon.icns`, à la grille des icônes Mac), l'icône Windows (`build/icon.ico`, 16 à 256 px, aussi utilisée par l'installateur) et le logo de l'interface (`renderer/logo.js`, menu et écran du code). Les quatre fichiers sont à envoyer avec la modification.
+
 Les données sont dans le dossier de l'application :
 - Mac : `~/Library/Application Support/Coaching LoL/coaching-data.json`
 - Windows : `%APPDATA%\Coaching LoL\coaching-data.json`

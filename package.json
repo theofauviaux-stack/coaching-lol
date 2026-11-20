@@ -1,7 +1,7 @@
 {
   "name": "coaching-lol",
   "productName": "Coaching LoL",
-  "version": "1.6.6",
+  "version": "1.6.7",
   "description": "Suivi privé de coaching League of Legends : parties SoloQ au rôle coaché, objectifs, sessions.",
   "main": "main.js",
   "author": "Theo Fauviaux",
@@ -42,6 +42,7 @@
     },
     "mac": {
       "category": "public.app-category.sports",
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -60,6 +61,7 @@
     },
     "afterPack": "build/signer-mac.js",
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
