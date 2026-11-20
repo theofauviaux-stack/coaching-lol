@@ -121,19 +121,6 @@ module.exports = async function ({ app, win, fs, path }) {
     out.notification = await js(`window.__toasts.find(t => /Partie classée en cours/.test(t) && /UCE Uawawa/.test(t))`);
     out.notificationSmurf = await js(`window.__toasts.find(t => /sur son smurf/.test(t)) || ''`);
     await shot('l7-notification');
-    // HaveHope lance une partie personnalisée contre des bots : détectée comme une classée
-    await riot('/__perso');
-    await until(`window.__toasts.some(t => /Partie personnalisée en cours/.test(t))`, 20000);
-    out.notifPerso = await js(`window.__toasts.find(t => /Partie personnalisée en cours/.test(t))`);
-    await js(`state.page = 'direct'; render(); 0`);
-    await wait(500);
-    out.cartePerso = await js(`(() => { const c = [...document.querySelectorAll('.lv-card')].find(x => x.querySelector('.lv-perso')); return c ? { sousTitre: c.querySelector('.lv-head .muted.small').textContent.replace(/\\s+/g, ' ').trim(), bots: [...c.querySelectorAll('.lv-name')].filter(n => n.textContent.trim() === 'Bot').length, lignes: c.querySelectorAll('.lv-row').length, texte: c.textContent.replace(/\\s+/g, ' ') } : null; })()`);
-    await js(`[...document.querySelectorAll('.lv-card')].find(x => x.querySelector('.lv-perso')).scrollIntoView({ block: 'start' }); 0`);
-    await shot('l7b-personnalisee');
-    await js(`state.page = 'accueil'; render(); 0`);
-    await wait(400);
-    out.cartePerso.chipAccueil = await js(`[...document.querySelectorAll('.live-chip')].some(c => /Partie personnalisée/.test(c.getAttribute('data-tip') || ''))`);
-    await js(`state.page = 'direct'; render(); 0`);
     // plus personne en partie
     await riot('/__plus-rien');
     await until(`state.data.live.games.length === 0`, 20000);

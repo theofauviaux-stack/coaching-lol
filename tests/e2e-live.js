@@ -41,10 +41,6 @@ const GAMES = {
   partie3: { gameId: 7300000004, platformId: 'EUW1', gameQueueConfigId: 420, gameStartTime: NOW, gameLength: 0, observers: { encryptionKey: 'NeWkEyNeWkEyNeWkEyNeWk' }, bannedChampions: [],
     participants: [part('P-UAWAWA', 100, 17, 'UCE Uawawa#000'), part('D-2', 200, 1, 'Annie Bot#EUW')] }
 };
-GAMES.perso = { gameId: 7300000006, platformId: 'EUW1', gameQueueConfigId: 0, gameType: 'CUSTOM_GAME', gameMode: 'CLASSIC', mapId: 11, gameStartTime: NOW - 2 * 60000, gameLength: 120,
-  observers: { encryptionKey: 'PeRsOkEyPeRsOkEyPeRsOk' }, bannedChampions: [],
-  participants: [part('P-HAVEHOPE', 100, 412, 'HaveHope#305', [4, 14], [8439, 8446]), part('H-2', 100, 64, 'Scrim Jungle#EUW'), part('H-3', 100, 103, 'Scrim Mid#EUW'), part('H-4', 100, 222, 'Scrim Adc#EUW'), part('H-5', 100, 122, 'Scrim Top#EUW'),
-    Object.assign(part(null, 200, 86, ''), { bot: true }), Object.assign(part(null, 200, 121, ''), { bot: true }), Object.assign(part(null, 200, 7, ''), { bot: true }), Object.assign(part(null, 200, 51, ''), { bot: true }), Object.assign(part(null, 200, 53, ''), { bot: true })] };
 const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram', 'S-QUEST': 'smurf' };
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
 const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [] };
@@ -94,7 +90,6 @@ function startRiot() {
     }
     if (req.url === '/__fin') { delete where['P-KIOGA']; delete where['P-HAVEHOPE']; return send(200, {}); }
     if (req.url === '/__nouvelle') { where['P-UAWAWA'] = 'partie3'; return send(200, {}); }
-    if (req.url === '/__perso') { where['P-HAVEHOPE'] = 'perso'; return send(200, {}); }
     if (req.url === '/__plus-rien') { for (const k of Object.keys(where)) delete where[k]; return send(200, {}); }
     if ((m = req.url.match(/\/riot\/account\/v1\/accounts\/by-riot-id\/([^/]+)\/([^/?]+)/))) {
       const id = decodeURIComponent(m[1]) + '#' + decodeURIComponent(m[2]);
@@ -205,14 +200,7 @@ exit 1
   assert.strictEqual(r.apresFin, 2, 'restent KasKet et le smurf de Questinou');
   assert.ok(/Partie classée en cours/.test(r.notification) && /UCE Uawawa/.test(r.notification), r.notification);
   assert.ok(/UCE Questinou sur son smurf Quest Smurf#EUW \(Jhin\)/.test(r.notificationSmurf), r.notificationSmurf);
-  assert.ok(/Aucun de tes joueurs n'est en partie classée Solo\/Duo ou personnalisée/.test(r.vide), r.vide);
-  // partie personnalisée : détectée, notifiée, marquée « Personnalisée », bots affichés
-  assert.ok(/^Partie personnalisée en cours — HaveHope \(Thresh\)/.test(r.notifPerso), r.notifPerso);
-  assert.ok(/^Personnalisée EUW1 · commencée à/.test(r.cartePerso.sousTitre), r.cartePerso.sousTitre);
-  assert.strictEqual(r.cartePerso.bots, 5);
-  assert.strictEqual(r.cartePerso.lignes, 10);
-  assert.ok(/si le salon autorise les spectateurs/.test(r.cartePerso.texte) && /n'apparaîtront pas dans « Parties »/.test(r.cartePerso.texte));
-  assert.ok(r.cartePerso.chipAccueil, 'pastille « En partie » sur l\'accueil pour une personnalisée aussi');
+  assert.ok(/Aucun de tes joueurs/.test(r.vide), r.vide);
   // moments clés d'une partie
   assert.ok(r.moments.lignes >= 10, JSON.stringify(r.moments));
   assert.ok(r.moments.titres.includes('Mort : tué par Kha\'Zix') && r.moments.titres.includes('Larves du Néant perdues'), r.moments.titres.join(' | '));

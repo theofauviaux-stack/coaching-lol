@@ -4,10 +4,6 @@ const path = require('path');
 const lp = require('./lp');
 
 const QUEUE_SOLO = 420; // classée Solo/Duo
-const QUEUE_CUSTOM = 0; // partie personnalisée (Riot : gameType « CUSTOM_GAME », file 0)
-const isCustom = raw => !!raw && (raw.gameType === 'CUSTOM_GAME' || raw.gameQueueConfigId === QUEUE_CUSTOM);
-// parties suivies en direct : classées Solo/Duo et personnalisées (pas les normales, ARAM, Flex…)
-const isWatched = raw => !!raw && (raw.gameQueueConfigId === QUEUE_SOLO || isCustom(raw));
 const BUNDLED_RATES = require('./role-rates.json');
 
 // ---------------------------------------------------------------- postes (Riot ne les donne pas en direct)
@@ -114,7 +110,7 @@ function buildGame(raw, players, ranks = {}, champKeys = {}, now = Date.now(), r
   };
   const banList = side => bans.filter(b => (b.teamId === teamId) === side).map(b => champKeys[String(b.championId)] || null).filter(Boolean);
   return {
-    gameId: raw.gameId, platformId: raw.platformId, queueId: raw.gameQueueConfigId, custom: isCustom(raw), mode: raw.gameMode || '',
+    gameId: raw.gameId, platformId: raw.platformId, queueId: raw.gameQueueConfigId,
     startTime: raw.gameStartTime > 0 ? raw.gameStartTime : null, length: raw.gameLength || 0, fetchedAt: now,
     key: raw.observers ? raw.observers.encryptionKey : '',
     playerIds: mine.map(x => x.playerId), teamId,
@@ -136,7 +132,7 @@ const spectatorHost = platformId => `spectator.${String(platformId).toLowerCase(
 function checkGame(game) {
   if (!game || !/^\d+$/.test(String(game.gameId))) return 'Partie inconnue.';
   if (!/^[A-Z0-9]{2,5}$/.test(String(game.platformId))) return 'Serveur de jeu inconnu.';
-  if (!/^[A-Za-z0-9+/=]{8,}$/.test(String(game.key || ''))) return 'Riot n\'a pas donné de clé d\'observation pour cette partie.' + (game.custom ? ' Pour une partie personnalisée, les spectateurs doivent être autorisés dans le salon.' : '');
+  if (!/^[A-Za-z0-9+/=]{8,}$/.test(String(game.key || ''))) return 'Riot n\'a pas donné de clé d\'observation pour cette partie.';
   return '';
 }
 
@@ -228,4 +224,4 @@ function compactRates(json) {
   return Object.keys(data).length > 100 ? { patch: json.patch || '', data } : null;
 }
 
-module.exports = { POSITIONS, assignPositions, compactRates, BUNDLED_RATES, parseSmurfs, trackedAccounts, launchWatch, MAX_SMURFS, QUEUE_SOLO, QUEUE_CUSTOM, isCustom, isWatched, soloRank, buildGame, elapsed, spectatorHost, checkGame, spectateArgs, readLocale, findInstall, splitRiotId };
+module.exports = { POSITIONS, assignPositions, compactRates, BUNDLED_RATES, parseSmurfs, trackedAccounts, launchWatch, MAX_SMURFS, QUEUE_SOLO, soloRank, buildGame, elapsed, spectatorHost, checkGame, spectateArgs, readLocale, findInstall, splitRiotId };
