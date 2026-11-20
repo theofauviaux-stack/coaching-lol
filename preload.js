@@ -45,5 +45,7 @@ contextBridge.exposeInMainWorld('api', {
   relaunch: () => call('app:relaunch'),
   onAnalysisStatus: cb => ipcRenderer.on('analysis:status', (e, v) => cb(v)),
   onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
+  openClaudeFolder: () => ipcRenderer.invoke('claude:open'),
+  claudeDismiss: (id, t) => ipcRenderer.invoke('claude:dismiss', { id, t }),
   onData: cb => ipcRenderer.on('data:changed', (e, v) => cb(v))
 });

@@ -55,6 +55,12 @@ Application privée (Mac et Windows) de suivi de coaching League of Legends.
 - Conditions côté joueur : client LoL ouvert et connecté, aucune partie en cours, replay disponible (patch en cours seulement, 10 téléchargements par heure chez Riot). Sur Mac, autoriser Coaching LoL dans Réglages Système › Confidentialité et sécurité › Enregistrement de l'écran (une fois : depuis la 1.6.2, l'app est signée avec une exigence d'identité fixe, `build/signer-mac.js`, et l'autorisation reste valable après les mises à jour).
 - Base : `supabase/analyses.sql` (à exécuter une fois dans le SQL Editor, relançable). Uniquement des API locales officielles de Riot (client et Replay API) : pas de lecture de la mémoire du jeu. Code : src/replay.js, renderer/recorder.*.
 
+### Analyses par Claude (sans API)
+
+Sur l'ordinateur du coach, chaque partie envoyée par un joueur est préparée dans `~/Coaching LoL/Analyses pour Claude/` (dossier personnel, hors iCloud) : un dossier par partie avec `a-analyser.json` (moments, vidéos, commentaires du joueur), `dossier.txt`, `partie.json` et `videos/`. À la racine : `methode-coach.md` (la méthode du coach, modifiable) et `LISEZ-MOI.txt`.
+
+Dans une conversation Claude reliée à cet ordinateur, le coach demande « analyse les nouvelles parties » : Claude lit les dossiers sans `analyse-claude.json`, en extrait des images, suit la méthode et écrit `analyse-claude.json` (`general`, `priorites`, `moments: [{ t, texte }]`). L'app le reprend toute seule (`src/claude.js`) : les propositions apparaissent en **brouillon** dans la fenêtre d'analyse (bandeau « Proposition de Claude », pastille dans la liste des moments). Le coach relit, corrige et envoie : rien ne part au joueur sans lui. Quand l'analyse est terminée, l'app retire les vidéos du dossier. Pour redemander une analyse : supprimer `analyse-claude.json`.
+
 ## Installer
 
 Télécharge la dernière version dans l'onglet **Releases** de ce dépôt :

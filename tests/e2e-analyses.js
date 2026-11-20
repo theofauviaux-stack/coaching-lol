@@ -103,7 +103,7 @@ function launch(phase, dataDir, env) {
   Object.assign(j.settings, dd, { lolPath: path.join(DIR, 'Jeux') });
   fs.writeFileSync(path.join(DIR, 'joueur', 'coaching-data.json'), JSON.stringify(j));
 
-  const coachDone = launch('coach', path.join(DIR, 'coach'), Object.assign({ COACHING_LOL_RIOT: lol.url, COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url }, cloudEnv));
+  const coachDone = launch('coach', path.join(DIR, 'coach'), Object.assign({ COACHING_LOL_RIOT: lol.url, COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url, COACHING_LOL_CLAUDE_DIR: path.join(DIR, 'claude') }, cloudEnv));
   // moments envoyés au serveur par l'app du coach (calculés chez « Riot »), puis le joueur ouvre son app
   const t0 = Date.now();
   while (!(await fake.db.query(`select 1 from moments where match_id = 'EUW1_7300000099'`)).rows.length) {
@@ -165,6 +165,24 @@ function launch(phase, dataDir, env) {
   assert.ok(/Darius contre Garen.*2.*5.*À exporter/.test(rj.liste[0]), rj.liste[0]);
   assert.strictEqual(rc.videosApresFin, 'en_ligne', 'vidéos gardées à la fin pour l\'export');
   assert.ok(/le joueur peut l'exporter/i.test(rc.fin), rc.fin);
+  // analyses par Claude : dossier préparé, réponse reprise en brouillons, vidéos retirées à la fin
+  assert.ok(/^\d{4}-\d\d-\d\d UCE Uawawa Darius contre Garen \[[0-9a-f]{8}\]$/.test(rc.claudeDossier.nom), rc.claudeDossier.nom);
+  assert.deepStrictEqual(rc.claudeDossier.racine, ['LISEZ-MOI.txt', rc.claudeDossier.nom, 'methode-coach.md'].sort());
+  assert.deepStrictEqual(rc.claudeDossier.fichiers, ['a-analyser.json', 'dossier.txt', 'partie.json', 'videos']);
+  assert.deepStrictEqual(rc.claudeDossier.videos, ['01_5m55.webm', '04_15m25.webm']);
+  assert.ok(rc.claudeDossier.tailles.every(n => n > 1000), JSON.stringify(rc.claudeDossier.tailles));
+  assert.strictEqual(rc.claudeDossier.dossier, 'DOSSIER DE PARTIE (Coaching LoL) — à analyser');
+  assert.strictEqual(rc.claudeDossier.filmes, 6);
+  assert.deepStrictEqual([rc.claudeDossier.moment.temps, rc.claudeDossier.moment.video, rc.claudeDossier.moment.secondeDansLaVideo], ['6:30', 'videos/01_5m55.webm', 35]);
+  assert.deepStrictEqual(rc.claudeDossier.moment.discussion, [{ auteur: 'joueur', texte: 'Je pensais que leur jungler était bot, je n\'avais pas de ward.' }]);
+  assert.ok(/Analyse de Claude prête — Darius contre Garen de UCE Uawawa/.test(rc.claudeNotif), rc.claudeNotif);
+  assert.strictEqual(rc.claudeErreurs, 'Moment inconnu : 123');
+  assert.ok(/UCE Uawawa.*Claude/.test(rc.liste[0]), 'pastille « Claude » dans la liste : ' + rc.liste[0]);
+  assert.ok(/Analyse par Claude/.test(rc.claudeEncadre) && /Ouvrir le dossier/.test(rc.claudeEncadre), rc.claudeEncadre);
+  assert.deepStrictEqual(rc.claudeGeneral, { bandeau: true, pastilles: 2, texte: 'Résumé de Claude : bonne lane, une mort évitable à 6:30.\n\nPriorités de travail :\n1. Ward la rivière avant 6:00\n2. Back avec la wave poussée' });
+  assert.deepStrictEqual(rc.claudeMoment, { bandeau: true, texte: 'Proposition de Claude pour 6:30 : pas de vision de la rivière, Kha\'Zix arrive par le haut.' });
+  assert.deepStrictEqual(rc.claudeApresEnvoi, { bandeau: false, pastilles: 1 }, 'proposition utilisée après l\'envoi ; reste celle de la discussion générale');
+  assert.deepStrictEqual(rc.claudeApresFin, { videos: false, fichiers: ['a-analyser.json', 'analyse-claude.json', 'dossier.txt', 'erreurs-import.txt', 'partie.json'], brouillons: 0 });
   // export : dossier sur l'ordinateur du joueur, puis suppression de l'app et du serveur
   assert.ok(/Analyse exportée \(2 vidéos \+ débrief\)/.test(rj.export), rj.export);
   const dirs = fs.readdirSync(path.join(DIR, 'export'));

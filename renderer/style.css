@@ -492,6 +492,15 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .an-who { font-size: 11.5px; font-weight: 700; margin-bottom: 3px; }
 .an-txt { font-size: 13.5px; white-space: pre-wrap; line-height: 1.45; }
 .an-reply { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+.an-ai { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 8px 7px 11px; border-radius: 8px; border: 1px solid rgba(195, 236, 127, .28); background: rgba(195, 236, 127, .07); color: var(--accent); font-size: 12.5px; }
+.an-ai span { flex: 1; color: var(--text); line-height: 1.45; }
+.an-ai .btn { padding: 4px 10px; font-size: 12px; }
+.mo-ai { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 7px; border-radius: 10px; border: 1px solid rgba(195, 236, 127, .35); color: var(--accent); font-style: normal; font-size: 10.5px; font-weight: 700; vertical-align: 1px; }
+.an-claude { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+.an-claude > svg { color: var(--accent); flex: none; }
+.an-claude > div { flex: 1; }
+.an-claude b { color: var(--text); }
+.an-claude .btn { flex: none; }
 .an-reply textarea { flex: 1; resize: vertical; min-height: 40px; }
 .sd-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; max-height: 52vh; overflow-y: auto; }
 .sd-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; }

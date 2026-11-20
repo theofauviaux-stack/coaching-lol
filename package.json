@@ -1,7 +1,7 @@
 {
   "name": "coaching-lol",
   "productName": "Coaching LoL",
-  "version": "1.6.8",
+  "version": "1.6.9",
   "description": "Suivi privé de coaching League of Legends : parties SoloQ au rôle coaché, objectifs, sessions.",
   "main": "main.js",
   "author": "Theo Fauviaux",
@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node tests/run.js && node tests/live.js && node tests/moments.js && node tests/replay.js && node tests/players.js && node tests/lp.js && node tests/history.js && node tests/macupdate.js && node tests/cloud.js && node tests/cloud-sql.js && node tests/bookings-sql.js && node tests/reports-sql.js && node tests/analyses-sql.js",
+    "test": "node tests/run.js && node tests/live.js && node tests/moments.js && node tests/replay.js && node tests/players.js && node tests/lp.js && node tests/history.js && node tests/macupdate.js && node tests/cloud.js && node tests/cloud-sql.js && node tests/bookings-sql.js && node tests/reports-sql.js && node tests/analyses-sql.js && node tests/claude.js",
     "dist": "electron-builder",
     "release": "electron-builder --publish always",
     "test:e2e": "node tests/e2e-bookings.js",

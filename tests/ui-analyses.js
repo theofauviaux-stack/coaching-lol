@@ -110,25 +110,49 @@ module.exports = async function ({ app, win, fs, path }) {
       await until(`state.data.analyses && state.data.analyses.list.length === 1`, 240000);
       await until(`window.__toasts.some(t => /Partie à analyser/.test(t))`, 15000);
       out.notification = (await toasts()).find(t => /Partie à analyser/.test(t));
+      // dossier pour Claude : préparé tout seul sur l'ordinateur du coach (vidéos, dossier de partie, fiche)
+      const cdir = process.env.COACHING_LOL_CLAUDE_DIR;
+      let fd = null;
+      for (const t0 = Date.now(); !fd && Date.now() - t0 < 60000; await wait(300)) {
+        const d = fs.existsSync(cdir) ? fs.readdirSync(cdir).filter(n => /\[[0-9a-f]{8}\]$/.test(n)) : [];
+        if (d.length) fd = path.join(cdir, d[0]);
+      }
+      if (!fd) throw new Error('dossier pour Claude absent');
+      const man = JSON.parse(fs.readFileSync(path.join(fd, 'a-analyser.json'), 'utf8'));
+      out.claudeDossier = { nom: path.basename(fd), racine: fs.readdirSync(cdir).filter(n => !n.startsWith('.')).sort(), fichiers: fs.readdirSync(fd).sort(), videos: fs.readdirSync(path.join(fd, 'videos')).sort(),
+        tailles: fs.readdirSync(path.join(fd, 'videos')).map(f => fs.statSync(path.join(fd, 'videos', f)).size), dossier: fs.readFileSync(path.join(fd, 'dossier.txt'), 'utf8').split('\n')[0],
+        filmes: man.moments.filter(x => x.video).length, moment: man.moments.find(x => x.t === 390000) };
+      await until(`state.data.claude && state.data.claude.waiting === 1`, 20000);
+      // Claude écrit sa réponse dans le dossier : l'app la reprend en brouillons
+      fs.writeFileSync(path.join(fd, 'analyse-claude.json'), JSON.stringify({ version: 1, analysisId: man.analysisId, general: 'Résumé de Claude : bonne lane, une mort évitable à 6:30.', priorites: ['Ward la rivière avant 6:00', 'Back avec la wave poussée'],
+        moments: [{ t: 390000, texte: 'Proposition de Claude pour 6:30 : pas de vision de la rivière, Kha\'Zix arrive par le haut.' }, { t: 123, texte: 'moment inconnu' }] }));
+      await until(`window.__toasts.some(t => /Analyse de Claude prête/.test(t))`, 20000);
+      out.claudeNotif = (await toasts()).find(t => /Analyse de Claude prête/.test(t));
+      out.claudeErreurs = fs.existsSync(path.join(fd, 'erreurs-import.txt')) ? fs.readFileSync(path.join(fd, 'erreurs-import.txt'), 'utf8').trim() : '';
       await wait(300);
       out.pastille = await js(`(() => { const b = document.querySelector('[data-page="analyses"] .nav-badge'); return b ? b.textContent : null; })()`);
       await js(`document.querySelector('[data-page="analyses"]').click(); 0`);
       await wait(600);
       out.liste = await js(`[...document.querySelectorAll('.table tr.click')].map(r => r.textContent.replace(/\\s+/g, ' ').trim())`);
+      out.claudeEncadre = await js(`document.querySelector('.an-claude') ? document.querySelector('.an-claude').textContent.replace(/\\s+/g, ' ').trim() : ''`);
       await shot('a4-liste-coach');
       await js(`document.querySelector('[data-action="analysis-open"]').click(); 0`);
       await until(`!!document.querySelector('.an-thread')`, 20000);
       out.filGeneral = await js(`document.querySelector('.an-thread').textContent.replace(/\\s+/g, ' ').trim()`);
+      out.claudeGeneral = await js(`({ bandeau: !!document.querySelector('.an-ai'), texte: document.querySelector('#an-text').value, pastilles: document.querySelectorAll('.mo-ai').length })`);
+      await shot('a4b-proposition-claude');
       out.pastilleApres = await js(`(() => { const b = document.querySelector('[data-page="analyses"] .nav-badge'); return b ? b.textContent : null; })()`);
       await js(`document.querySelector('.mo-row[data-v="' + state.moments.data.moments.findIndex(x => x.t === 390000) + '"]').click(); 0`);
       await until(`!!document.querySelector('.an-msg.joueur')`);
       out.filMoment = await js(`[...document.querySelectorAll('.an-msg')].map(m => m.querySelector('.an-txt').textContent)`);
+      out.claudeMoment = await js(`({ bandeau: !!document.querySelector('.an-ai'), texte: document.querySelector('#an-text').value })`);
       out.video = await videoOk();
       out.filmes = await js(`document.querySelectorAll('.mo-has').length`);
       await shot('a5-analyse-coach');
       await fill('#an-text', 'Regarde la mini-carte à 6:10 : Kha\'Zix était top. Ward la rivière avant 6:00.');
       await js(`document.querySelector('[data-action="an-send"]').click(); 0`);
       await until(`document.querySelectorAll('.an-msg.coach').length === 1`);
+      out.claudeApresEnvoi = await js(`({ bandeau: !!document.querySelector('.an-ai'), pastilles: document.querySelectorAll('.mo-ai').length })`);
       mark('coach-a-repondu');
       // réponse du joueur : affichée sans fermer la fenêtre, la vidéo continue
       await js(`document.querySelector('.mo-video video').dataset.marque = '1'; 0`);
@@ -142,6 +166,8 @@ module.exports = async function ({ app, win, fs, path }) {
       await wait(400);
       out.fin = await js(`document.querySelector('.an-thread').textContent.replace(/\\s+/g, ' ').trim()`);
       out.videosApresFin = await js(`state.data.analyses.list[0].clipsState`);
+      for (const t0 = Date.now(); fs.existsSync(path.join(fd, 'videos')) && Date.now() - t0 < 20000;) await wait(300);
+      out.claudeApresFin = { videos: fs.existsSync(path.join(fd, 'videos')), fichiers: fs.readdirSync(fd).sort(), brouillons: Object.keys(JSON.parse(fs.readFileSync(path.join(data, 'claude-brouillons.json'), 'utf8'))).length };
       await shot('a9-terminee-coach');
       // le joueur exporte : l'analyse disparaît chez le coach
       await until(`state.data.analyses.list.length === 0`, 120000);

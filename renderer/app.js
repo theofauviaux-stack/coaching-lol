@@ -814,7 +814,7 @@ function threadHtml(S) {
     <div class="an-msgs">${items.length ? items.map(c => `<div class="an-msg ${c.author}${c.author === S.me ? ' mine' : ''}"><div class="an-who">${who(c)} <span class="faint">${dateTimeFr(c.at)}</span></div><div class="an-txt">${esc(c.text)}</div></div>`).join('')
       : `<div class="faint small">Pas encore de message${mo ? ' sur ce moment' : ''}.</div>`}</div>
     ${A.status === 'ouverte'
-      ? `<div class="an-reply"><textarea id="an-text" rows="2" placeholder="${S.me === 'coach' ? 'Ta réponse au joueur…' : 'Ta réponse ou ta question au coach…'}">${esc(draft)}</textarea><button class="btn primary" data-action="an-send">${icon('send', 15)} Envoyer</button></div>`
+      ? `${(S.fromClaude || {})[S.sel] ? `<div class="an-ai">${icon('sparkles', 14)}<span><b>Proposition de Claude</b> : relis-la, corrige-la si besoin, puis envoie-la au joueur.</span><button class="btn ghost" data-action="an-ai-clear" data-tip="Retirer cette proposition">Effacer</button></div>` : ''}<div class="an-reply"><textarea id="an-text" rows="${(S.fromClaude || {})[S.sel] ? 8 : 2}" placeholder="${S.me === 'coach' ? 'Ta réponse au joueur…' : 'Ta réponse ou ta question au coach…'}">${esc(draft)}</textarea><button class="btn primary" data-action="an-send">${icon('send', 15)} Envoyer</button></div>`
       : `<div class="an-closed">${icon('check', 14)} Analyse terminée${A.closedAt ? ' le ' + dateFr(A.closedAt) : ''} : la discussion est fermée.
         ${S.me === 'coach'
           ? 'Le joueur peut l\'exporter sur son ordinateur (vidéos + débrief) ; elle sera alors supprimée du serveur. Sans export, les vidéos sont effacées 7 jours après la fin.'
@@ -824,12 +824,13 @@ const gameNameOf = riotId => String(riotId || 'Joueur').split('#')[0];
 function momentsRows(S) {
   const m = S.data, A = S.mode === 'analysis' ? S.analysis : null;
   const badge = n => (n ? `<i class="mo-cnt">${icon('chat', 10)}${n}</i>` : '');
+  const ai = i => (A && (S.fromClaude || {})[i] ? `<i class="mo-ai" data-tip="Réponse proposée par Claude, en brouillon">${icon('sparkles', 10)}Claude</i>` : '');
   const general = A ? `<div class="mo-row ${S.sel === -1 ? 'on' : ''}" data-action="mo-sel" data-v="-1">
       <span class="mo-t">—</span><span class="mo-ico">${icon('chat', 14)}</span>
-      <div class="mo-txt"><b>Discussion générale</b>${badge(A.comments.filter(c => c.t === null).length + (A.note ? 1 : 0))}<div class="small muted">${A.note ? esc(excerpt(A.note)) : 'La partie dans son ensemble'}</div></div></div>` : '';
+      <div class="mo-txt"><b>Discussion générale</b>${badge(A.comments.filter(c => c.t === null).length + (A.note ? 1 : 0))}${ai(-1)}<div class="small muted">${A.note ? esc(excerpt(A.note)) : 'La partie dans son ensemble'}</div></div></div>` : '';
   return general + m.moments.map((x, i) => `<div class="mo-row ${i === S.sel ? 'on' : ''}" data-action="mo-sel" data-v="${i}">
       <span class="mo-t">${mmss(x.t)}${clipFor(m, x) ? `<i class="mo-has">${icon('play', 10)}</i>` : ''}</span><span class="mo-ico ${x.tone}">${icon(MO_ICON[x.type] || 'info', 14)}</span>
-      <div class="mo-txt"><b>${moTitle(x)}</b>${A ? badge(A.comments.filter(c => c.t === x.t).length) : ''}<div class="small muted">${momentDetail(x)}</div>${x.tags && x.tags.length && x.type !== 'objectif' ? `<div class="mo-tags">${x.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
+      <div class="mo-txt"><b>${moTitle(x)}</b>${A ? badge(A.comments.filter(c => c.t === x.t).length) + ai(i) : ''}<div class="small muted">${momentDetail(x)}</div>${x.tags && x.tags.length && x.type !== 'objectif' ? `<div class="mo-tags">${x.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
 }
 function momentsHtml() {
   const S = state.moments;
@@ -918,12 +919,24 @@ async function openAnalysis(id) {
   else {
     setAnalysis(r);
     const S = state.moments, A = S.analysis, m = S.data;
+    applyClaude(S, r.claude);
     const firstC = A.comments.find(c => c.t !== null);
     const iC = firstC ? m.moments.findIndex(x => x.t === firstC.t) : -1;
     const iV = m.moments.findIndex(x => clipFor(m, x));
     S.sel = A.note || A.comments.some(c => c.t === null) ? -1 : iC >= 0 ? iC : iV >= 0 ? iV : -1;
   }
   showMoments();
+}
+// propositions de Claude (dossier « Analyses pour Claude ») : brouillons des réponses, à relire avant d'envoyer
+function applyClaude(S, c) {
+  S.fromClaude = {};
+  if (!c || S.analysis.status !== 'ouverte') return;
+  const used = c.used || {};
+  if (c.general && !used.g && !S.drafts[-1]) { S.drafts[-1] = c.general; S.fromClaude[-1] = true; }
+  S.data.moments.forEach((x, i) => {
+    const txt = (c.moments || {})[x.t];
+    if (txt && !used[x.t] && !S.drafts[i]) { S.drafts[i] = txt; S.fromClaude[i] = true; }
+  });
 }
 function setAnalysis(r) {
   const S = state.moments, a = r.analysis;
@@ -1038,6 +1051,7 @@ function pageAnalyses() {
   const A = D().analyses;
   if (!A) return `<h1>Analyses</h1><div class="empty">Les analyses se font depuis l'ordinateur du joueur.</div>`;
   const coach = A.me === 'coach';
+  const C = coach ? D().claude : null;
   const rows = A.list.map(a => {
     const [cls, txt] = analysisState(a, A.me);
     const nV = a.clips.length;
@@ -1049,13 +1063,17 @@ function pageAnalyses() {
       <td class="l muted">${dateTimeFr(a.createdAt)}</td>
       <td>${a.clipsState === 'en_ligne' ? nV + ' ' + icon('video', 13, 'muted') : '<span class="faint">effacées</span>'}</td>
       <td>${a.comments.length + (a.note ? 1 : 0)} ${icon('chat', 13, 'muted')}</td>
-      <td><span class="chip ${cls}">${txt}</span></td></tr>`;
+      <td><span class="chip ${cls}">${txt}</span>${C && C.ready[a.id] ? ` <span class="chip accent" data-tip="Claude a proposé des réponses : elles t'attendent en brouillon">${icon('sparkles', 12)} Claude</span>` : ''}</td></tr>`;
   }).join('');
   const intro = coach
     ? 'Parties envoyées par les joueurs : regarde leurs vidéos et réponds sur chaque moment. « Terminer l\'analyse » garde la discussion et efface les vidéos du serveur.'
     : 'Parties que tu as envoyées au coach. Pour en envoyer une : Parties › une partie › « Moments clés de la partie » › Filmer les moments, puis « Envoyer au coach ».';
+  const claudeBox = C ? `<div class="an-claude">${icon('sparkles', 16)}<div><b>Analyse par Claude</b> · ${C.waiting
+      ? `${C.waiting} partie${C.waiting > 1 ? 's' : ''} prête${C.waiting > 1 ? 's' : ''} pour Claude. Dans une conversation Claude reliée à cet ordinateur, demande « analyse les nouvelles parties » : ses propositions arrivent ici en brouillon, tu les relis avant de les envoyer.`
+      : 'Chaque partie envoyée est préparée pour Claude dans un dossier de ton ordinateur (vidéos, données, ta méthode dans methode-coach.md).'}
+      ${C.error ? `<div class="red small" style="margin-top:4px">${esc(C.error)}</div>` : ''}</div><button class="btn" data-action="claude-folder">${icon('folder', 15)} Ouvrir le dossier</button></div>` : '';
   return `<h1>Analyses</h1><div class="sub">${intro}</div>
-    ${A.error ? `<div class="note" style="margin-bottom:12px">${icon('alert', 14)} ${esc(A.error)}</div>` : ''}
+    ${A.error ? `<div class="note" style="margin-bottom:12px">${icon('alert', 14)} ${esc(A.error)}</div>` : ''}${claudeBox}
     ${rows ? `<table class="table"><tr>${coach ? '<th class="l">Joueur</th>' : ''}<th class="l">Partie</th><th class="l">Envoyée le</th><th>Vidéos</th><th>Messages</th><th>Statut</th></tr>${rows}</table>`
       : `<div class="empty">${A.loaded ? (coach ? 'Aucune partie envoyée pour l\'instant.' : 'Tu n\'as pas encore envoyé de partie.') : '<span class="spinner"></span> Chargement…'}</div>`}`;
 }
@@ -1785,8 +1803,24 @@ document.addEventListener('click', async e => {
       el.disabled = false;
       if (!r || !r.ok) { toast(r ? r.message : 'Erreur inconnue.', 'err', 7000); break; }
       S.drafts[S.sel] = '';
+      if (S.fromClaude) S.fromClaude[S.sel] = false;
       setAnalysis(r);
       updateAnalysisParts();
+      break;
+    }
+    case 'an-ai-clear': {
+      const S = state.moments;
+      if (!S || !S.analysis) break;
+      const mo = S.sel >= 0 ? S.data.moments[S.sel] : null;
+      S.drafts[S.sel] = '';
+      if (S.fromClaude) S.fromClaude[S.sel] = false;
+      window.api.claudeDismiss(S.analysis.id, mo ? mo.t : null);
+      updateAnalysisParts();
+      break;
+    }
+    case 'claude-folder': {
+      const r = await window.api.openClaudeFolder();
+      if (r && !r.ok) toast(r.message, 'err', 7000);
       break;
     }
     case 'an-close': {

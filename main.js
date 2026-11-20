@@ -14,6 +14,7 @@ const liveMod = require('./src/live');
 const momentsMod = require('./src/moments');
 const replayMod = require('./src/replay');
 const debriefMod = require('./src/debrief');
+const claudeMod = require('./src/claude');
 const { pathToFileURL } = require('url');
 // vidéos des moments : lues dans l'app par l'adresse clip://v/<joueur_partie>/<fichier>.webm
 protocol.registerSchemesAsPrivileged([{ scheme: 'clip', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -94,6 +95,7 @@ function viewData() {
   d.session = { role: session.role, playerId: session.playerId, source: session.source, readOnly: !canEdit() };
   d.bookings = bookingsView();
   d.analyses = analysesView();
+  d.claude = claudeView();
   if (session.source === 'cloud') d.reports = session.role === 'joueur' ? reports.mine.map(r => Object.assign({ playerId: session.playerId }, r)) : [];
   if (canEdit()) {
     const k = getSecret('apiKey');
@@ -740,6 +742,7 @@ async function refreshAnalyses() {
     analyses.error = e.message;
   }
   if (session && JSON.stringify([analyses.list, analyses.error]) !== before) refreshView();
+  if (me === 'coach') syncClaudeFolder();
 }
 function analysesView() {
   const me = analysisRole();
@@ -760,7 +763,8 @@ async function getAnalysis({ id }) {
   const r = me === 'coach' ? await cloud.coachAnalysisGet(getPushToken(), id) : await cloud.analysisGet(playerToken(), id);
   keepAnalysis(r.analysis, true);
   setTimeout(refreshView, 0);
-  return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId) };
+  const cd = me === 'coach' ? readClaudeDrafts()[id] : null;
+  return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId), claude: cd ? { general: cd.general, moments: cd.moments, used: cd.used || {} } : null };
 }
 async function commentAnalysis({ id, t, text }) {
   const me = analysisRole();
@@ -770,6 +774,7 @@ async function commentAnalysis({ id, t, text }) {
   const tt = t === null || t === undefined || t === '' ? null : Math.round(Number(t));
   const r = me === 'coach' ? await cloud.coachAnalysisComment(getPushToken(), id, tt, msg) : await cloud.analysisComment(playerToken(), id, tt, msg);
   keepAnalysis(r.analysis, true);
+  if (me === 'coach') claudeDraftUsed(id, tt);
   refreshView();
   return { ok: true, analysis: r.analysis };
 }
@@ -804,6 +809,132 @@ async function purgeClips() {
 // l'analyse est supprimée du serveur (vidéos et messages) et ses vidéos locales de l'app, pour ne pas encombrer.
 let exportJob = null;
 const playerNameFor = id => String((((session && session.source === 'cloud' && remoteData ? remoteData.players : store.data.players) || []).find(p => p.id === id) || {}).riotId || 'Joueur').split('#')[0];
+// ---------------------------------------------------------------- analyses par Claude (ordinateur du coach, sans API)
+// Chaque partie envoyée par un joueur est préparée dans un dossier (vidéos, dossier de partie, fiche). Claude, dans une
+// conversation reliée à cet ordinateur, y écrit « analyse-claude.json » ; l'app le reprend comme brouillons de réponses.
+// dans le dossier personnel, pas dans Documents : pas d'autorisation macOS à demander, pas de copie des vidéos vers iCloud
+const claudeDir = () => process.env.COACHING_LOL_CLAUDE_DIR || path.join(app.getPath('home'), 'Coaching LoL', 'Analyses pour Claude');
+const claudeDraftsFile = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'claude-brouillons.json');
+const claudeState = { busy: false, error: '', waiting: 0, ready: {} };
+function readClaudeDrafts() {
+  try { return JSON.parse(fs.readFileSync(claudeDraftsFile(), 'utf8')) || {}; } catch (e) { return {}; }
+}
+function writeClaudeDrafts(d) {
+  fs.mkdirSync(path.dirname(claudeDraftsFile()), { recursive: true });
+  fs.writeFileSync(claudeDraftsFile() + '.tmp', JSON.stringify(d));
+  fs.renameSync(claudeDraftsFile() + '.tmp', claudeDraftsFile());
+}
+function claudeDraftUsed(id, t) {
+  const all = readClaudeDrafts();
+  if (!all[id]) return;
+  (all[id].used || (all[id].used = {}))[t === null ? 'g' : t] = true;
+  writeClaudeDrafts(all);
+}
+const claudeUnused = d => !!d && ((d.general && !(d.used || {}).g) || Object.keys(d.moments || {}).some(t => !(d.used || {})[t]));
+function claudeView() {
+  if (!isCoachMachine() || !canEdit() || !cloud) return null;
+  return { dir: claudeDir(), waiting: claudeState.waiting, ready: claudeState.ready, error: claudeState.error };
+}
+function claudeFolders(base) {
+  const map = new Map();
+  for (const e of fs.readdirSync(base, { withFileTypes: true })) {
+    const id8 = e.isDirectory() && !e.name.startsWith('.') ? claudeMod.idFromFolder(e.name) : null;
+    if (id8) map.set(id8, e.name);
+  }
+  return map;
+}
+async function prepareClaudeFolder(base, a) {
+  const full = (await cloud.coachAnalysisGet(getPushToken(), a.id)).analysis;
+  if (!full.moments || !full.moments.moments) return null;
+  const label = gameLabel(full);
+  const name = claudeMod.folderName(full, { playerName: playerName(full.playerId), label });
+  const tmp = path.join(base, '.prep-' + full.id.slice(0, 8));
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.mkdirSync(path.join(tmp, 'videos'), { recursive: true });
+  const localDir = path.join(videosDir(), videoKey(full.playerId, full.matchId));
+  for (const c of full.clips || []) {
+    if (!/^[\w-]+\.webm$/.test(c.file)) continue;
+    const out = path.join(tmp, 'videos', c.file);
+    const local = path.join(localDir, c.file);
+    if (fs.existsSync(local) && fs.statSync(local).size > 0) fs.copyFileSync(local, out);
+    else {
+      const res = await fetch(cloud.clipUrl(full.id, c.file));
+      if (!res.ok) throw new Error('vidéo ' + c.file + ' introuvable (' + res.status + ')');
+      fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+    }
+  }
+  const m = full.moments;
+  fs.writeFileSync(path.join(tmp, 'dossier.txt'), momentsMod.toText(m, { player: playerName(full.playerId), champName }));
+  fs.writeFileSync(path.join(tmp, 'partie.json'), JSON.stringify(m, null, 1));
+  fs.writeFileSync(path.join(tmp, claudeMod.MANIFEST), JSON.stringify(claudeMod.manifest(full, m, { playerName: playerName(full.playerId), label, champName }), null, 2));
+  fs.renameSync(tmp, path.join(base, name)); // le dossier n'apparaît qu'une fois complet
+  return name;
+}
+async function syncClaudeFolder() {
+  if (!cloud || !isCoachMachine() || !canEdit() || !analyses.loaded || analyses.error || claudeState.busy) return;
+  claudeState.busy = true;
+  const before = JSON.stringify([claudeState.waiting, claudeState.ready, claudeState.error]);
+  let err = '';
+  try {
+    const base = claudeDir();
+    fs.mkdirSync(base, { recursive: true });
+    if (!fs.existsSync(path.join(base, 'LISEZ-MOI.txt'))) fs.writeFileSync(path.join(base, 'LISEZ-MOI.txt'), claudeMod.README);
+    if (!fs.existsSync(path.join(base, 'methode-coach.md'))) fs.writeFileSync(path.join(base, 'methode-coach.md'), claudeMod.METHOD);
+    const folders = claudeFolders(base);
+    const drafts = readClaudeDrafts();
+    let changed = false, waiting = 0;
+    const ready = {};
+    for (const a of analyses.list) {
+      const id8 = a.id.slice(0, 8);
+      const open = a.status === 'ouverte';
+      let name = folders.get(id8);
+      if (!name && open && a.clipsState === 'en_ligne') {
+        try { name = await prepareClaudeFolder(base, a); } catch (e) { err = 'Préparation pour Claude de ' + gameLabel(a) + ' : ' + e.message; }
+      }
+      if (!name) continue;
+      const dir = path.join(base, name);
+      const rf = path.join(dir, claudeMod.RESULT);
+      if (open) {
+        if (!fs.existsSync(rf)) waiting++;
+        else {
+          const mtime = fs.statSync(rf).mtimeMs;
+          if (!drafts[a.id] || drafts[a.id].mtime !== mtime) {
+            let r;
+            try { r = claudeMod.parseResult(JSON.parse(fs.readFileSync(rf, 'utf8')), JSON.parse(fs.readFileSync(path.join(dir, claudeMod.MANIFEST), 'utf8'))); } catch (e) { r = { ok: false, errors: ['Fichier illisible : ' + e.message] }; }
+            if (r.ok) {
+              drafts[a.id] = Object.assign({ mtime, at: Date.now(), used: {} }, r.draft);
+              changed = true;
+              notifyCoach('Analyse de Claude prête', gameLabel(a) + ' de ' + playerName(a.playerId) + ' : ses propositions t\'attendent en brouillon dans « Analyses ».');
+            } else drafts[a.id] = { mtime, error: r.errors.join(' ') };
+            if (r.errors && r.errors.length) fs.writeFileSync(path.join(dir, 'erreurs-import.txt'), r.errors.join('\n') + '\n');
+            changed = true;
+          }
+          if (claudeUnused(drafts[a.id])) ready[a.id] = true;
+          if (drafts[a.id] && drafts[a.id].error) err = 'La réponse de Claude pour ' + gameLabel(a) + ' n\'a pas pu être lue : ' + drafts[a.id].error;
+        }
+      } else {
+        // analyse terminée : les vidéos (copies) quittent le dossier, le texte reste ; plus de brouillon
+        fs.rmSync(path.join(dir, 'videos'), { recursive: true, force: true });
+        if (drafts[a.id]) { delete drafts[a.id]; changed = true; }
+      }
+    }
+    // analyses exportées par le joueur (disparues de la liste) : idem
+    for (const [id8, name] of folders) {
+      if (analyses.list.some(a => a.id.startsWith(id8))) continue;
+      fs.rmSync(path.join(base, name, 'videos'), { recursive: true, force: true });
+      for (const id of Object.keys(drafts)) if (id.startsWith(id8)) { delete drafts[id]; changed = true; }
+    }
+    if (changed) writeClaudeDrafts(drafts);
+    Object.assign(claudeState, { waiting, ready });
+  } catch (e) {
+    err = 'Dossier pour Claude : ' + e.message;
+  } finally {
+    claudeState.busy = false;
+    claudeState.error = err;
+  }
+  if (session && JSON.stringify([claudeState.waiting, claudeState.ready, claudeState.error]) !== before) refreshView();
+}
+
 async function exportAnalysis({ id }) {
   if (!isPlayerOnline()) throw new Error('L\'export se fait depuis l\'espace du joueur, connecté au serveur du coach.');
   if (exportJob) throw new Error('Un export est déjà en cours.');
@@ -1524,6 +1655,8 @@ function registerIpc() {
   handle('analysis:comment', q => commentAnalysis(q || {}));
   handle('analysis:close', q => closeAnalysis(q || {}));
   handle('analysis:export', q => exportAnalysis(q || {}));
+  handle('claude:open', async () => { requireEdit(); fs.mkdirSync(claudeDir(), { recursive: true }); const e = await shell.openPath(claudeDir()); if (e) throw new Error(e); return { ok: true }; });
+  handle('claude:dismiss', async q => { requireEdit(); claudeDraftUsed(String((q || {}).id || ''), (q || {}).t === null || (q || {}).t === undefined ? null : Number(q.t)); await syncClaudeFolder(); return { ok: true }; });
   // autorisation « Enregistrement de l'écran » (Mac) : ouvrir le bon panneau des réglages, relancer l'app
   handle('videos:journal', async () => {
     const f = path.join(videosDir(), 'journal.txt');
