@@ -20,7 +20,9 @@ const SIG = {
   analyses_mine: { p_token: 'text' }, analysis_get: { p_token: 'text', p_id: 'uuid' },
   analysis_comment: { p_token: 'text', p_id: 'uuid', p_t: 'int', p_text: 'text', p_drawing: 'jsonb' },
   film_report_add: { p_token: 'text', p: 'jsonb' }, coach_film_reports: { p_key: 'text' }, coach_film_reports_done: { p_key: 'text', p_ids: 'bigint[]' },
-  analysis_export_done: { p_token: 'text', p_id: 'uuid' }, analysis_forget: { p_token: 'text', p_id: 'uuid' }
+  analysis_export_done: { p_token: 'text', p_id: 'uuid' }, analysis_forget: { p_token: 'text', p_id: 'uuid' },
+  // cours
+  course_save: { p_token: 'text', p_course: 'text', p: 'jsonb' }, courses_mine: { p_token: 'text' }, coach_courses: { p_key: 'text' }
 };
 
 // Tables du stockage de Supabase (déjà présentes dans un vrai projet), avec la sécurité par ligne activée
@@ -40,7 +42,7 @@ async function prepareDb(db, { twice = false } = {}) {
   await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
                  grant usage on schema public to anon, authenticated, service_role;`);
   await db.exec(STORAGE_SQL);
-  for (const f of ['schema.sql', 'analyses.sql', 'personnalisees.sql', 'journaux.sql']) {
+  for (const f of ['schema.sql', 'analyses.sql', 'personnalisees.sql', 'journaux.sql', 'cours.sql']) {
     const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', f), 'utf8');
     await db.exec(sql);
     if (twice) await db.exec(sql); // relançable

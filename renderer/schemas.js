@@ -111,7 +111,8 @@ const Schemas = (() => {
   }
 
   // ------------------------------------------------------------- la vague dans la lane (freeze, slow push, crash)
-  function lane({ rows }) {
+  function lane({ rows, labels = {} }) {
+    const L = Object.assign({ ally: 'ta tour', enemy: 'sa tour', river: 'rivière' }, labels);
     const lx0 = 128, lx1 = W - 26, rh = 82;
     let s = '';
     rows.forEach((r, i) => {
@@ -120,7 +121,7 @@ const Schemas = (() => {
       s += `<line x1="${lx0}" y1="${ly}" x2="${lx1}" y2="${ly}" class="lane"/>`;
       s += `<line x1="${(lx0 + lx1) / 2}" y1="${ly - 15}" x2="${(lx0 + lx1) / 2}" y2="${ly + 15}" class="river"/>`;
       s += `<rect x="${lx0 - 9}" y="${ly - 9}" width="18" height="18" rx="3" class="tw ally"/><rect x="${lx1 - 9}" y="${ly - 9}" width="18" height="18" rx="3" class="tw enemy"/>`;
-      if (i === 0) s += t(lx0, ly - 15, 'ta tour', 'f') + t(lx1, ly - 15, 'sa tour', 'f') + t((lx0 + lx1) / 2, ly - 19, 'rivière', 'f');
+      if (i === 0) s += t(lx0, ly - 15, L.ally, 'f') + t(lx1, ly - 15, L.enemy, 'f') + t((lx0 + lx1) / 2, ly - 19, L.river, 'f');
       const cx = lx0 + r.pos * (lx1 - lx0);
       for (let j = 0; j < r.ally; j++) s += `<circle cx="${cx - 6 - (j % 5) * 9}" cy="${ly - 4 + Math.floor(j / 5) * 9}" r="3.6" class="mn ally"/>`;
       for (let j = 0; j < r.enemy; j++) s += `<circle cx="${cx + 6 + (j % 5) * 9}" cy="${ly - 4 + Math.floor(j / 5) * 9}" r="3.6" class="mn enemy"/>`;

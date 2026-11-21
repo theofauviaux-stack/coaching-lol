@@ -29,6 +29,7 @@ const ERREURS = {
   videos_restantes: 'Les vidéos ne sont pas encore effacées du serveur.',
   partie_invalide: 'Partie illisible : elle n\'a pas pu être envoyée.',
   journal_invalide: 'Journal du tournage illisible.',
+  progression_invalide: 'Progression du cours illisible : elle n\'a pas pu être enregistrée.',
   trop_de_parties: 'Trop de parties personnalisées en attente : ton coach doit d\'abord ouvrir son app pour les reprendre.'
 };
 
@@ -117,6 +118,10 @@ class CloudClient {
   analysisGet(token, id) { return this.rpc('analysis_get', { p_token: token, p_id: id }); }
   analysisComment(token, id, t, text, drawing) { return this.rpc('analysis_comment', Object.assign({ p_token: token, p_id: id, p_t: t, p_text: text }, drawing ? { p_drawing: drawing } : {})); }
   filmReport(token, report) { return this.rpc('film_report_add', { p_token: token, p: report }); }
+  // cours : progression du joueur (le joueur écrit, le coach relit)
+  courseSave(token, courseId, data) { return this.rpc('course_save', { p_token: token, p_course: courseId, p: data }); }
+  coursesMine(token) { return this.rpc('courses_mine', { p_token: token }); }
+  coachCourses(key) { return this.rpc('coach_courses', { p_key: key }); }
   analysisExportDone(token, id) { return this.rpc('analysis_export_done', { p_token: token, p_id: id }); }
   analysisForget(token, id) { return this.rpc('analysis_forget', { p_token: token, p_id: id }); }
 
