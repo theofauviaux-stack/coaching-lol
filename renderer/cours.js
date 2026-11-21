@@ -51,9 +51,9 @@ const Cours = (() => {
     if (gs.length < 3) return out;
     const avg = f => { const v = gs.map(f).filter(x => typeof x === 'number' && isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
     const d15 = avg(g => g.deaths15), cs10 = avg(g => g.cs10), vis = avg(g => (g.duration ? g.vision / g.duration : null));
-    if (d15 !== null && d15 > 2) { out.survie = `${String(d15.toFixed(1)).replace('.', ',')} morts avant 15 min en moyenne`; out.tracking = 'beaucoup de morts en début de partie'; }
+    if (d15 !== null && d15 > 2) { out.survie = `${String(d15.toFixed(1)).replace('.', ',')} morts avant 15 min en moyenne`; out.tracking = 'beaucoup de morts en early'; }
     if (p.role !== 'Support' && p.role !== 'Jungle' && cs10 !== null && cs10 < 70) out.farm = `${Math.round(cs10)} CS à 10 min en moyenne`;
-    if (p.role === 'Support') out.support = vis !== null && vis < 2 ? `${String(vis.toFixed(2)).replace('.', ',')} de vision par minute` : 'ton rôle';
+    if (p.role === 'Support') out.support = vis !== null && vis < 2 ? `${String(vis.toFixed(2)).replace('.', ',')} de vision score par minute` : 'ton rôle';
     return out;
   }
 
@@ -139,7 +139,6 @@ const Cours = (() => {
           <div class="cs-bar"><i style="width:${Math.round(100 * st.seen / st.total)}%"></i></div>
           <div class="cs-steps">${nav}</div>
           <div class="cs-outcomes"><h3>Tu sauras</h3><ul>${c.outcomes.map(o => `<li>${esc(o)}</li>`).join('')}</ul></div>
-          ${c.credit ? `<div class="cs-credit">${icon('info', 13)} ${esc(c.credit)}</div>` : ''}
           <div class="cs-sources"><h3>Sources</h3>${c.sources.map(s => s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.t)}</a>` : `<span>${esc(s.t)}</span>`).join('')}</div>
         </aside>
         <section class="cs-main">${body}<div class="cs-foot">${prev}${next}</div></section>
@@ -187,9 +186,9 @@ const Cours = (() => {
         return `<button class="cs-opt ${cls}" data-action="c-map" data-w="${b.id}" data-v="${i}" ${done ? 'disabled' : ''}><span class="cs-letter">${letters[i]}</span>${esc(z.t)}</button>`;
       }).join('');
       const z = done ? b.zones[s.pick] : null;
-      return `${wHead('target', 'Sur la carte')}<div class="cs-q">${md(b.q)}</div>
+      return `${wHead('target', 'Sur la map')}<div class="cs-q">${md(b.q)}</div>
         <div class="cs-mapwrap">${mapSvg(b, s, right)}<div class="cs-mapopts">${opts}
-          ${done ? fb(z.ok, z.fb) + (z.ok ? '' : `<div class="cs-fb ok">${icon('check', 14)}<span><b>${esc(b.zones[right].t)}</b> : ${md(b.zones[right].fb)}</span></div>`) + `<button class="btn ghost sm" data-action="c-reset" data-w="${b.id}">Recommencer</button>` : '<div class="tiny faint">Clique une zone sur la carte, ou une réponse.</div>'}</div></div>`;
+          ${done ? fb(z.ok, z.fb) + (z.ok ? '' : `<div class="cs-fb ok">${icon('check', 14)}<span><b>${esc(b.zones[right].t)}</b> : ${md(b.zones[right].fb)}</span></div>`) + `<button class="btn ghost sm" data-action="c-reset" data-w="${b.id}">Recommencer</button>` : '<div class="tiny faint">Clique une zone sur la map, ou une réponse.</div>'}</div></div>`;
     },
 
     // ---------------------------------------------------------------- question à choix
@@ -322,11 +321,11 @@ const Cours = (() => {
     deaths() {
       const p = player();
       const tr = p && p.trends;
-      if (!tr || tr.games < 3) return `${wHead('skull', 'Ta carte des morts')}<div class="empty">Elle apparaîtra ici après 3 parties classées analysées par l'app.</div>`;
+      if (!tr || tr.games < 3) return `${wHead('skull', 'Tes morts sur la map')}<div class="empty">Elles apparaîtront ici après 3 parties ranked analysées par l'app.</div>`;
       const v = D().settings.ddVersion;
       const dots = tr.points.map(d => { const [l, t] = mapPct(d.x, d.y); return `<i class="tr-dot ${d.t < 15 * 60000 ? 'early' : ''}" style="left:${l}%;top:${t}%" data-tip="${esc(mmss(d.t) + ' · ' + d.zone)}"></i>`; }).join('');
       const z = tr.zones[0], w = tr.windows.slice().sort((a, b) => b.n - a.n)[0];
-      return `${wHead('skull', 'Ta carte des morts · ' + tr.games + ' dernières parties')}
+      return `${wHead('skull', 'Tes morts sur la map · ' + tr.games + ' dernières parties')}
         <div class="cs-deaths"><div class="tr-map" ${v ? `style="background-image:url(https://ddragon.leagueoflegends.com/cdn/${v}/img/map/map11.png)"` : ''}>${dots}
           <div class="tr-legend"><span><i class="tr-dot early"></i> avant 15 min</span><span><i class="tr-dot"></i> après</span></div></div>
           <div class="cs-dside"><div class="cs-big"><b>${String(tr.perGame.toFixed(1)).replace('.', ',')}</b><span>morts par partie</span></div>
@@ -346,8 +345,8 @@ const Cours = (() => {
       const a = Courses.ADCS.find(x => x.name === s.pick);
       const card = a ? `<div class="cs-adc">
           <div class="cs-adc-h">${img(a.name, 'cs-cimg big')}<div><b>${esc(a.name)}</b><div class="row" style="gap:6px;margin-top:4px"><span class="chip ${P[a.profile].k}">${esc(P[a.profile].t)}</span><span class="chip ${a.roam <= 1 ? 'accent' : a.roam === 2 ? 'amber' : 'red'}">${esc(Courses.ROAM_LABEL[a.roam])}</span></div></div></div>
-          <h3>Ton plan de lane</h3><ul class="cs-list">${P[a.profile].plan.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
-          <h3>Spécifique à ${esc(a.name)}</h3><p class="cs-p">${esc(a.note)}</p></div>` : '<div class="cs-adc empty">Choisis un ADC pour voir ton plan de lane.</div>';
+          <h3>Ton gameplan en lane</h3><ul class="cs-list">${P[a.profile].plan.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+          <h3>Spécifique à ${esc(a.name)}</h3><p class="cs-p">${esc(a.note)}</p></div>` : '<div class="cs-adc empty">Choisis un ADC pour voir ton gameplan en lane.</div>';
       return `${wHead('players', 'Ton ADC')}<div class="chips" style="margin-bottom:10px">${chips}</div><div class="cs-adcwrap"><div class="cs-champs">${grid}</div>${card}</div>`;
     },
 
@@ -361,7 +360,7 @@ const Cours = (() => {
       let v;
       if (miss.length) v = `<div class="cs-verdict ko">${icon('alert', 16)}<div><b>Reste en lane</b><span>Il manque : ${miss.map(r => esc(r.short)).join(', ')}.</span></div></div>`;
       else if (!plus) v = `<div class="cs-verdict mid">${icon('clock', 16)}<div><b>Roam possible, mais court</b><span>Ta lane tient, mais rien ne la protège d'un dive : fais vite et reviens.</span></div></div>`;
-      else v = `<div class="cs-verdict ok">${icon('check', 16)}<div><b>Va roamer</b><span>Ta lane tient sans toi et ton roam mène à quelque chose.</span></div></div>`;
+      else v = `<div class="cs-verdict ok">${icon('check', 16)}<div><b>Go roam</b><span>Ta lane tient sans toi et ton roam mène à quelque chose.</span></div></div>`;
       return `${wHead('arrow', 'Roam ou pas ?')}<div class="cs-q">Coche ce qui est vrai maintenant :</div>${rows}${v}`;
     },
 
@@ -375,23 +374,23 @@ const Cours = (() => {
   };
 
   const ROAM = [
-    { t: "Ta vague a crash sur leur tour, ou les 2 prochaines vagues sont sans canon", short: 'une vague qui couvre ton absence', need: true },
-    { t: "Ton ADC peut nettoyer seul (premier objet, Statikk ou niveau 6 selon le champion)", short: 'un ADC capable de tenir seul', need: true },
+    { t: "Ta wave a crash sous leur tower, ou les 2 prochaines waves n'ont pas de cannon", short: 'une wave qui couvre ton absence', need: true },
+    { t: "Ton ADC peut clear seul (premier item, Statikk Shiv ou level 6 selon le champion)", short: 'un ADC capable de tenir seul', need: true },
     { t: "Ton roam mène à quelque chose : un kill, un objectif, une vision importante", short: 'un vrai but au roam', need: true },
-    { t: "Le bot adverse n'a pas de gros contrôle (enchanteur ou mage)", short: '', need: false },
-    { t: "Le jungler adverse est localisé loin du bot", short: '', need: false }
+    { t: "La botlane adverse n'a pas de gros CC (enchanter ou mage)", short: '', need: false },
+    { t: "Le jungler adverse est tracké loin de la botlane", short: '', need: false }
   ];
   const WC = {
-    fort: ["en début de partie", "à partir du niveau 6", "avec 2 objets", "en fin de partie"],
-    gagne: ["en gagnant sa lane, puis en roamant", "en poussant une side lane", "dans les combats d'équipe", "en protégeant notre carry", "en prenant les objectifs avec le jungler"],
-    evite: ["de mourir avant mon moment fort", "les combats à 5 contre 5 avant 2 objets", "de laisser mes vagues se perdre", "de me faire attraper sans vision"]
+    fort: ["en early game", "à partir du level 6", "avec 2 items", "en late game"],
+    gagne: ["en gagnant sa lane, puis en roam", "en split push une side lane", "en teamfight", "en peel notre carry", "en prenant les objectifs avec le jungler"],
+    evite: ["de mourir avant mon power spike", "les teamfights 5v5 avant 2 items", "de perdre mes waves", "de me faire catch sans vision"]
   };
   const winconText = v => `Mon champion est fort ${WC.fort[v.fort]}. Il gagne la partie ${WC.gagne[v.gagne]}. Je dois éviter ${WC.evite[v.evite]}.`;
   function csOut(v) {
     const miss = 70 - v;
     const waves = Math.max(0, miss) / 6;
     return miss > 0
-      ? `<div class="cs-fb ko">${icon('alert', 14)}<span>Il te manque <b>${miss} CS</b> pour l'objectif de 70, soit environ <b>${String(waves.toFixed(1)).replace('.', ',')} vague${waves >= 2 ? 's' : ''}</b> perdue${waves >= 2 ? 's' : ''} à 10 minutes.</span></div>`
+      ? `<div class="cs-fb ko">${icon('alert', 14)}<span>Il te manque <b>${miss} CS</b> pour l'objectif de 70, soit environ <b>${String(waves.toFixed(1)).replace('.', ',')} wave${waves >= 2 ? 's' : ''}</b> perdue${waves >= 2 ? 's' : ''} à 10 minutes.</span></div>`
       : `<div class="cs-fb ok">${icon('check', 14)}<span>Objectif de 70 atteint${v >= 80 ? ', et même le repère de practice tool (80)' : ''}. Vise maintenant <b>8 CS/min</b> sur toute la partie.</span></div>`;
   }
 
@@ -401,11 +400,11 @@ const Cours = (() => {
     const mx = x0 + fr.pos * (x1 - x0);
     let s = `<rect x="6" y="6" width="${Wd - 12}" height="112" rx="12" class="wv-bg"/>`;
     s += `<line x1="${x0}" y1="${ly}" x2="${x1}" y2="${ly}" class="wv-lane"/>`;
-    s += `<path d="M${mid - 16} 12 L${mid + 16} 112" class="wv-river"/><text x="${mid - 10}" y="24" class="wv-t f" text-anchor="end">rivière</text>`;
-    if (fr.danger) s += `<rect x="${mx + 14}" y="${ly - 30}" width="${mid - mx - 14}" height="60" rx="8" class="wv-danger"/><text x="${(mx + mid) / 2 + 7}" y="${ly + 44}" class="wv-t red" text-anchor="middle">il doit venir jusqu'ici pour farmer</text>`;
+    s += `<path d="M${mid - 16} 12 L${mid + 16} 112" class="wv-river"/><text x="${mid - 10}" y="24" class="wv-t f" text-anchor="end">river</text>`;
+    if (fr.danger) s += `<rect x="${mx + 14}" y="${ly - 30}" width="${mid - mx - 14}" height="60" rx="8" class="wv-danger"/><text x="${(mx + mid) / 2 + 7}" y="${ly + 44}" class="wv-t red" text-anchor="middle">il doit venir jusqu'ici pour farm</text>`;
     if (fr.free) s += `<rect x="${x0 + 18}" y="${ly - 22}" width="190" height="44" rx="10" class="wv-free"/><text x="${x0 + 113}" y="${ly + 5}" class="wv-t ok b" text-anchor="middle">Temps libre pour toi</text>`;
-    s += `<g class="wv-tw ally"><rect x="${x0 - 13}" y="${ly - 13}" width="26" height="26" rx="5"/></g><text x="${x0}" y="${ly + 30}" class="wv-t" text-anchor="middle">ta tour</text>`;
-    s += `<g class="wv-tw enemy ${fr.tower ? 'shoot' : ''}"><rect x="${x1 - 13}" y="${ly - 13}" width="26" height="26" rx="5"/></g><text x="${x1}" y="${ly + 30}" class="wv-t" text-anchor="middle">sa tour</text>`;
+    s += `<g class="wv-tw ally"><rect x="${x0 - 13}" y="${ly - 13}" width="26" height="26" rx="5"/></g><text x="${x0}" y="${ly + 30}" class="wv-t" text-anchor="middle">ta tower</text>`;
+    s += `<g class="wv-tw enemy ${fr.tower ? 'shoot' : ''}"><rect x="${x1 - 13}" y="${ly - 13}" width="26" height="26" rx="5"/></g><text x="${x1}" y="${ly + 30}" class="wv-t" text-anchor="middle">sa tower</text>`;
     // 14 emplacements par camp, toujours présents : les sbires glissent d'une étape à l'autre
     const slot = (j, side) => {
       const col = Math.floor(j / 2), row = j % 2;
@@ -417,7 +416,7 @@ const Cours = (() => {
     for (let j = 0; j < 14; j++) { const [x, y] = slot(j, 1); s += `<circle r="4.6" cx="0" cy="0" class="mn enemy" style="transform:translate(${x}px,${y}px);opacity:${j < fr.enemy ? 1 : 0}"/>`; }
     if (fr.push === 'right') { const a = Math.min(x1 - 30, mx + 20 + Math.ceil(fr.enemy / 2) * 11); s += `<line x1="${a}" y1="${ly - 26}" x2="${a + 34}" y2="${ly - 26}" class="ln ln-ok" marker-end="url(#sch-ok)"/>`; }
     if (fr.push === 'left') { const a = Math.max(x0 + 30, mx - 20 - Math.ceil(fr.ally / 2) * 11); s += `<line x1="${a}" y1="${ly - 26}" x2="${a - 34}" y2="${ly - 26}" class="ln ln-stop" marker-end="url(#sch-stop)"/>`; }
-    s += `<g class="wv-key"><circle cx="24" cy="108" r="4" class="mn ally"/><text x="32" y="111" class="wv-t f">tes sbires</text><circle cx="104" cy="108" r="4" class="mn enemy"/><text x="112" y="111" class="wv-t f">les siens</text></g>`;
+    s += `<g class="wv-key"><circle cx="24" cy="108" r="4" class="mn ally"/><text x="32" y="111" class="wv-t f">tes minions</text><circle cx="104" cy="108" r="4" class="mn enemy"/><text x="112" y="111" class="wv-t f">les siens</text></g>`;
     return `<svg class="sch cs-wave" viewBox="0 0 ${Wd} 124" role="img" aria-label="${esc(fr.note)}">${MARKERS}${s}</svg>`;
   }
   const MARKERS = `<defs>${['ok', 'stop'].map(k => `<marker id="sch-${k}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ar-${k}"/></marker>`).join('')}</defs>`;
@@ -436,7 +435,7 @@ const Cours = (() => {
       const [x, y] = P(...CAMPS[k]);
       g += k === 'baron' || k === 'drake' ? `<circle cx="${x}" cy="${y}" r="7" class="obj"/>` : `<circle cx="${x}" cy="${y}" r="3.4" class="camp"/>`;
     }
-    g += `<text x="${P(31, 29)[0]}" y="${P(31, 29)[1] - 11}" text-anchor="middle" class="f">Nashor</text><text x="${P(69, 71)[0]}" y="${P(69, 71)[1] + 20}" text-anchor="middle" class="f">Drake</text>`;
+    g += `<text x="${P(31, 29)[0]}" y="${P(31, 29)[1] - 11}" text-anchor="middle" class="f">Baron</text><text x="${P(69, 71)[0]}" y="${P(69, 71)[1] + 20}" text-anchor="middle" class="f">Dragon</text>`;
     g += `<text x="${P(8, 92)[0] + 20}" y="${P(8, 92)[1] - 8}" class="sm b info">ta base</text><text x="${P(92, 8)[0] - 20}" y="${P(92, 8)[1] + 16}" text-anchor="end" class="sm b red">base ennemie</text>`;
     const ctx = b.context || {};
     if (!b.showPathAfter || done) for (const pth of ctx.paths || []) g += `<polyline points="${pth.pts.map(v => P(...pt(v)).join(',')).join(' ')}" class="ln ln-${pth.k || 'ok'} ${pth.dash ? 'dash' : ''}" fill="none" marker-end="url(#sch-${pth.k || 'ok'})"/>`;
@@ -446,7 +445,7 @@ const Cours = (() => {
       const cls = !done ? '' : i === right ? 'ok' : i === s.pick ? 'ko' : 'dim';
       g += `<g class="cs-zone ${cls}" ${done ? '' : `data-action="c-map" data-w="${b.id}" data-v="${i}"`}><circle cx="${x}" cy="${y}" r="${r}"/><text x="${x}" y="${y + 4.5}" text-anchor="middle">${'ABCDEF'[i]}</text></g>`;
     });
-    return `<svg class="sch cs-map" viewBox="0 0 ${S + 2 * o} ${S + 2 * o}" role="img" aria-label="Carte de la Faille">${MARKERS}${g}</svg>`;
+    return `<svg class="sch cs-map" viewBox="0 0 ${S + 2 * o} ${S + 2 * o}" role="img" aria-label="Map de la Faille">${MARKERS}${g}</svg>`;
   }
 
   // ------------------------------------------------------------------ quiz
@@ -491,7 +490,7 @@ const Cours = (() => {
     else action = '<span class="muted small">Ton coach peut l\'ajouter à tes objectifs suivis.</span>';
     return `<div class="tiny muted cs-kicker">MISE EN PRATIQUE</div><h2 class="cs-h">Applique-le en partie</h2>
       <p class="cs-p">Un cours ne change rien tant qu'il ne passe pas dans tes parties. Fais ces exercices de la Banque cette semaine, avec un seul objectif à la fois.</p>
-      <div class="cs-goal"><div class="cs-tile">${icon('target', 18)}</div><div class="t"><div class="tiny muted">OBJECTIF CONSEILLÉ</div><b>${esc(g.text)}</b><span>Mesuré automatiquement : ${esc(g.kpi)}${esc(tgt)}, sur tes parties classées.</span></div>${action}</div>
+      <div class="cs-goal"><div class="cs-tile">${icon('target', 18)}</div><div class="t"><div class="tiny muted">OBJECTIF CONSEILLÉ</div><b>${esc(g.text)}</b><span>Mesuré automatiquement : ${esc(g.kpi)}${esc(tgt)}, sur tes parties ranked.</span></div>${action}</div>
       <h3 class="exh">${icon('target', 15)} Exercices (${exs.length})</h3>
       ${exs.map(ex => exerciseCard(ex, { role: p && p.role, toggle: true, open: state.exOpen === ex.id })).join('')}`;
   }

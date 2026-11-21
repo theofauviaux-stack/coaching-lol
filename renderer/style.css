@@ -667,7 +667,6 @@ a.an-time { color: var(--accent); font-weight: 700; cursor: pointer; text-decora
 .cs-sources { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .cs-sources a { color: var(--blue); text-decoration: none; } .cs-sources a:hover { text-decoration: underline; }
 .cs-sources span { color: var(--muted); }
-.cs-credit { display: flex; gap: 7px; font-size: 12px; color: var(--violet); padding: 8px 10px; border-radius: 8px; background: rgba(183, 163, 240, .07); border: 1px solid rgba(183, 163, 240, .25); }
 .cs-main { min-width: 0; max-width: 780px; }
 .cs-kicker { letter-spacing: .12em; }
 .cs-h { font-size: 24px; margin: 4px 0 14px; }
