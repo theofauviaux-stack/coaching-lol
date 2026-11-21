@@ -335,8 +335,8 @@ const Courses = (() => {
     {
       id: 'tracking', n: 4, parcours: 'indiv', icon: 'radio', t: "Jungle tracking", minutes: 25, level: "Tous elos",
       roles: ['Top', 'Mid', 'ADC', 'Support', 'Jungle'],
-      summary: "La plupart des morts en early viennent d'un jungler qu'on n'a pas tracké. Les timers 2026, les indices de son start, et la balise au bon moment.",
-      outcomes: ["Connaître les timers 2026 par cœur", "Prédire sa position à 2:55", "Poser la balise défensive au bon moment"],
+      summary: "La plupart des morts en early viennent d'un jungler qu'on n'a pas tracké. Les timers 2026, les indices de son start, et la ward au bon moment.",
+      outcomes: ["Connaître les timers 2026 par cœur", "Prédire sa position à 2:55", "Poser la ward défensive au bon moment"],
       sources: [SRC.doc, SRC.riot26, SRC.wiki, SRC.dodge],
       lessons: [
         { id: 'timers', t: "Les timers de la Season 2026", blocks: [
@@ -354,7 +354,7 @@ const Courses = (() => {
           { p: "Le jungler adverse finit en général son full clear **du côté opposé à celui où il a commencé**, vers le spawn du Carapateur. Le savoir te dit où il sera vers 2:55." },
           { list: [
             "**Le leash** : un laner adverse arrive en retard en lane, il a leash son jungler de ce côté.",
-            "**Un buff vu** par une balise, ou le jungler aperçu au début.",
+            "**Un buff vu** par une ward, ou le jungler aperçu au début.",
             "**Son nombre de CS** sur le scoreboard : il te dit combien de camps il a déjà faits.",
             "**L'absence** : il n'apparaît nulle part sur un côté où il aurait dû se montrer."
           ] },
@@ -365,15 +365,15 @@ const Courses = (() => {
             { at: [50, 50], r: 8, t: "Mid lane", ok: false, fb: "Possible plus tard, mais vers 2:55 il termine d'abord son clear, botside." }
           ] }
         ] },
-        { id: 'ward', t: "La balise défensive au bon moment", blocks: [
-          { p: "Ton programme est clair : on pose ses balises **selon le tracking, pas par habitude**. Une balise posée à 1:30 dans un coin où il n'ira pas avant 4:00 ne sert à rien." },
-          { w: 'map', id: 'tk-map2', q: "Tu es mid. Le jungler adverse a start botside de sa jungle : il finira topside vers 2:55. Où poses-tu ta balise vers 2:40 ?", context: { markers: [{ at: 'rBleu', t: "Start vu (botside)", k: 'stop' }] }, zones: [
+        { id: 'ward', t: "La ward défensive au bon moment", blocks: [
+          { p: "Ton programme est clair : on ward **selon le tracking, pas par habitude**. Une ward posée à 1:30 dans un coin où il n'ira pas avant 4:00 ne sert à rien." },
+          { w: 'map', id: 'tk-map2', q: "Tu es mid. Le jungler adverse a start botside de sa jungle : il finira topside vers 2:55. Où poses-tu ta ward vers 2:40 ?", context: { markers: [{ at: 'rBleu', t: "Start vu (botside)", k: 'stop' }] }, zones: [
             { at: [36, 40], r: 8, t: "River topside, près du mid", ok: true, fb: "Oui : c'est son chemin vers toi et vers le Carapateur top, juste au bon moment." },
             { at: [64, 60], r: 8, t: "River botside, près du mid", ok: false, fb: "Il a commencé de ce côté : à 2:55, il sera de l'autre côté de la map." },
             { at: [47, 66], r: 7, t: "Tes Raptors", ok: false, fb: "Dans ta propre jungle, botside : pas sur son chemin à ce moment-là." },
             { at: [53, 34], r: 7, t: "Ses Raptors", ok: false, fb: "Trop deep et risqué seul ; et il est déjà passé par là." }
           ] },
-          { key: "Le bon réflexe : je sais d'où il vient, je pose ma balise sur son chemin **juste avant** qu'il y passe." }
+          { key: "Le bon réflexe : je sais d'où il vient, je ward sur son chemin **juste avant** qu'il y passe." }
         ] },
         { id: 'jouer', t: "Jouer avec l'info", blocks: [
           { p: "Le tracking ne sert que s'il change ta façon de jouer :" },
@@ -394,7 +394,7 @@ const Courses = (() => {
       quiz: [
         { q: "À quelle heure spawn le Carapateur en 2026 ?", opts: ["2:00", "2:55", "3:15", "3:30"], a: 1, why: "35 s plus tôt qu'en 2025 : 2:55." },
         { q: "Un jungler qui start topside finit en général son clear…", opts: ["Topside", "Botside", "Au mid", "À sa base"], a: 1, why: "Il termine du côté opposé à son start." },
-        { q: "Quand poser ta balise défensive ?", opts: ["Le plus tôt possible", "Juste avant qu'il passe, sur son chemin", "Jamais", "Après sa mort"], a: 1, why: "Selon le tracking, pas par habitude." },
+        { q: "Quand poser ta ward défensive ?", opts: ["Le plus tôt possible", "Juste avant qu'il passe, sur son chemin", "Jamais", "Après sa mort"], a: 1, why: "Selon le tracking, pas par habitude." },
         { q: "Un indice que le jungler a start de ton côté :", opts: ["Ton laner adverse arrive en retard (leash)", "Ton adversaire est déjà en lane", "La wave arrive", "Aucun"], a: 0, why: "Un laner en retard a leash son jungler de ce côté." },
         { q: "Tu ne sais pas où est le jungler adverse. Tu joues…", opts: ["Comme s'il était de ton côté", "Comme s'il était mort", "Agressif", "Normalement"], a: 0, why: "Sans info, on suppose le pire." },
         { q: "Quand spawn les larves du Néant ?", opts: ["5:00", "6:00", "8:00", "15:00"], a: 2, why: "8:00, une seule fois ; elles despawn à 14:45." }
@@ -423,7 +423,7 @@ const Courses = (() => {
             "**Le mauvais timing de back** : rester trop longtemps low HP, ou back en laissant la wave sous ta tower."
           ] },
           { w: 'match', id: 'sv-causes', q: "Pour chaque mort, retrouve la cause principale.", choices: ["Facecheck", "Overextend", "Mauvais back"], items: [
-            { s: "Je suis allé poser une balise dans le bush de la river, seul, sans vision : le jungler y était.", a: 0, why: "Entrer seul dans une zone sans vision : facecheck. Mieux : une balise ou le Brouilleur oraculaire avant d'entrer, ou y aller avec un allié." },
+            { s: "Je suis allé ward le bush de la river, seul, sans vision : le jungler y était.", a: 0, why: "Entrer seul dans une zone sans vision : facecheck. Mieux : une ward ou le Brouilleur oraculaire avant d'entrer, ou y aller avec un allié." },
             { s: "Je push ma lane jusqu'à sa tower, le jungler adverse n'avait pas été vu depuis 2 minutes.", a: 1, why: "Loin de ta tower sans info : overextend." },
             { s: "J'étais à 30 % de HP, j'ai voulu farm une wave de plus, je me suis fait engage.", a: 2, why: "Le back devait avoir lieu avant : la wave ne valait pas le risque." },
             { s: "J'ai chase un adversaire low dans sa jungle et deux autres sont sortis du fog.", a: 1, why: "Trop loin, sans vision, avec des adversaires MIA." }
@@ -437,7 +437,7 @@ const Courses = (() => {
             { s: "12 min. Les 5 adversaires sont visibles au dragon, de l'autre côté de la map.", a: false, why: "Tout le monde est visible et loin : tu peux push." },
             { s: "Le mid adverse a disparu de sa lane il y a 10 s. Tu es bot, avancé.", a: true, why: "Un mid MIA vient souvent botlane ou à la river." },
             { s: "Le jungler adverse vient d'apparaître toplane. Tu es bot, à ta place.", a: false, why: "Il est loin : pas de danger immédiat de sa part." },
-            { s: "25 min, Baron up, aucun adversaire visible. Tu veux poser une balise près du Baron, seul.", a: true, why: "5 adversaires MIA près d'un objectif : n'y va pas seul." }
+            { s: "25 min, Baron up, aucun adversaire visible. Tu veux ward près du Baron, seul.", a: true, why: "5 adversaires MIA près d'un objectif : n'y va pas seul." }
           ] }
         ] },
         { id: 'carte', t: "Tes morts sur la map", blocks: [
@@ -482,7 +482,7 @@ const Courses = (() => {
         { id: 'side', t: "Side lane ou group", blocks: [
           { p: "Après la laning phase, tu as deux options : tenir une **side lane** (split push) ou **group** avec ton équipe. Ça dépend de ton champion, de tes items et de la position des adversaires." },
           { p: "En 2026, Riot a voulu rendre le split push et le siege plus rentables : les **plates restent sur les towers** toute la partie (aussi sur les inner et inhibitor towers), les champions melee font **20 % de dégâts en plus** aux towers, et les waves arrivent plus vite après la laning phase (toutes les 25 s, puis 20 s)." },
-          { schema: { type: 'flow', caption: "Une grille rapide pour décider.", nodes: [{ t: "Je gagne mon 1v1 ?", k: 'q', no: { t: "Group avec l'équipe" } }, { t: "Je sais où sont les adversaires ?", k: 'q', no: { t: "Recule ou pose une balise d'abord" } }, { t: "Split push : force-les à répondre", k: 'ok' }] } },
+          { schema: { type: 'flow', caption: "Une grille rapide pour décider.", nodes: [{ t: "Je gagne mon 1v1 ?", k: 'q', no: { t: "Group avec l'équipe" } }, { t: "Je sais où sont les adversaires ?", k: 'q', no: { t: "Recule ou ward d'abord" } }, { t: "Split push : force-les à répondre", k: 'ok' }] } },
           { w: 'scenario', id: 'mc-side', steps: [
             { s: "22 min. Tu joues un champion fort en 1v1, avec un item d'avance. Ton équipe tient le mid à 4. Le Baron spawn dans 1 minute.", opts: [
               { t: "Je push la side lane bot, puis je rejoins pour le Baron", ok: true, fb: "Oui : tu forces un adversaire à venir te répondre, puis tu rejoins à temps pour l'objectif." },
@@ -590,11 +590,11 @@ const Courses = (() => {
       sources: [SRC.doc, SRC.riot26],
       lessons: [
         { id: 'role', t: "Ton rôle en 2026", blocks: [
-          { p: "En 2026, chaque rôle a une quête de rôle. Celle du support débloque un **emplacement réservé aux balises de contrôle**, une **réduction sur leur prix** et plus de gold passif. Tes trois missions ne changent pas : **protéger ton ADC**, **contrôler la vision**, **impacter la map** au bon moment." },
+          { p: "En 2026, chaque rôle a une quête de rôle. Celle du support débloque un **emplacement réservé aux pinks**, une **réduction sur leur prix** et plus de gold passif. Tes trois missions ne changent pas : **protéger ton ADC**, **contrôler la vision**, **impacter la map** au bon moment." },
           { list: [
             "**Score de vision par minute** : 2 ou plus (ton programme).",
             "**Kill participation** : 65 % ou plus pour un support.",
-            "**Balises posées, balises détruites, balises de contrôle achetées** : suivies dans l'app à chaque partie."
+            "**Wards posées, wards détruites, pinks achetées** : suivies dans l'app à chaque partie."
           ] },
           { p: "En Season 16, les waves arrivent plus vite et la botlane est plus dure à dive : les fenêtres de roam sont plus courtes, il faut mieux les choisir. C'est l'objet de la leçon 4." }
         ] },
@@ -637,29 +637,29 @@ const Courses = (() => {
           { p: "Les supports très rapides (Janna, par exemple) profitent aussi du bonus de vitesse en quittant la base, qui dure en 2026 jusqu'à ta outer tower." }
         ] },
         { id: 'vision', t: "Ta vision", blocks: [
-          { p: "**Quelle balise de départ au level 1 ?** Ça dépend de ton jungler et de ta lane :" },
-          { w: 'match', id: 'sp-trinket', q: "Pour chaque situation, choisis ta balise de départ.", choices: ["Balise camouflée (jaune)", "Brouilleur oraculaire (rouge)", "Altération divinatoire (bleue)"], items: [
-            { s: "Ton jungler farm et a besoin d'un full clear tranquille.", a: 0, why: "Une balise pour couvrir son entrée de jungle ou son clear." },
-            { s: "Ton jungler veut gank bot tôt, ou ta lane gagne et veut le bush control.", a: 1, why: "Brouilleur oraculaire : tu détruis leurs balises et tu caches le gank." },
-            { s: "L'équipe adverse a des champions à hook et peut invade level 1.", a: 0, why: "Une balise pour couvrir l'invade." },
+          { p: "**Quel trinket au level 1 ?** Ça dépend de ton jungler et de ta lane :" },
+          { w: 'match', id: 'sp-trinket', q: "Pour chaque situation, choisis ton trinket de départ.", choices: ["Balise camouflée (jaune)", "Brouilleur oraculaire (rouge)", "Altération divinatoire (bleue)"], items: [
+            { s: "Ton jungler farm et a besoin d'un full clear tranquille.", a: 0, why: "Une ward pour couvrir son entrée de jungle ou son clear." },
+            { s: "Ton jungler veut gank bot tôt, ou ta lane gagne et veut le bush control.", a: 1, why: "Brouilleur oraculaire : tu clear leurs wards et tu caches le gank." },
+            { s: "L'équipe adverse a des champions à hook et peut invade level 1.", a: 0, why: "Une ward pour couvrir l'invade." },
             { s: "Mid game, tu joues un enchanter et personne dans ton équipe ne peut facecheck.", a: 2, why: "L'Altération divinatoire révèle de loin, sans risquer ta vie." }
           ] },
-          { p: "**Les balises de contrôle** : toujours une à chaque back. Une fois ta quête terminée, au moins une, et deux avant un objectif. Après 18 minutes, deux quand le contrôle des objectifs devient décisif. Seule exception : tu joues enchanter et tu es tout près d'un item important." },
-          { p: "**Les Lampes féériques** : ce sont des emplacements fixes qui donnent une vision élargie à la balise posée dessus. Surveille quand l'adversaire en utilise une, et détruis sa balise avec ton Brouilleur oraculaire ou une balise de contrôle : c'est souvent sa meilleure vision." }
+          { p: "**Les pinks** : toujours une à chaque back. Une fois ta quête terminée, au moins une, et deux avant un objectif. Après 18 minutes, deux quand le contrôle des objectifs devient décisif. Seule exception : tu joues enchanter et tu es tout près d'un item important." },
+          { p: "**Les Faelights** : ce sont des emplacements fixes qui donnent une vision élargie à la ward posée dessus. Surveille quand l'adversaire en utilise une, et clear sa ward avec ton Brouilleur oraculaire ou une pink : c'est souvent sa meilleure vision." }
         ] },
         { id: 'achats', t: "Tes achats", blocks: [
           { p: "Les règles d'achat du support en Season 16 (les prix peuvent bouger d'un patch à l'autre) :" },
           { list: [
             "**Potions de soin** : 2 au départ. Au premier back contre un engage support, 1 seule suffit. **Plus de potions après le premier back.**",
-            "**Potion rechargeable** : au premier back contre une lane de poke, si tu peux te la payer après tes composants et ta balise de contrôle. Jamais achetée ni vendue après 14 minutes.",
+            "**Potion rechargeable** : au premier back contre une lane de poke, si tu peux te la payer après tes composants et ta pink. Jamais achetée ni vendue après 14 minutes.",
             "**Bottes tôt** : quand tu joues engage et veux roam, contre une botlane ranged, ou contre beaucoup de skillshots. Sinon, prends plutôt des HP (Cristal de rubis).",
             "**Ordre** : bottes de base, puis premier item, puis bottes améliorées (en priorité si tu roam beaucoup).",
             "**Anti-soin** : après ton premier item support (parfois avant), rarement terminé. Contre un champion qui vit de ses heals, contre 2 champions qui se heal beaucoup, ou contre 1 seul très fed."
           ] },
           { w: 'choice', id: 'sp-achat', q: "Premier back avec 550 gold, contre Leona et Nautilus (deux engage supports). Que prends-tu ?", opts: [
-            { t: "Cristal de rubis, 1 balise de contrôle, 1 potion", ok: true, fb: "Des HP contre l'all-in, une balise de contrôle, et une seule potion suffit contre un engage." },
+            { t: "Cristal de rubis, 1 pink, 1 potion", ok: true, fb: "Des HP contre l'all-in, une pink, et une seule potion suffit contre un engage." },
             { t: "Bottes, Potion rechargeable, 2 potions", ok: false, fb: "La Potion rechargeable sert contre une lane de poke ; contre un all-in, les HP comptent plus." },
-            { t: "Rien, j'économise pour l'item complet", ok: false, fb: "Tu restes faible face à leur all-in. Un composant de HP et une balise de contrôle valent plus qu'un item plus tard." }
+            { t: "Rien, j'économise pour l'item complet", ok: false, fb: "Tu restes faible face à leur all-in. Un composant de HP et une pink valent plus qu'un item plus tard." }
           ] },
           { w: 'choice', id: 'sp-antiheal', q: "L'équipe adverse joue Soraka, et le reste ne se heal pas beaucoup. Anti-soin ?", opts: [
             { t: "Oui, après mon premier item support", ok: true, fb: "Soraka vit de ses heals : un seul champion de ce type suffit pour acheter l'anti-soin." },
@@ -682,8 +682,8 @@ const Courses = (() => {
         { id: 'jungler', t: "Jouer avec ton jungler", blocks: [
           { p: "Ton premier move dépend du style de ton jungler :" },
           { list: [
-            "**Il doit sécuriser son full clear** (junglers farm) : contre un jungler adverse fort, pose une balise pour défendre un invade de son côté.",
-            "**Il veut invade** (Bel'Veth, par exemple) : pose des balises dans la jungle adverse pour l'info, puis couvre ses camps, et sois prêt à bouger avec lui.",
+            "**Il doit sécuriser son full clear** (junglers farm) : contre un jungler adverse fort, ward pour défendre un invade de son côté.",
+            "**Il veut invade** (Bel'Veth, par exemple) : ward la jungle adverse pour l'info, puis couvre ses camps, et sois prêt à bouger avec lui.",
             "**Il veut gank tôt** (Briar, par exemple) : start Brouilleur oraculaire, et couvre l'entrée de votre jungle pour cacher son start."
           ] },
           { p: "Ensuite, joue autour de ses **power spikes** : beaucoup de junglers deviennent dangereux avec un item, et très dangereux avec deux. C'est là que tu joues plus agressif avec lui." },
@@ -693,8 +693,8 @@ const Courses = (() => {
       quiz: [
         { q: "Avec Draven, après un crash, tu…", opts: ["Repush tout de suite", "Laisses la wave bounce et tu freeze", "Back", "Roam top"], a: 1, why: "Jamais de perma push avec Draven ou Kalista." },
         { q: "Quand peux-tu roam en sécurité ?", opts: ["Dès que tu veux", "Quand la wave a crash ou que les 2 prochaines n'ont pas de cannon, et que ton ADC peut tenir", "Seulement au level 1", "Jamais"], a: 1, why: "Ta lane doit pouvoir tenir sans toi." },
-        { q: "Combien de balises de contrôle à chaque back ?", opts: ["Aucune", "Au moins une", "Cinq", "Seulement après 20 min"], a: 1, why: "Toujours une ; deux avant un objectif une fois ta quête terminée." },
-        { q: "Contre Leona et Nautilus, avec 550 gold au premier back :", opts: ["Potion rechargeable", "Cristal de rubis, balise de contrôle, 1 potion", "Rien", "3 potions"], a: 1, why: "Des HP contre l'all-in." },
+        { q: "Combien de pinks à chaque back ?", opts: ["Aucune", "Au moins une", "Cinq", "Seulement après 20 min"], a: 1, why: "Toujours une ; deux avant un objectif une fois ta quête terminée." },
+        { q: "Contre Leona et Nautilus, avec 550 gold au premier back :", opts: ["Potion rechargeable", "Cristal de rubis, pink, 1 potion", "Rien", "3 potions"], a: 1, why: "Des HP contre l'all-in." },
         { q: "Un mage botlane (Lux, Syndra…) est faible…", opts: ["Toute la partie", "Jusqu'au level 3 et en long trade", "Au level 6", "Jamais"], a: 1, why: "All-in court, jamais de long trade ; roam libre dès son Chapitre perdu." },
         { q: "Quel score de vision par minute vise un support ?", opts: ["0,5", "1", "2 ou plus", "5"], a: 2, why: "2 ou plus pour un support, d'après ton programme." }
       ],

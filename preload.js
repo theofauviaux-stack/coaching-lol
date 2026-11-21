@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('api', {
   deleteBilan: (playerId, id) => call('bilan:delete', { playerId, id }),
   openBilanFolder: playerId => call('bilan:open', { playerId }),
   filmReportsDone: ids => call('filmreport:done', { ids }),
+  courseProgress: q => call('course:progress', q),
   closeAnalysis: id => call('analysis:close', { id }),
   deleteAnalysis: id => ipcRenderer.invoke('analysis:delete', { id }),
   listCustomGames: () => call('custom:list'),

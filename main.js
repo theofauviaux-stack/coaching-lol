@@ -101,6 +101,7 @@ function viewData() {
   d.claude = claudeView();
   d.bilanDrafts = bilansView();
   if (session.role === 'joueur') mergePendingCustoms(d);
+  if (session.role === 'joueur' && session.source === 'cloud') mergeMyCourses(d);
   if (session.source === 'cloud') d.reports = session.role === 'joueur' ? reports.mine.map(r => Object.assign({ playerId: session.playerId }, r)) : [];
   if (canEdit()) {
     const k = getSecret('apiKey');
@@ -170,6 +171,7 @@ async function login(code) {
     startRemoteRefresh();
     await refreshBookings();
     await refreshReports();
+    await refreshCourses();
     await refreshAnalyses();
     return { ok: true, data: viewData() };
   } catch (e) {
@@ -185,6 +187,7 @@ function logout() {
   remoteData = null;
   bookings.mine = []; bookings.busy = [];
   reports.mine = [];
+  coursesState.mine = {};
   if (!isCoachMachine()) Object.assign(analyses, { list: [], loaded: false, error: '' });
   if (remoteTimer) clearInterval(remoteTimer);
   Object.assign(live, { games: [], checkedAt: null, error: '', first: true });
@@ -198,9 +201,11 @@ function startRemoteRefresh() {
     if (!session || session.source !== 'cloud') return clearInterval(remoteTimer);
     try {
       const seen = new Set(((((remoteData && remoteData.players) || []).find(p => p.id === session.playerId) || {}).bilans || []).map(b => b.id));
+      const before = new Set(Object.entries(((((remoteData && remoteData.players) || []).find(p => p.id === session.playerId) || {}).courses) || {}).filter(([, c]) => c && c.assigned).map(([id]) => id));
       remoteData = cloudMod.dataFromCloud(await cloud.getData(session.token), store.data);
       const me = ((remoteData.players || []).find(p => p.id === session.playerId) || {});
       for (const b of me.bilans || []) if (!seen.has(b.id) && session.role === 'joueur') notifyCoach('Nouveau bilan de ton coach', 'Bilan de ' + (b.label || 'ce mois') + ' : il est sur ton tableau de bord.');
+      for (const [id, c] of Object.entries(me.courses || {})) if (c && c.assigned && !before.has(id) && session.role === 'joueur') notifyCoach('Nouveau cours de ton coach', '« ' + courseTitle(id) + ' » t\'attend dans Cours.');
       refreshView();
     } catch (e) {
       if (e.code === 'session_expiree') { logout(); refreshView(); }
@@ -351,6 +356,78 @@ async function saveReport({ sessionId, data }) {
   store.save();
   refreshReports(); // envoi au serveur en arrière-plan
   return viewData();
+}
+
+// ---------------------------------------------------------------- cours : progression des joueurs, cours assignés
+// Ordinateur d'un joueur : sa progression (leçons vues, quiz, réponses gardées) part au serveur (course_progress).
+// Ordinateur du coach : cette progression est recopiée dans la fiche du joueur (players[].courses), à côté des
+// cours que le coach lui assigne ; tout repart chez le joueur avec les données du coach.
+const coursesData = require('./renderer/courses');
+const coursMod = require('./src/cours-progress');
+const coursesState = { mine: {}, loaded: false };
+const courseTitle = id => { const c = coursesData.byId(id); return c ? c.t : id; };
+async function courseProgress({ playerId, courseId, patch }) {
+  if (!session) throw new Error('Session expirée : entre à nouveau ton code.');
+  if (!coursMod.validId(String(courseId || '')) || !coursesData.byId(courseId)) throw new Error('Cours inconnu.');
+  const raw = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+  if ('assigned' in raw) { // le coach assigne (ou retire) un cours
+    requireEdit();
+    const p = playerOf(playerId);
+    p.courses = p.courses || {};
+    const cur = Object.assign({}, p.courses[courseId] || {});
+    if (raw.assigned) cur.assigned = Date.now(); else delete cur.assigned;
+    p.courses[courseId] = cur;
+    return { ok: true, data: changed(1500) };
+  }
+  if (session.role !== 'joueur' || session.playerId !== playerId) throw new Error('La progression se garde depuis l\'espace du joueur.');
+  const clean = coursMod.cleanPatch(raw);
+  if (session.source === 'cloud') {
+    const next = coursMod.apply(coursesState.mine[courseId], clean);
+    const res = await cloud.courseSave(session.token, courseId, coursMod.playerPart(next));
+    coursesState.mine[courseId] = Object.assign(next, { updatedAt: res.updatedAt || null });
+    return { ok: true, data: viewData() };
+  }
+  const p = playerOf(playerId); // joueur connecté sur l'ordinateur du coach
+  p.courses = p.courses || {};
+  p.courses[courseId] = coursMod.apply(p.courses[courseId], clean);
+  return { ok: true, data: changed(4000) };
+}
+// vue du joueur relié au serveur : sa progression récente, réunie avec celle que le coach a renvoyée
+function mergeMyCourses(d) {
+  const me = (d.players || []).find(p => p.id === session.playerId);
+  if (!me) return;
+  const all = Object.assign({}, me.courses || {});
+  for (const [id, pr] of Object.entries(coursesState.mine)) all[id] = coursMod.combine(all[id], coursMod.playerPart(pr));
+  me.courses = all;
+}
+async function refreshCourses() {
+  if (!cloud || !session) return;
+  let dirty = false;
+  try {
+    if (isCoachMachine()) {
+      const res = await cloud.coachCourses(getPushToken());
+      for (const r of res.courses || []) {
+        const p = store.data.players.find(x => x.id === r.playerId);
+        if (!p || !coursMod.validId(String(r.courseId || ''))) continue;
+        p.courses = p.courses || {};
+        const cur = p.courses[r.courseId] || {};
+        if (cur.syncedAt === r.updatedAt) continue;
+        const next = Object.assign(coursMod.combine(cur, r.data), { syncedAt: r.updatedAt });
+        if (coursesState.loaded && !coursMod.passed(cur) && coursMod.passed(next)) notifyCoach('Cours validé', playerName(p.id) + ' a validé « ' + courseTitle(r.courseId) + ' ».');
+        p.courses[r.courseId] = next;
+        dirty = true;
+      }
+      coursesState.loaded = true;
+      if (dirty) store.save();
+    } else if (session.source === 'cloud' && session.role === 'joueur') {
+      const res = await cloud.coursesMine(session.token);
+      const next = {};
+      for (const r of res.courses || []) if (coursMod.validId(String(r.courseId || ''))) next[r.courseId] = Object.assign({}, r.data, { updatedAt: r.updatedAt });
+      dirty = JSON.stringify(next) !== JSON.stringify(coursesState.mine);
+      coursesState.mine = next;
+    }
+  } catch (e) { /* serveur injoignable : on réessaie au prochain passage */ }
+  if (dirty) refreshView();
 }
 
 // séances en cours, par joueur (un créneau accepté qui suit immédiatement est inclus : 2 h)
@@ -2328,6 +2405,7 @@ function registerIpc() {
   handle('bilan:delete', q => deleteBilan(q || {}));
   handle('bilan:open', async q => { requireEdit(); const b = readBilans()[(q || {}).playerId]; const d = b ? path.join(claudeDir(), b.folder) : path.join(claudeDir(), claudeMod.BILAN_DIR); fs.mkdirSync(d, { recursive: true }); const e = await shell.openPath(d); if (e) throw new Error(e); return { ok: true }; });
   handle('filmreport:done', q => filmReportsDone(q || {}));
+  handle('course:progress', q => courseProgress(q || {}));
   handle('claude:open', async () => { requireEdit(); fs.mkdirSync(claudeDir(), { recursive: true }); const e = await shell.openPath(claudeDir()); if (e) throw new Error(e); return { ok: true }; });
   handle('claude:dismiss', async q => { requireEdit(); claudeDraftUsed(String((q || {}).id || ''), (q || {}).t === null || (q || {}).t === undefined ? null : Number(q.t)); await syncClaudeFolder(); return { ok: true }; });
   // autorisation « Enregistrement de l'écran » (Mac) : ouvrir le bon panneau des réglages, relancer l'app
@@ -2465,6 +2543,7 @@ app.whenReady().then(async () => {
         schedulePush(1000);
         setInterval(refreshBookings, 1500);
         setInterval(refreshReports, 1500);
+        setInterval(refreshCourses, 1500);
         setInterval(watchCoaching, 1000);
         setInterval(refreshAnalyses, 1500);
         setTimeout(pushMoments, 1500);
@@ -2488,6 +2567,8 @@ app.whenReady().then(async () => {
     setInterval(refreshBookings, FAST ? 2000 : 20 * 1000);
     setTimeout(refreshReports, FAST ? 700 : 6000);
     setInterval(refreshReports, FAST ? 2000 : 30 * 1000);
+    setTimeout(refreshCourses, FAST ? 900 : 8000);
+    setInterval(refreshCourses, FAST ? 2000 : 60 * 1000);
     setInterval(watchCoaching, FAST ? 1000 : 5 * 1000);
     setInterval(pollLive, FAST ? 2000 : 60 * 1000);
     setTimeout(refreshAnalyses, FAST ? 800 : 7000);

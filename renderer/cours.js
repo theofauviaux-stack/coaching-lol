@@ -596,7 +596,7 @@ const Cours = (() => {
       case 'c-goal': {
         const cc = Courses.byId(el.dataset.id); const p = player(); if (!cc || !p) return true;
         const g = cc.practice.goal;
-        const r = await window.api.addGoals({ playerId: p.id, goals: [{ text: g.text, kpi: g.kpi, target: g.target }], source: 'coach' });
+        const r = await window.api.addGoals(p.id, [{ text: g.text, kpi: g.kpi, target: g.target }], 'coach');
         apply(r, 'Objectif ajouté au suivi de ' + gameNameOf(p.riotId) + '.');
         return true;
       }
