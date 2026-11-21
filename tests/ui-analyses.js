@@ -52,6 +52,27 @@ module.exports = async function ({ app, win, fs, path }) {
       out.fichiers = fs.readdirSync(path.join(data, 'videos', 'p1_EUW1_7300000099')).sort();
       out.journal = fs.readFileSync(path.join(data, 'videos', 'journal.txt'), 'utf8');
       out.touches = fs.readFileSync(path.join(data, 'videos', 'touches.txt'), 'utf8').trim().split('\n');
+      // « Refilmer » puis « Annuler l'enregistrement » : tout s'arrête, les 4 vidéos d'avant restent, on peut relancer
+      {
+        const an = {};
+        await js(`window.__vp = []; 0`);
+        await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
+        await until(`window.__vp.some(x => /^Enregistrement 1/.test(x[0])) && !!document.querySelector('[data-action="mo-film-cancel"]')`, 60000);
+        an.bouton = await js(`document.querySelector('[data-action="mo-film-cancel"]').textContent.replace(/\\s+/g, ' ').trim()`);
+        await shot('a1d-annuler-enregistrement');
+        await js(`document.querySelector('[data-action="mo-film-cancel"]').click(); 0`);
+        an.pendant = await js(`(() => { const b = document.querySelector('[data-action="mo-film-cancel"]'); return b ? [b.disabled, b.textContent.trim()] : null; })()`);
+        await until(`window.__toasts.some(t => /Enregistrement annulé/.test(t))`, 30000);
+        await wait(300);
+        an.toast = (await toasts()).find(t => /Enregistrement annulé/.test(t));
+        an.barre = await js(`!!document.querySelector('.mo-vstatus')`);
+        an.filmer = await js(`[...document.querySelectorAll('[data-action="mo-film"]')].map(b => b.textContent.replace(/\\s+/g, ' ').trim())`);
+        an.fichiers = fs.readdirSync(path.join(data, 'videos', 'p1_EUW1_7300000099')).sort();
+        an.temporaire = fs.existsSync(path.join(data, 'videos', 'p1_EUW1_7300000099.nouveau'));
+        an.journal = fs.readFileSync(path.join(data, 'videos', 'journal.txt'), 'utf8');
+        an.clips = await js(`state.moments.data.clips.length`);
+        out.annulation = an;
+      }
       // choisir 2 vidéos sur 4, les commenter, envoyer
       await js(`document.querySelector('[data-action="mo-send"]').click(); 0`);
       await until(`document.querySelectorAll('.sd-card').length > 0`);

@@ -18,7 +18,7 @@ const partie = require('./fixtures/partie-moments')('P-UAWAWA');
 // ---------------------------------------------------------------- faux Riot (partie + timeline), client LoL et jeu
 const calls = { match: 0, lcu: [], replay: [] };
 // comme le vrai client : pas de fiche replay tant qu'on ne l'a pas créée, puis « checking », puis « download »
-const rp = { state: null, polls: 0, checks: 0, watching: false, loading: 3, time: 0, selection: '' };
+const rp = { state: null, polls: 0, checks: 0, watching: false, loading: 3, time: 0, paused: true, at: 0, selection: '' };
 const perso = require('./fixtures/lcu-v4')('P-UAWAWA', 7300000777);
 function startLol() {
   const srv = http.createServer((req, res) => {
@@ -52,8 +52,14 @@ function startLol() {
         calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
         if (!rp.watching || rp.loading-- > 0) return send(503, {});
         if (req.url === '/replay/playback') {
-          if (req.method === 'POST' && body && typeof body.time === 'number') rp.time = body.time;
-          return send(200, { time: rp.time, seeking: false, paused: false, speed: 1, length: 1200 });
+          // comme le jeu : le temps avance pendant la lecture
+          const now = () => (rp.paused ? rp.time : rp.time + (Date.now() - rp.at) / 1000);
+          if (req.method === 'POST' && body) {
+            const t = typeof body.time === 'number' ? body.time : now();
+            rp.time = t; rp.at = Date.now();
+            if ('paused' in body) rp.paused = !!body.paused;
+          }
+          return send(200, { time: now(), seeking: false, paused: !!rp.paused, speed: 1, length: 1200 });
         }
         if (req.url === '/replay/render') {
           // comme le jeu : sélection puis attache de la caméra (l'attache vaut pour la sélection en cours)
@@ -143,9 +149,25 @@ function launch(phase, dataDir, env) {
   assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
   assert.deepStrictEqual(rj.fichiers, ['01_5m55.webm', '02_8m25.webm', '03_13m25.webm', '04_15m25.webm'], 'extraits commencés 35 s avant chaque moment');
   assert.deepStrictEqual(rj.touches, ['1', '1', '1', '1'], 'touche du joueur (1er de l\'équipe bleue) avant chaque moment');
-  assert.ok(!calls.replay.some(x => x.startsWith('POST /replay/render')), 'plus de sélection par l\'API');
+  assert.ok(calls.replay.includes('POST /replay/render {"interfaceReplay":false,"interfaceTimeline":false,"interfaceChat":false,"outlineHover":false}')
+    && !calls.replay.some(x => x.startsWith('POST /replay/render') && /selectionName|cameraAttached/.test(x)), 'interface du replay épurée, pas de sélection par l\'API');
   assert.ok(calls.replay.includes('POST /replay/playback {"time":355,"paused":true,"speed":1}') && calls.replay.includes('POST /replay/playback {"paused":false,"speed":1}'), 'pause au début de l\'extrait puis lecture');
   assert.ok(/touche du joueur "1"/.test(rj.journal) && /caméra après la touche 1/.test(rj.journal) && /» Enregistrement 4\/4/.test(rj.journal), rj.journal);
+  assert.ok(/vidéo \{"w":1600,"h":900,"fps":30,"bps":2200000\}/.test(rj.journal) && /capture \{"source":"écran","largeur":\d+/.test(rj.journal), rj.journal);
+  assert.ok(/extrait 4 filmé \{"de":925,"a":1010,"arret":"durée fixe \(test\)","lead":[\d.]+,"sync":\[\[/.test(rj.journal) && /terminé \{"extraits":4/.test(rj.journal), rj.journal);
+  assert.ok(/"image":\{"samples":[1-9]/.test(rj.journal), 'image de la capture analysée (noire ? figée ?) : ' + rj.journal);
+  // annulation pendant « Refilmer »
+  const an = rj.annulation;
+  assert.ok(an, 'scénario d\'annulation');
+  assert.ok(/Annuler l'enregistrement/.test(an.bouton), an.bouton);
+  assert.ok(!an.pendant || (an.pendant[0] === true && /Annulation/.test(an.pendant[1])), JSON.stringify(an.pendant));
+  assert.ok(/Enregistrement annulé : tu peux relancer « Filmer les moments »/.test(an.toast), an.toast);
+  assert.strictEqual(an.barre, false, 'barre d\'avancement retirée');
+  assert.ok(an.filmer.some(b => /Refilmer/.test(b)), 'bouton pour relancer : ' + an.filmer.join(' | '));
+  assert.deepStrictEqual(an.fichiers, ['01_5m55.webm', '02_8m25.webm', '03_13m25.webm', '04_15m25.webm'], 'les vidéos d\'avant restent');
+  assert.strictEqual(an.temporaire, false, 'extraits partiels effacés');
+  assert.strictEqual(an.clips, 4);
+  assert.ok(/ANNULÉ par le joueur/.test(an.journal), an.journal);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
   assert.strictEqual(rj.cartes, 4);
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
@@ -181,7 +203,8 @@ function launch(phase, dataDir, env) {
   assert.ok(rc.claudeDossier.tailles.every(n => n > 1000), JSON.stringify(rc.claudeDossier.tailles));
   assert.strictEqual(rc.claudeDossier.dossier, 'DOSSIER DE PARTIE (Coaching LoL) — à analyser');
   assert.strictEqual(rc.claudeDossier.filmes, 6);
-  assert.deepStrictEqual([rc.claudeDossier.moment.temps, rc.claudeDossier.moment.video, rc.claudeDossier.moment.secondeDansLaVideo], ['6:30', 'videos/01_5m55.webm', 35]);
+  assert.deepStrictEqual([rc.claudeDossier.moment.temps, rc.claudeDossier.moment.video], ['6:30', 'videos/01_5m55.webm']);
+  assert.ok(Math.abs(rc.claudeDossier.moment.secondeDansLaVideo - 35) <= 0.3, 'seconde du moment dans la vidéo (synchronisation mesurée) : ' + rc.claudeDossier.moment.secondeDansLaVideo);
   assert.deepStrictEqual(rc.claudeDossier.moment.discussion, [{ auteur: 'joueur', texte: 'Je pensais que leur jungler était bot, je n\'avais pas de ward.' }]);
   assert.ok(/Analyse de Claude prête — Darius contre Garen de UCE Uawawa/.test(rc.claudeNotif), rc.claudeNotif);
   assert.strictEqual(rc.claudeErreurs, 'Moment inconnu : 123');

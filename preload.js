@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
   getMoments: (playerId, matchId) => call('moments:get', { playerId, matchId }),
   recordVideos: (playerId, matchId) => call('videos:record', { playerId, matchId }),
   deleteVideos: (playerId, matchId) => call('videos:delete', { playerId, matchId }),
+  cancelVideos: (playerId, matchId) => call('videos:cancel', { playerId, matchId }),
   onVideoStatus: cb => ipcRenderer.on('video:status', (e, v) => cb(v)),
   refreshAnalyses: () => call('analyses:refresh'),
   getAnalysis: id => call('analysis:get', { id }),

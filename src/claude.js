@@ -2,6 +2,7 @@
 // (vidéos, dossier de partie, consignes) ; Claude, dans une conversation reliée à l'ordinateur du coach, y écrit
 // « analyse-claude.json » ; l'app le reprend comme brouillons de réponses que le coach relit avant d'envoyer.
 const { mmss } = require('./moments');
+const { videoAt } = require('./replay');
 
 const RESULT = 'analyse-claude.json';
 const MANIFEST = 'a-analyser.json';
@@ -43,6 +44,10 @@ function manifest(a, m, { playerName, label, champName = c => c }) {
     discussionGenerale: said(null),
     videos: clips.map(c => ({
       fichier: 'videos/' + c.file, debut: c.start, fin: c.end,
+      // seconde 0 de la vidéo = « debut » en temps de jeu, décalée de « lead » ; « sync » : [seconde de la vidéo, temps de jeu]
+      // mesurés pendant le tournage (pauses du replay comprises). Ancienne vidéo sans sync : ±1 s.
+      lead: typeof c.lead === 'number' ? c.lead : null,
+      sync: Array.isArray(c.sync) ? c.sync : null,
       moments: (m.moments || []).filter(x => clipOf(x.t) === c).map(x => x.t)
     })),
     moments: (m.moments || []).map(x => {
@@ -50,7 +55,7 @@ function manifest(a, m, { playerName, label, champName = c => c }) {
       return {
         t: x.t, temps: mmss(x.t), type: x.type, titre: momentTitle(x, champName),
         video: c ? 'videos/' + c.file : null,
-        secondeDansLaVideo: c ? Math.max(0, Math.round(x.t / 1000 - c.start)) : null,
+        secondeDansLaVideo: c ? Math.round(videoAt(c, x.t / 1000) * 10) / 10 : null,
         discussion: said(x.t)
       };
     }),
@@ -100,7 +105,10 @@ L'app Coaching LoL dépose ici chaque partie qu'un joueur envoie au coach :
   - a-analyser.json : la fiche (moments, vidéos, commentaires du joueur)
   - dossier.txt     : le dossier de la partie (lanes, vision, chaque moment)
   - partie.json     : toutes les données de la partie (positions, participants)
-  - videos/         : les extraits filmés par le joueur (30 s avant chaque moment)
+  - videos/         : les extraits filmés par le joueur (35 s avant chaque moment, 10 s après),
+                      caméra sur le joueur, interface du replay épurée (sans panneau de lecture ni chat) :
+                      tableau des scores, mini-carte et barres de vie visibles. « secondeDansLaVideo »
+                      (a-analyser.json) donne la seconde exacte de chaque moment dans sa vidéo.
 
 Pour lancer l'analyse : dans une conversation Claude reliée à cet ordinateur, demander
 « analyse les nouvelles parties ». Claude lit chaque dossier sans « ${RESULT} »,

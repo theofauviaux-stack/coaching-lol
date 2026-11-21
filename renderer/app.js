@@ -749,9 +749,23 @@ const clipFor = (m, x) => (x && m.clips ? m.clips.find(c => x.t / 1000 >= c.star
 const isPlayerSpace = () => { const s = D().session; return !!(s && s.role === 'joueur'); };
 const fmtMo = b => (b / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: b < 10 * 1048576 ? 1 : 0 }) + ' Mo';
 const excerpt = (t, n = 90) => (String(t).length > n ? String(t).slice(0, n - 1) + '…' : String(t));
+// Seconde de la vidéo qui montre l'instant g (secondes de jeu) : copie de videoAt (src/replay.js)
+function videoAt(c, g) {
+  const s = Array.isArray(c && c.sync) ? c.sync.filter(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)) : [];
+  if (s.length >= 2) {
+    const last = s[s.length - 1];
+    if (g <= s[0][1]) return Math.max(0, s[0][0] - (s[0][1] - g)); // hors des points mesurés : 1 s de jeu = 1 s de vidéo
+    if (g >= last[1]) return Math.max(0, last[0] + (g - last[1]));
+    let i = 1;
+    while (s[i][1] < g) i++;
+    const [v0, g0] = s[i - 1], [v1, g1] = s[i];
+    return Math.max(0, v0 + (g - g0) * (v1 - v0) / (g1 - g0));
+  }
+  return Math.max(0, (Number(c && c.lead) || 0) + (g - ((c && c.start) || 0)));
+}
 function momentsVideo(m, x, c) {
   const S = state.moments;
-  const from = Math.max(0, Math.round(x.t / 1000 - c.start - 30)); // 30 s avant le moment : on voit ce qui l'amène
+  const from = Math.round(videoAt(c, x.t / 1000 - 30) * 10) / 10; // 30 s avant le moment : on voit ce qui l'amène
   const src = S.mode === 'analysis' ? `clip://r/${esc(S.analysis.id)}/${esc(c.file)}` : `clip://v/${esc(S.videoKey)}/${esc(c.file)}`;
   return `<div class="mo-video"><video src="${src}" data-from="${from}" controls autoplay muted playsinline></video>
     <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay · caméra sur le joueur</div></div>`;
@@ -785,7 +799,8 @@ function momentsHead(S, sub) {
   const prog = S.vstatus ? S.vprogress : S.sstatus ? S.sprogress : S.xprogress;
   const lol = S.canFilm && S.lol && !S.lol.found && S.mode === 'moments' && !(S.data && S.data.clips && S.data.clips.length) && !busy;
   return `<div class="mo-head"><h2>${title}</h2>${sub || ''}<span class="spacer"></span>${momentsButtons(S)}<button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
-    ${busy ? `<div class="mo-vstatus"><div class="mo-vline"><span class="spinner"></span><span class="mo-vtext">${esc(busy)}</span><span class="faint small">${S.vstatus ? 'Laisse le jeu s\'ouvrir : l\'app pilote le replay, puis le referme.' : S.xstatus ? 'Ne ferme pas l\'app pendant l\'export.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span><b class="mo-vpct">${Math.round((prog || 0) * 100)} %</b></div>
+    ${busy ? `<div class="mo-vstatus"><div class="mo-vline"><span class="spinner"></span><span class="mo-vtext">${esc(busy)}</span><span class="faint small">${S.vstatus ? (S.vcancel ? 'Fermeture du replay…' : 'Ne touche pas au jeu : l\'app pilote le replay, puis le referme.') : S.xstatus ? 'Ne ferme pas l\'app pendant l\'export.' : 'Garde l\'app ouverte pendant l\'envoi.'}</span><b class="mo-vpct">${Math.round((prog || 0) * 100)} %</b>${S.vstatus
+      ? `<button class="btn ghost mo-vcancel" data-action="mo-film-cancel" ${S.vcancel ? 'disabled' : ''} data-tip="Arrête l'enregistrement et ferme le replay (en cas de bug). Les vidéos déjà filmées avant restent : tu peux relancer « Filmer les moments » juste après.">${icon('close', 14)} ${S.vcancel ? 'Annulation…' : 'Annuler l\'enregistrement'}</button>` : ''}</div>
       <div class="mo-bar"><i style="width:${Math.max(2, Math.round((prog || 0) * 100))}%"></i></div></div>` : ''}
     ${S.perm && !busy ? `<div class="mo-lol mo-perm">${icon('alert', 15)}<div>${S.perm === 'acces'
       ? `<b>macOS bloque l'usage du clavier dans le replay</b> (l'app appuie sur la touche de ton joueur pour que la caméra le suive).
@@ -906,7 +921,7 @@ async function openMoments(matchId) {
     const first = r.moments.moments.findIndex(x => x.type === 'mort');
     Object.assign(state.moments, {
       data: r.moments, text: r.text, videoKey: r.videoKey, canFilm: !!r.canFilm, lol: r.lol, analysisId: r.analysisId || null, analysisClosed: !!r.analysisClosed,
-      vstatus: r.filming || null, vprogress: r.filmingProgress || 0, sstatus: r.sending || null, sel: first >= 0 ? first : 0
+      vstatus: r.filming || null, vprogress: r.filmingProgress || 0, vcancel: !!r.filmingCancelling, sstatus: r.sending || null, sel: first >= 0 ? first : 0
     });
   }
   showMoments();
@@ -980,10 +995,16 @@ window.api.onVideoStatus(async v => {
   if (v.error) {
     if (here) {
       S.vstatus = null;
+      S.vcancel = false;
       if (/^ACCES:/.test(v.error)) S.perm = 'acces'; else S.verror = v.error;
       showMoments();
     }
     if (!/^ACCES:/.test(v.error)) toast('Vidéos : ' + v.error, 'err', 9000);
+    return;
+  }
+  if (v.cancelled) {
+    if (here) { S.vstatus = null; S.vcancel = false; showMoments(); }
+    toast('Enregistrement annulé : tu peux relancer « Filmer les moments ».', 'ok', 7000);
     return;
   }
   if (v.done) {
@@ -995,7 +1016,11 @@ window.api.onVideoStatus(async v => {
     }
     return;
   }
-  if (here) { S.vstatus = v.text; S.vprogress = v.progress || S.vprogress || 0; if (!updateBar(v.text, S.vprogress)) showMoments(); }
+  if (here) {
+    if (v.cancelling && !S.vcancel) { S.vcancel = true; S.vstatus = v.text; showMoments(); return; }
+    if (S.vcancel) return; // on attend la fin de l'annulation
+    S.vstatus = v.text; S.vprogress = v.progress || S.vprogress || 0; if (!updateBar(v.text, S.vprogress)) showMoments();
+  }
 });
 function updateBar(text, p) {
   const t = $('.mo-vtext'), bar = $('.mo-bar i'), pct = $('.mo-vpct');
@@ -1928,6 +1953,7 @@ document.addEventListener('click', async e => {
       if (!S || !p) break;
       S.vstatus = 'Préparation…';
       S.vprogress = 0.01;
+      S.vcancel = false;
       S.perm = null;
       S.verror = null;
       showMoments();
@@ -1940,6 +1966,17 @@ document.addEventListener('click', async e => {
         showMoments();
         toast(r ? r.message : 'Erreur inconnue.', 'err', 9000);
       }
+      break;
+    }
+    case 'mo-film-cancel': {
+      const S = state.moments, p = player();
+      if (!S || !p || S.vcancel) break;
+      S.vcancel = true;
+      S.vstatus = 'Annulation…';
+      showMoments();
+      const r = await window.api.cancelVideos(p.id, S.matchId);
+      if (r && r.ok === false) { S.vcancel = false; toast(r.message, 'err'); showMoments(); }
+      else if (r && r.none) { S.vcancel = false; S.vstatus = null; showMoments(); }
       break;
     }
     case 'mo-unfilm': {

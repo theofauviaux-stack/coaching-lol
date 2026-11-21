@@ -26,12 +26,20 @@ assert.strictEqual(R.enableReplayApi('[General]\r\nEnableReplayApi=0\r\n').text,
 assert.strictEqual(R.enableReplayApi('[HUD]\nScale=1').text, '[HUD]\nScale=1\n[General]\nEnableReplayApi=1\n');
 assert.strictEqual(R.enableReplayApi('').text, '[General]\nEnableReplayApi=1\n');
 
-// ---- enregistrement complet avec un faux client et un faux jeu
+// ---- enregistrement complet avec un faux client et un faux jeu (le temps du replay avance avec l'horloge)
 function fakeWorld(opts = {}) {
-  const w = { clock: 0, log: [], states: opts.states || ['download', 'downloading', 'downloading', 'watch'], loadPolls: opts.loadPolls || 2, playback: { time: 0, seeking: false, length: 1200, paused: true }, render: { selectionName: '' }, renderPosts: [], recorded: [], keys: [], selected: null, killed: 0 };
+  const w = { clock: 0, log: [], states: opts.states || ['download', 'downloading', 'downloading', 'watch'], loadPolls: opts.loadPolls || 2, playback: { time: 0, seeking: false, length: 1200, paused: true, speed: 1 }, base: 0, at: 0, render: { selectionName: '' }, renderPosts: [], recorded: [], recs: [], keys: [], selected: null, killed: 0, sleeps: 0 };
   let si = 0, loaded = 0;
+  const advance = () => {
+    if (w.playback.paused || opts.stall) return;
+    w.playback.time = Math.min(w.playback.length, w.base + (w.clock - w.at) / 1000);
+    if (opts.pauseAt && w.playback.time >= opts.pauseAt && !w.pausedOnce) { w.pausedOnce = true; w.playback.paused = true; w.base = w.playback.time; }
+  };
   const io = {
-    now: () => w.clock, sleep: async ms => { w.clock += ms; }, status: t => w.log.push(t),
+    now: () => w.clock,
+    sleep: async ms => { w.sleeps++; if (opts.cancelAfter && w.sleeps > opts.cancelAfter) throw Object.assign(new Error('Enregistrement annulé.'), { cancelled: true }); w.clock += ms; },
+    status: t => w.log.push(t),
+    log: (what, data) => w.log.push('journal ' + what + (data === undefined ? '' : ' ' + JSON.stringify(data))),
     lcu: async (method, p, body) => {
       if (opts.noClient) throw new Error('ECONNREFUSED');
       w.log.push(method + ' ' + p + (body ? ' ' + JSON.stringify(body) : ''));
@@ -42,17 +50,12 @@ function fakeWorld(opts = {}) {
     replay: async (method, p, body) => {
       if (!w.watching || loaded++ < w.loadPolls) throw new Error('ECONNREFUSED');
       if (p === '/replay/playback') {
-        if (method === 'POST') { Object.assign(w.playback, body, { seeking: true }); return w.playback; }
+        advance();
+        if (method === 'POST') { Object.assign(w.playback, body, { seeking: 'time' in body }); w.base = w.playback.time; w.at = w.clock; return w.playback; }
         const r = Object.assign({}, w.playback); w.playback.seeking = false; return r;
       }
       if (p === '/replay/render') {
-        // comme le jeu : la sélection et l'attache de la caméra sont deux réglages ; l'attache vaut pour la sélection en cours
-        if (method === 'POST') {
-          w.renderPosts.push(body);
-          if ('selectionName' in body) w.render.selectionName = body.selectionName === (opts.selectable || 'UCE Uawawa') ? body.selectionName : '';
-          if ('cameraAttached' in body) w.render.cameraAttached = !!body.cameraAttached && !!w.render.selectionName && !('selectionName' in body);
-          return w.render;
-        }
+        if (method === 'POST') { w.renderPosts.push(body); Object.assign(w.render, body); }
         return w.render;
       }
       if (p === '/liveclientdata/playerlist') {
@@ -62,7 +65,16 @@ function fakeWorld(opts = {}) {
       }
       return {};
     },
-    record: async (s, file) => { w.recorded.push([s, file, w.playback.time, w.playback.paused, w.selected]); w.clock += s * 1000; },
+    // capture : comme main.js, tenue une fois la capture lancée ; health() d'après opts.image(rec, monde)
+    startRecording: async (file, o) => {
+      const rec = { file, source: o.source, seconds: o.seconds, startClock: w.clock, time: w.playback.time, paused: w.playback.paused, selected: w.selected };
+      w.recs.push(rec);
+      return {
+        health: () => (opts.image ? opts.image(rec, w) : { samples: 4, black: false, frozenSec: 0, live: true, bytes: 1000 }),
+        stop: async () => { rec.stopClock = w.clock; rec.stopTime = w.playback.time; w.recorded.push([(w.clock - rec.startClock) / 1000, file, rec.time, rec.paused, rec.selected]); return { bytes: 1000 }; },
+        cancel: async () => { rec.cancelled = true; }
+      };
+    },
     selectPlayer: async key => { if (opts.keyError) throw new Error(opts.keyError); w.keys.push([key, w.playback.time, w.playback.paused]); w.selected = key; },
     killGame: async () => { w.killed++; }
   };
@@ -75,10 +87,15 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
   let { w, io } = fakeWorld();
   let r = await R.recordGame(io, job, { poll: 1000 });
   assert.deepStrictEqual(r.clips.map(x => [x.start, x.end, x.file]), [[355, 440, '/videos/0_355.webm'], [505, 550, '/videos/1_505.webm'], [805, 850, '/videos/2_805.webm'], [925, 1010, '/videos/3_925.webm']]);
-  assert.deepStrictEqual(w.recorded.map(x => [x[0], x[2], x[3]]), [[85, 355, false], [45, 505, false], [45, 805, false], [85, 925, false]], 'chaque extrait filmé depuis le bon moment, replay relancé après la pause');
+  assert.deepStrictEqual(w.recorded.map(x => [x[0], x[2], x[3]]), [[85, 355, true], [45, 505, true], [45, 805, true], [85, 925, true]],
+    'capture lancée replay en pause au début de l\'extrait, arrêtée quand le temps de jeu atteint la fin');
+  assert.ok(w.recs.every(x => Math.abs(x.stopTime - Number(x.file.split('_')[1].split('.')[0]) - x.seconds) < 0.01), 'chaque extrait s\'arrête pile à sa fin en temps de jeu');
+  assert.deepStrictEqual(r.clips.map(x => [x.lead, x.sync]), [[0, [[0, 355], [85, 440]]], [0, [[0, 505], [45, 550]]], [0, [[0, 805], [45, 850]]], [0, [[0, 925], [85, 1010]]]], 'lecture sans à-coups : début et fin');
   assert.deepStrictEqual(w.keys, [['3', 355, true], ['3', 505, true], ['3', 805, true], ['3', 925, true]], 'touche du joueur (3e de l\'équipe bleue dans le replay) avant chaque moment, replay en pause');
   assert.ok(w.recorded.every(x => x[4] === '3'), 'joueur sélectionné pendant chaque extrait');
-  assert.strictEqual(w.renderPosts.length, 0, 'plus de sélection par l\'API (elle ne marche pas)');
+  assert.deepStrictEqual(w.renderPosts, [R.CLEAN_HUD], 'interface du replay épurée une fois, pas de sélection par l\'API');
+  assert.deepStrictEqual(R.CLEAN_HUD, { interfaceReplay: false, interfaceTimeline: false, interfaceChat: false, outlineHover: false });
+  assert.ok(w.recs.every(x => x.source === 'fenetre'), 'fenêtre du jeu filmée');
   assert.ok(w.log.some(x => x.startsWith('POST /lol-replays/v1/rofls/')) && !w.log.some(x => x.includes('/create')), 'pas de création de fiche quand le replay est déjà proposé');
   assert.strictEqual(r.camera, '3');
   assert.strictEqual(w.killed, 1, 'jeu fermé à la fin');
@@ -87,6 +104,58 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
   assert.ok(w.log.includes('Téléchargement du replay… 50 %'));
   assert.ok(w.log.some(x => x.endsWith('/watch {"componentType":"replay-button_match-history"}')));
   assert.ok(w.log.includes('Enregistrement 4/4…'));
+  assert.ok(w.log.some(x => x.startsWith('journal extrait 4 filmé') && /"arret":"fin de l'extrait"/.test(x)), 'journal : chaque extrait, sa fin, son image');
+  // replay mis en pause pendant un extrait (clic dans le jeu) : lecture relancée, synchronisation corrigée
+  ({ w, io } = fakeWorld({ states: ['watch'], pauseAt: 370 }));
+  r = await R.recordGame(io, job, { poll: 1000 });
+  assert.ok(w.log.some(x => /journal replay en pause pendant l'enregistrement/.test(x)), 'lecture relancée');
+  const c0 = r.clips[0];
+  assert.ok(c0.sync.length >= 3, JSON.stringify(c0.sync));
+  assert.strictEqual(w.recorded[0][0] > 85, true, 'extrait plus long en vidéo, mais complet en temps de jeu');
+  assert.ok(Math.abs(R.videoAt(c0, 360) - 5) < 0.6 && Math.abs(R.videoAt(c0, 400) - (45 + (w.recorded[0][0] - 85))) < 1.2, 'seconde de la vidéo après la pause : ' + JSON.stringify(c0.sync) + ' ' + R.videoAt(c0, 400));
+  // conversion temps de jeu → seconde de la vidéo
+  assert.strictEqual(R.videoAt({ start: 355, end: 440 }, 380), 25, 'ancienne vidéo : début de l\'extrait');
+  assert.strictEqual(R.videoAt({ start: 355, lead: 0.4 }, 380), 25.4);
+  assert.strictEqual(R.videoAt({ start: 355, sync: [[0.3, 355], [10.3, 365], [13.3, 365], [20.3, 372]] }, 370), 18.3, 'pause de 3 s du replay');
+  assert.strictEqual(R.videoAt({ start: 355, sync: [[0.3, 355], [10.3, 365]] }, 300), 0, 'avant l\'extrait : 0');
+  // replay bloqué : erreur claire, replay fermé, capture abandonnée
+  ({ w, io } = fakeWorld({ states: ['watch'], stall: true }));
+  await assert.rejects(R.recordGame(io, job, { poll: 1000 }), /n'avance plus depuis 15 s/);
+  assert.ok(w.killed === 1 && w.recs[0].cancelled, 'replay fermé, capture abandonnée');
+  // annulation par le joueur pendant un extrait
+  ({ w, io } = fakeWorld({ states: ['watch'], cancelAfter: 30 }));
+  await assert.rejects(R.recordGame(io, job, { poll: 1000 }), e => e.cancelled === true);
+  assert.ok(w.killed === 1 && w.recs.length === 1 && w.recs[0].cancelled && !w.recorded.length, 'annulation : replay fermé, extrait en cours abandonné');
+  // annulation pendant le téléchargement : rien à fermer
+  ({ w, io } = fakeWorld({ states: ['download', 'downloading'], cancelAfter: 2 }));
+  await assert.rejects(R.recordGame(io, job, { poll: 1000 }), e => e.cancelled === true);
+  assert.strictEqual(w.killed, 0, 'pas de replay ouvert : rien à fermer');
+  // image noire (fenêtre du jeu en plein écran exclusif sous Windows) : on filme l'écran à la place
+  const blackWindow = rec => ({ samples: 6, black: rec.source === 'fenetre', frozenSec: 0, live: true, bytes: 100 });
+  ({ w, io } = fakeWorld({ states: ['watch'], image: blackWindow }));
+  r = await R.recordGame(io, job, { poll: 1000, screenFallback: true });
+  assert.deepStrictEqual(w.recs.map(x => x.source), ['fenetre', 'ecran', 'ecran', 'ecran', 'ecran'], 'écran entier après une fenêtre noire');
+  assert.ok(w.recs[0].cancelled && r.clips.length === 4 && r.clips.every(c => c.source === 'ecran'));
+  assert.ok(w.log.some(x => /La fenêtre du jeu apparaît noire/.test(x)));
+  // sans solution de repli (Mac) : erreur claire
+  ({ w, io } = fakeWorld({ states: ['watch'], image: blackWindow }));
+  await assert.rejects(R.recordGame(io, job, { poll: 1000 }), /vidéo du jeu est noire.*Sans bordure/);
+  assert.strictEqual(w.killed, 1);
+  // image figée alors que le jeu avance
+  ({ w, io } = fakeWorld({ states: ['watch'], image: (rec, ww) => ({ samples: 20, black: false, frozenSec: (ww.clock - rec.startClock) / 1000 > 10 ? 6 : 0, live: true, bytes: 100 }) }));
+  await assert.rejects(R.recordGame(io, job, { poll: 1000 }), /image du jeu s'est figée/);
+  // analyse de l'image pas encore « vivante » (aucun changement vu) : on ne conclut rien
+  ({ w, io } = fakeWorld({ states: ['watch'], image: () => ({ samples: 20, black: false, frozenSec: 30, live: false, bytes: 100 }) }));
+  r = await R.recordGame(io, job, { poll: 1000 });
+  assert.strictEqual(r.clips.length, 4);
+  // vidéo trop lourde : arrêt avant la limite du stockage
+  ({ w, io } = fakeWorld({ states: ['watch'], image: (rec, ww) => ({ samples: 4, black: false, frozenSec: 0, live: true, bytes: (ww.clock - rec.startClock) * 400 }) }));
+  r = await R.recordGame(io, job, { poll: 1000 });
+  assert.ok(w.recorded[0][0] < 85 && w.log.some(x => /"arret":"taille maximale"/.test(x)), 'arrêt à 28 Mo');
+  // tests rapides : durée fixe
+  ({ w, io } = fakeWorld({ states: ['watch'] }));
+  r = await R.recordGame(io, job, { poll: 250, tick: 250, clipWall: 1500 });
+  assert.deepStrictEqual(w.recorded.map(x => x[0]), [1.5, 1.5, 1.5, 1.5]);
   // ordre du replay indisponible : touche calculée par l'app (job.playerKey) ; équipe rouge
   ({ w, io } = fakeWorld({ noPlayerlist: true, states: ['watch'] }));
   r = await R.recordGame(io, Object.assign({}, job, { playerKey: 'w' }), { poll: 1000 });

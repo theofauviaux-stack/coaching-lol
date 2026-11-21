@@ -34,6 +34,11 @@ assert.deepStrictEqual(man.moments.map(x => [x.temps, x.titre, x.video, x.second
   ['9:30', 'Kill sur Garen', 'videos/02_9m00.webm', 30],
   ['20:00', 'Dragon perdu', null, null]
 ]);
+// vidéos filmées avec la synchronisation (1.6.14) : seconde exacte, même après une pause du replay
+const man2 = C.manifest(Object.assign({}, a, { clips: [{ file: '01_5m55.webm', start: 355, end: 400, lead: 0.3, sync: [[0.3, 355], [10.3, 365], [13.3, 365], [38.3, 390]] }, a.clips[1]] }), m, { playerName: 'UCE Uawawa', label: 'x', champName });
+assert.deepStrictEqual(man2.moments.map(x => x.secondeDansLaVideo), [38.3, 30, null]);
+assert.deepStrictEqual([man2.videos[0].lead, man2.videos[0].sync.length, man2.videos[1].lead, man2.videos[1].sync], [0.3, 4, null, null]);
+assert.ok(/seconde exacte/.test(C.README));
 assert.deepStrictEqual(man.moments[0].discussion, [{ auteur: 'joueur', texte: 'Je pensais que le jungler était bot.' }]);
 assert.deepStrictEqual(man.discussionGenerale, [{ auteur: 'coach', texte: 'Je regarde.' }]);
 assert.strictEqual(man.aRendre.fichier, 'analyse-claude.json');

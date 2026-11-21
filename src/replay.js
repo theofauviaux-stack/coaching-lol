@@ -2,14 +2,45 @@
 //   1. client LoL (API locale « LCU ») : téléchargement du replay puis lancement ;
 //   2. Replay API du jeu (https://127.0.0.1:2999, EnableReplayApi=1 dans game.cfg) : aller à chaque moment,
 //      caméra sur le joueur suivi ;
-//   3. enregistrement de la fenêtre du jeu (fait par main.js), 30 s environ par moment ;
-//   4. fermeture du jeu.
+//   3. enregistrement de la fenêtre du jeu (fait par main.js) : l'app démarre la capture, relance la lecture, suit le
+//      temps de jeu et arrête l'extrait pile à la bonne seconde ; elle note la correspondance seconde de la vidéo ↔
+//      temps de jeu (« sync ») et vérifie que l'image n'est ni noire ni figée ;
+//   4. fermeture du jeu (aussi en cas d'erreur ou d'annulation).
 // Ce fichier ne touche ni au réseau ni à l'écran : tout passe par les fonctions données dans `io`
 // (voir tests/replay.js et main.js).
 const BEFORE = 35; // secondes filmées avant le moment (la lecture commence 30 s avant : 5 s de marge)
 const AFTER = 10; // et après
 const MAX_CLIP = 90; // deux moments proches partagent un extrait, sans dépasser 90 s
 const GAP = 15; // moins de 15 s entre deux extraits : on filme d'un seul tenant
+const MAX_BYTES = 28 * 1048576; // le stockage refuse les vidéos de plus de 30 Mo : on s'arrête avant
+// Interface du replay pendant le tournage : sans le panneau de contrôle du replay, sa frise ni le chat (ils cachent le
+// jeu), sans surbrillance au passage de la souris ; on garde tableau des scores, mini-carte, barres de vie et annonces.
+const CLEAN_HUD = { interfaceReplay: false, interfaceTimeline: false, interfaceChat: false, outlineHover: false };
+const IMAGE_ERRORS = {
+  noire: 'La vidéo du jeu est noire. Garde la fenêtre du replay visible (ne la réduis pas), mets League of Legends en mode « Sans bordure » '
+    + '(Paramètres › Vidéo › Mode fenêtre), puis relance « Filmer les moments ». Sur Mac, vérifie aussi l\'autorisation « Enregistrement de l\'écran ».',
+  figée: 'L\'image du jeu s\'est figée pendant l\'enregistrement. Garde la fenêtre du replay visible (ne la réduis pas, ne change pas de bureau), '
+    + 'puis relance « Filmer les moments ».'
+};
+const r1 = x => Math.round(x * 10) / 10;
+
+// Seconde de la vidéo d'un extrait qui montre l'instant g (secondes de jeu). Avec « sync » (paires [seconde de la vidéo,
+// temps de jeu] mesurées pendant le tournage), la correspondance est exacte même si le replay a marqué une pause ;
+// sinon : début de la vidéo = début de l'extrait (+ « lead », le temps entre le début de la capture et la lecture).
+// (copie dans renderer/app.js)
+function videoAt(c, g) {
+  const s = Array.isArray(c && c.sync) ? c.sync.filter(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)) : [];
+  if (s.length >= 2) {
+    const last = s[s.length - 1];
+    if (g <= s[0][1]) return Math.max(0, s[0][0] - (s[0][1] - g)); // hors des points mesurés : 1 s de jeu = 1 s de vidéo
+    if (g >= last[1]) return Math.max(0, last[0] + (g - last[1]));
+    let i = 1;
+    while (s[i][1] < g) i++;
+    const [v0, g0] = s[i - 1], [v1, g1] = s[i];
+    return Math.max(0, v0 + (g - g0) * (v1 - v0) / (g1 - g0));
+  }
+  return Math.max(0, (Number(c && c.lead) || 0) + (g - ((c && c.start) || 0)));
+}
 
 // Moments à filmer : morts, objectifs perdus, kills, objectifs pris où il était (10 au maximum)
 function pickMoments(m, max = 10) {
@@ -63,14 +94,21 @@ const REPLAY_ERRORS = {
  * io : {
  *   lcu(method, path, body) → réponse JSON (lève une erreur si le client ne répond pas)
  *   replay(method, path, body) → réponse JSON de la Replay API (lève une erreur tant que le jeu n'est pas prêt)
- *   record(seconds, file) → Promise (enregistre la fenêtre du jeu)
- *   killGame() → Promise ; sleep(ms) ; now() ; status(texte)
+ *   startRecording(file, { seconds, source }) → Promise d'un enregistrement en cours, une fois la capture lancée :
+ *     { health() → { samples, black, frozenSec, bytes, live }, stop() → Promise ({ bytes }), cancel() → Promise, info }
+ *     source : 'fenetre' (fenêtre du jeu) ou 'ecran' (écran entier)
+ *   selectPlayer(touche) ; killGame() → Promise ; sleep(ms) ; now() ; status(texte, avancement) ; log(quoi, détail)
  * }
+ * Toutes ces fonctions peuvent lever une erreur (annulation par le joueur comprise) : le replay est alors fermé et
+ * l'enregistrement en cours abandonné.
  * job : { gameId, duration, champion, championName, gameName, moments: [...], file(i, w) → chemin }
- * Renvoie [{ start, end, times, file }].
+ * opt : délais (tests), screenFallback (Windows : filmer l'écran si la fenêtre du jeu sort noire), clipWall (tests :
+ *   durée fixe des extraits en ms)
+ * Renvoie { clips: [{ start, end, times, file, lead, sync, source }], camera }.
  */
 async function recordGame(io, job, opt = {}) {
-  const o = Object.assign({ downloadTimeout: 8 * 60000, askAfter: 20000, checkTimeout: 4 * 60000, loadTimeout: 5 * 60000, seekTimeout: 25000, attachTimeout: 20000, poll: 1500 }, opt);
+  const o = Object.assign({ downloadTimeout: 8 * 60000, askAfter: 20000, checkTimeout: 4 * 60000, loadTimeout: 5 * 60000, seekTimeout: 25000, attachTimeout: 20000, poll: 1500,
+    tick: 1000, stallTimeout: 15000, maxBytes: MAX_BYTES, screenFallback: false, clipWall: 0 }, opt);
   const status = io.status || (() => {});
   const log = io.log || (() => {}); // journal local (diagnostic), jamais de mot de passe
   // avancement global (barre de progression) : recherche 0-5 %, téléchargement 5-40 %, ouverture 40-45 %, extraits 45-98 %
@@ -143,6 +181,7 @@ async function recordGame(io, job, opt = {}) {
   // à partir d'ici le replay est ouvert : en cas d'erreur, on le ferme
   let key = job.playerKey || null;
   const clips = [];
+  let rec = null; // enregistrement en cours
   try {
     // 3. lancement et attente de la Replay API
     status('Ouverture du replay dans League of Legends…', 0.41);
@@ -166,30 +205,89 @@ async function recordGame(io, job, opt = {}) {
     } catch (e) { log('joueurs du replay', 'indisponible : ' + e.message); }
     if (!key) throw new Error('Impossible de trouver ' + (job.championName || job.champion) + ' parmi les joueurs du replay.');
     log('touche du joueur', key);
+    try { await io.replay('POST', '/replay/render', CLEAN_HUD); log('interface du replay épurée', CLEAN_HUD); } catch (e) { log('interface du replay', 'inchangée : ' + e.message); }
     const select = async () => {
       await io.selectPlayer(key); // erreur claire si la touche ne peut pas être envoyée (fenêtre, autorisation)
       const r = await io.replay('GET', '/replay/render').catch(() => null);
       log('caméra après la touche ' + key, r && { selectionName: r.selectionName, cameraAttached: r.cameraAttached, cameraMode: r.cameraMode });
     };
 
-    // 4. un extrait par fenêtre
+    // 4. un extrait par fenêtre : replay en pause au début de l'extrait, caméra sur le champion, capture lancée, puis
+    // lecture. L'extrait s'arrête quand le temps de jeu atteint sa fin (pas au chronomètre : si le replay marque une
+    // pause, on ne perd pas la fin du moment).
     let done = 0;
+    let source = 'fenetre';
     const at = d => 0.45 + 0.53 * Math.min(1, d / total);
     for (let i = 0; i < windows.length; i++) {
       const w = windows[i];
+      const len = w.end - w.start;
       const label = `Enregistrement ${i + 1}/${windows.length}…`;
       status(label, at(done));
-      // replay en pause au début de l'extrait, caméra sur le champion, puis lecture et enregistrement
       await io.replay('POST', '/replay/playback', { time: w.start, paused: true, speed: 1 });
       await wait(async () => { const p = await io.replay('GET', '/replay/playback'); return p && !p.seeking && Math.abs(p.time - w.start) < 2 ? p : null; }, o.seekTimeout, 'Le replay ne répond plus.');
       await select(); // avant chaque moment : le joueur est sélectionné, la caméra centrée sur lui
-      await io.replay('POST', '/replay/playback', { paused: false, speed: 1 });
       const file = job.file(i, w);
-      await io.record(w.end - w.start, file, f => status(label, at(done + f * (w.end - w.start))));
-      done += w.end - w.start;
-      clips.push(Object.assign({ file }, w));
+      rec = await io.startRecording(file, { seconds: len, source });
+      const t0 = io.now();
+      await io.replay('POST', '/replay/playback', { paused: false, speed: 1 });
+      const lead = (io.now() - t0) / 1000;
+      const sync = [[r1(lead), w.start]];
+      let g = w.start, gAt = io.now(), prev = null, kept = lead, relaunched = 0, bad = null, why = 'fin de l\'extrait';
+      for (;;) {
+        await io.sleep(o.tick);
+        const now = io.now();
+        const v = (now - t0) / 1000;
+        const p = await io.replay('GET', '/replay/playback').catch(() => null);
+        if (p && typeof p.time === 'number') {
+          if (p.time > g + 0.05) { g = p.time; gAt = now; }
+          // on garde un point de synchronisation quand l'écart vidéo / jeu change (pause, ralentissement du replay)
+          const cur = [r1(v), r1(p.time)];
+          const off = cur[0] - (cur[1] - w.start);
+          if (Math.abs(off - kept) > 0.4) { if (prev && sync[sync.length - 1] !== prev) sync.push(prev); sync.push(cur); kept = off; }
+          prev = cur;
+          if (p.time >= w.end - 0.05) break;
+          if (p.length && p.time >= p.length - 1) { why = 'fin du replay'; break; }
+          if (p.paused && now - gAt > 1500) { // clic ou touche Espace dans le jeu : on relance la lecture
+            if (++relaunched > 3) throw new Error('Le replay se remet en pause tout seul. Ne touche pas au jeu pendant l\'enregistrement, puis relance « Filmer les moments ».');
+            log('replay en pause pendant l\'enregistrement : lecture relancée', { temps: r1(p.time) });
+            await io.replay('POST', '/replay/playback', { paused: false, speed: 1 }).catch(() => null);
+          }
+        }
+        if (now - gAt > o.stallTimeout) throw new Error('Le replay n\'avance plus depuis ' + Math.round(o.stallTimeout / 1000) + ' s. Annule puis relance « Filmer les moments ».');
+        const h = rec.health ? rec.health() : null;
+        if (h) {
+          if (h.black) bad = 'noire';
+          else if (h.live && h.frozenSec >= 5 && now - gAt < 2000) bad = 'figée'; // le jeu avance mais l'image ne bouge plus
+          if (bad) break;
+          if (h.bytes >= o.maxBytes) { why = 'taille maximale'; break; }
+        }
+        status(label, at(done + Math.min(len, Math.max(0, g - w.start))));
+        if (o.clipWall && now - t0 >= o.clipWall) { why = 'durée fixe (test)'; break; }
+        if (now - t0 > (len + 30) * 1000 + o.stallTimeout) { why = 'durée maximale'; break; }
+      }
+      if (bad) {
+        log('image ' + bad, Object.assign({ extrait: i + 1, source }, rec.health()));
+        const r = rec; rec = null;
+        await r.cancel().catch(() => {});
+        if (source === 'fenetre' && o.screenFallback) {
+          source = 'ecran';
+          status('La fenêtre du jeu apparaît ' + bad + ' : l\'app filme l\'écran à la place…', at(done));
+          i--;
+          continue;
+        }
+        throw new Error(IMAGE_ERRORS[bad]);
+      }
+      if (prev && sync[sync.length - 1] !== prev) sync.push(prev);
+      const h = rec.health ? rec.health() : null;
+      const r = rec; rec = null;
+      const res = await r.stop();
+      const filmed = r.source || source; // ce qui a vraiment été filmé (écran entier si la fenêtre du jeu est introuvable)
+      log('extrait ' + (i + 1) + ' filmé', { de: w.start, a: w.end, arret: why, lead: r1(lead), sync, octets: res && res.bytes, image: h, source: filmed });
+      done += len;
+      clips.push(Object.assign({ file, lead: r1(lead), sync, source: filmed }, w));
     }
   } catch (e) {
+    if (rec) await rec.cancel().catch(() => {});
     await io.killGame().catch(() => {});
     throw e;
   }
@@ -198,4 +296,4 @@ async function recordGame(io, job, opt = {}) {
   return { clips, camera: key };
 }
 
-module.exports = { pickMoments, clipWindows, lockfileInfo, lcuFromArgs, enableReplayApi, recordGame, BEFORE, AFTER, REPLAY_ERRORS };
+module.exports = { pickMoments, clipWindows, lockfileInfo, lcuFromArgs, enableReplayApi, recordGame, videoAt, BEFORE, AFTER, MAX_BYTES, CLEAN_HUD, REPLAY_ERRORS, IMAGE_ERRORS };

@@ -636,7 +636,7 @@ async function getMoments({ playerId, matchId }) {
     const an = analyses.list.find(a => a.matchId === matchId && a.playerId === playerId);
     return {
       ok: true, moments: m, videoKey: videoKey(playerId, matchId), canFilm: true,
-      filming: !!(videoJob && videoJob.matchId === matchId) && videoJob.status, filmingProgress: videoJob ? videoJob.progress : 0,
+      filming: !!(videoJob && videoJob.matchId === matchId) && (videoJob.cancelled ? 'Annulation…' : videoJob.status), filmingProgress: videoJob ? videoJob.progress : 0, filmingCancelling: !!(videoJob && videoJob.cancelled),
       sending: !!(sendJob && sendJob.matchId === matchId) && sendJob.status,
       analysisId: an ? an.id : null, analysisClosed: !!(an && an.status === 'terminee'), lol: lolInstallView()
     };
@@ -1016,7 +1016,7 @@ async function syncClaudeFolder() {
   try {
     const base = claudeDir();
     fs.mkdirSync(base, { recursive: true });
-    if (!fs.existsSync(path.join(base, 'LISEZ-MOI.txt'))) fs.writeFileSync(path.join(base, 'LISEZ-MOI.txt'), claudeMod.README);
+    { const f = path.join(base, 'LISEZ-MOI.txt'); let cur = null; try { cur = fs.readFileSync(f, 'utf8'); } catch (e) { /* absent */ } if (cur !== claudeMod.README) fs.writeFileSync(f, claudeMod.README); } // tenu à jour par l'app
     if (!fs.existsSync(path.join(base, 'methode-coach.md'))) fs.writeFileSync(path.join(base, 'methode-coach.md'), claudeMod.METHOD);
     const folders = claudeFolders(base);
     const drafts = readClaudeDrafts();
@@ -1151,7 +1151,7 @@ async function sendAnalysis({ matchId, picks, note }) {
     let bytes = 0;
     try { bytes = fs.statSync(path.join(dir, c.file)).size; } catch (e) { /* vidéo supprimée */ }
     if (!bytes) throw new Error('Vidéo introuvable : refilme les moments.');
-    return { file: c.file, start: c.start, end: c.end, times: c.times, bytes };
+    return Object.assign({ file: c.file, start: c.start, end: c.end, times: c.times, bytes }, typeof c.lead === 'number' ? { lead: c.lead } : {}, Array.isArray(c.sync) ? { sync: c.sync.slice(0, 40) } : {});
   });
   const files = clips.map(c => c.file).join(',');
   const comments = chosen.filter(x => x.comment).map(x => ({ t: x.c.times[0], text: x.comment }));
@@ -1263,29 +1263,76 @@ function recorderWindow() {
   recWin = new BrowserWindow({ show: false, width: 320, height: 200, webPreferences: { preload: path.join(__dirname, 'recorder-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   return recWin.loadFile(path.join(__dirname, 'renderer', 'recorder.html')).then(() => recWin);
 }
-async function recordWindow(seconds, file, onTick) {
+function dropRecorder() { try { if (recWin && !recWin.isDestroyed()) recWin.destroy(); } catch (e) { /* déjà fermée */ } recWin = null; }
+// Qualité des vidéos : 1600 × 900 au plus (texte du jeu lisible), 30 images/s, VP9 à 2,2 Mbit/s
+// (≈ 12 Mo pour un extrait de 45 s, 25 Mo pour 90 s : sous la limite de 30 Mo du stockage).
+const REC = { w: 1600, h: 900, fps: 30, bps: 2200000 };
+const recordings = new Map(); // id → suivi d'un enregistrement (messages de la fenêtre cachée)
+ipcMain.on('rec:event', (e, ev) => { const r = ev && recordings.get(ev.id); if (r) r.onEvent(ev); });
+ipcMain.on('rec:done', (e, ev) => { const r = ev && recordings.get(ev.id); if (r) r.onDone(ev); });
+// Démarre la capture du jeu ; la promesse est tenue quand la capture tourne vraiment (image reçue, enregistreur lancé).
+async function startRecording(file, { source = 'fenetre', log = () => {} } = {}) {
   const sources = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } });
   const game = process.env.COACHING_LOL_TEST ? null : sources.find(x => x.id.startsWith('window') && /League of Legends \(TM\)/i.test(x.name));
-  const src = game || sources.find(x => x.id.startsWith('screen'));
+  const screen = sources.find(x => x.id.startsWith('screen'));
+  const src = source === 'ecran' ? screen : (game || screen);
   if (!src) throw new Error('Aucune fenêtre à filmer.');
+  if (source !== 'ecran' && !game && !process.env.COACHING_LOL_TEST) log('fenêtre du jeu introuvable, écran entier filmé', sources.filter(x => x.id.startsWith('window')).map(x => x.name).slice(0, 15));
   const rw = await recorderWindow();
   const id = crypto.randomUUID();
-  const done = new Promise((resolve, reject) => {
-    const h = (e, r) => {
-      if (!r || r.id !== id) return;
-      ipcMain.removeListener('rec:done', h);
-      if (r.error) reject(new Error('Enregistrement impossible : ' + r.error)); else resolve(r.data);
-    };
-    ipcMain.on('rec:done', h);
+  const st = { n: 0, blackRun: 0, seenLight: false, frozenRun: 0, frozenMax: 0, changed: false, meanSum: 0, bytes: 0, info: null };
+  let onStarted, onFinished;
+  const started = new Promise((res, rej) => { onStarted = { res, rej }; });
+  const finished = new Promise((res, rej) => { onFinished = { res, rej }; });
+  finished.catch(() => {});
+  recordings.set(id, {
+    onEvent(ev) {
+      if (ev.type === 'started') { st.info = { source: game && source !== 'ecran' ? 'fenêtre du jeu' : 'écran', largeur: ev.width, hauteur: ev.height, images: ev.frameRate, format: ev.mime, debit: ev.bps }; onStarted.res(); }
+      if (ev.type === 'health') {
+        st.bytes = ev.bytes || st.bytes;
+        if (typeof ev.max !== 'number') return; // image pas encore lisible
+        st.n++;
+        st.meanSum += ev.mean;
+        if (ev.max < 16) st.blackRun++; else { st.blackRun = 0; st.seenLight = true; }
+        if (typeof ev.diff === 'number') {
+          if (ev.diff > 2) { st.changed = true; st.frozenRun = 0; } else { st.frozenRun++; st.frozenMax = Math.max(st.frozenMax, st.frozenRun); }
+        }
+      }
+    },
+    onDone(ev) {
+      recordings.delete(id);
+      if (ev.error) { const err = new Error('Enregistrement impossible : ' + ev.error); onStarted.rej(err); onFinished.rej(err); } else { onStarted.res(); onFinished.res(ev); }
+    }
   });
-  const ms = FAST ? 1500 : Math.round(seconds * 1000);
-  rw.webContents.send('rec:start', { id, sourceId: src.id, ms, w: 1280, h: 720, fps: 30, bps: 1200000 });
-  const t0 = Date.now();
-  const tick = onTick ? setInterval(() => onTick(Math.min(1, (Date.now() - t0) / ms)), 1000) : null;
-  let data;
-  try { data = await done; } finally { if (tick) clearInterval(tick); }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, Buffer.from(data));
+  rw.webContents.send('rec:start', Object.assign({ id, sourceId: src.id }, REC));
+  const timeout = (p, ms, msg) => Promise.race([p, new Promise((res, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+  try {
+    await timeout(started, 20000, 'L\'enregistreur ne démarre pas (capture de l\'écran refusée ou bloquée).');
+  } catch (e) {
+    recordings.delete(id);
+    dropRecorder();
+    throw e;
+  }
+  const stop = async discard => {
+    if (!recWin || recWin.isDestroyed()) throw new Error('L\'enregistreur a été fermé.');
+    recWin.webContents.send('rec:stop', { id, discard: !!discard });
+    try { return await timeout(finished, 20000, 'L\'enregistreur ne répond plus.'); } catch (e) { recordings.delete(id); dropRecorder(); throw e; }
+  };
+  return {
+    source: game && source !== 'ecran' ? 'fenetre' : 'ecran',
+    info: () => st.info,
+    // noire : aucune image claire depuis le début (2 s) ; figée : aucune différence entre les images depuis frozenSec
+    // (seulement si l'analyse de l'image a déjà vu bouger quelque chose : « live »)
+    health: () => ({ samples: st.n, black: !st.seenLight && st.blackRun >= 4, frozenSec: st.frozenRun / 2, frozenMaxSec: st.frozenMax / 2, live: st.changed, mean: st.n ? Math.round(st.meanSum / st.n) : null, bytes: st.bytes }),
+    async stop() {
+      const r = await stop(false);
+      if (!r || r.cancelled || !r.data) throw new Error('Enregistrement vide.');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, Buffer.from(r.data));
+      return { bytes: r.data.byteLength, info: st.info };
+    },
+    cancel: () => stop(true).catch(() => null)
+  };
 }
 function sendVideo(v) { if (win && !win.isDestroyed()) win.webContents.send('video:status', v); }
 // Sélection du joueur dans le replay : double appui sur sa touche de joueur (touches physiques : 1-5 pour l'équipe
@@ -1339,16 +1386,29 @@ async function checkScreenPermission() {
   try { await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }); } catch (e) { /* ouvre la demande de macOS */ }
   throw new Error('ECRAN: macOS n\'autorise pas encore Coaching LoL à enregistrer l\'écran.');
 }
+// Replay laissé ouvert (tournage interrompu, app fermée…) : le client LoL le signale par la phase « WatchInProgress ».
+// On ne ferme jamais une vraie partie (phase « InProgress »).
+async function closeLeftoverReplay(creds) {
+  if (process.env.COACHING_LOL_TEST || !await gameRunning()) return;
+  const phase = creds ? await localJson(creds.base, 'GET', '/lol-gameflow/v1/gameflow-phase', undefined, creds.password).catch(() => null) : null;
+  if (phase !== 'WatchInProgress') throw new Error('Une partie ou un replay est déjà ouvert : ferme-le puis réessaie.');
+  await killGame();
+  if (!await gameGone(10000)) throw new Error('Un replay est déjà ouvert et ne se ferme pas : ferme-le puis réessaie.');
+}
+async function gameGone(ms) {
+  if (process.env.COACHING_LOL_TEST) return true;
+  for (const t0 = Date.now(); Date.now() - t0 < ms; await new Promise(r => setTimeout(r, 500))) if (!await gameRunning()) return true;
+  return false;
+}
 async function recordVideos({ playerId, matchId }) {
   if (!isPlayer() || playerId !== session.playerId) throw new Error('Les moments se filment depuis l\'espace du joueur (code joueur), avec le client League of Legends de cet ordinateur.');
   if (sendJob) throw new Error('Attends la fin de l\'envoi.');
-  if (videoJob) throw new Error('Un enregistrement est déjà en cours (' + videoJob.status + ').');
+  if (videoJob) throw new Error(videoJob.cancelled ? 'Annulation en cours : réessaie dans quelques secondes.' : 'Un enregistrement est déjà en cours (' + videoJob.status + ').');
   const { moments: m } = await getMoments({ playerId, matchId });
   const picked = replayMod.pickMoments(m);
   if (!picked.length) throw new Error('Rien à filmer dans cette partie.');
   const ins = lolInstall();
   if (!ins) throw new Error('League of Legends est introuvable sur cet ordinateur : indique son emplacement ci-dessous.');
-  if (!process.env.COACHING_LOL_TEST && await gameRunning()) throw new Error('Une partie ou un replay est déjà ouvert : ferme-le puis réessaie.');
   await checkScreenPermission();
   // Mac : le choix du joueur dans le replay passe par le clavier (autorisation « Accessibilité »)
   if (process.platform === 'darwin' && !process.env.COACHING_LOL_TEST && !systemPreferences.isTrustedAccessibilityClient(true)) {
@@ -1362,50 +1422,100 @@ async function recordVideos({ playerId, matchId }) {
   if (en.changed) { fs.mkdirSync(path.dirname(cfgFile), { recursive: true }); fs.writeFileSync(cfgFile, en.text); }
   const creds = await lcuCreds();
   if (!creds) throw new Error('Le client League of Legends ne répond pas : ouvre-le (connecté à ton compte) puis réessaie.');
+  await closeLeftoverReplay(creds);
+  // les nouvelles vidéos sont filmées à côté des anciennes, qui ne sont remplacées qu'à la fin (annulation ou erreur :
+  // on garde les anciennes)
   const dir = path.join(videosDir(), videoKey(playerId, matchId));
-  fs.rmSync(dir, { recursive: true, force: true });
+  const tmp = dir + '.nouveau';
+  fs.rmSync(tmp, { recursive: true, force: true });
   const me = m.participants.find(p => p.id === m.me);
-  videoJob = { playerId, matchId, status: 'Préparation…', progress: 0 };
-  // journal du dernier tournage (diagnostic à envoyer au coach si ça bloque) : étapes, états du client, caméra
+  const job = { playerId, matchId, status: 'Préparation…', progress: 0, cancelled: false, wake: new Set() };
+  videoJob = job;
+  // journal du dernier tournage (diagnostic à envoyer au coach si ça bloque) : étapes, états du client, caméra, image
   const journal = path.join(videosDir(), 'journal.txt');
-  const note = line => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + line + '\n'); } catch (e) { /* facultatif */ } };
-  try { fs.mkdirSync(videosDir(), { recursive: true }); fs.writeFileSync(journal, 'Coaching LoL ' + app.getVersion() + ' · ' + process.platform + ' · partie ' + matchId + ' · ' + new Date().toISOString() + '\n'); } catch (e) { /* facultatif */ }
+  const write = line => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + line + '\n'); } catch (e) { /* facultatif */ } };
+  const note = (what, data) => write(what + (data === undefined ? '' : ' ' + JSON.stringify(data)));
+  try { fs.mkdirSync(videosDir(), { recursive: true }); fs.writeFileSync(journal, 'Coaching LoL ' + app.getVersion() + ' · ' + process.platform + ' ' + require('os').release() + ' · partie ' + matchId + ' · ' + new Date().toISOString() + '\n'); } catch (e) { /* facultatif */ }
+  note('vidéo', REC);
   let lastText = '';
   const status = (text, progress) => {
-    videoJob.status = text;
-    if (typeof progress === 'number') videoJob.progress = progress;
-    if (text !== lastText) { note('» ' + text); lastText = text; }
-    sendVideo({ playerId, matchId, text, progress: videoJob.progress });
+    if (job.cancelled) return;
+    job.status = text;
+    if (typeof progress === 'number') job.progress = progress;
+    if (text !== lastText) { write('» ' + text); lastText = text; }
+    sendVideo({ playerId, matchId, text, progress: job.progress });
   };
   status('Préparation…', 0.01);
+  // annulation : chaque appel vérifie le drapeau ; les attentes se réveillent tout de suite
+  const cancelled = () => Object.assign(new Error('Enregistrement annulé.'), { cancelled: true });
+  const guard = fn => async (...a) => { if (job.cancelled) throw cancelled(); const r = await fn(...a); if (job.cancelled) throw cancelled(); return r; };
+  const sleep = ms => new Promise(res => { const t = setTimeout(() => { job.wake.delete(w); res(); }, ms); const w = () => { clearTimeout(t); res(); }; job.wake.add(w); });
   const gm = ((session && session.source === 'cloud' && remoteData ? remoteData.games : store.data.games) || []).find(x => x.matchId === matchId && x.playerId === playerId);
   (async () => {
     try {
       const r = await replayMod.recordGame({
-        lcu: (method, p, body) => localJson(creds.base, method, p, body, creds.password),
-        replay: (method, p, body) => localJson(REPLAY_BASE, method, p, body),
-        record: (sec, file, onTick) => recordWindow(sec, file, onTick),
-        selectPlayer: key => selectPlayerInReplay(key),
-        killGame, sleep: ms => new Promise(res => setTimeout(res, ms)), now: Date.now, status,
-        log: (what, data) => { try { fs.appendFileSync(journal, new Date().toISOString().slice(11, 19) + ' ' + what + (data === undefined ? '' : ' ' + JSON.stringify(data)) + '\n'); } catch (e) { /* journal facultatif */ } }
+        lcu: guard((method, p, body) => { if (p.endsWith('/watch')) job.launched = true; return localJson(creds.base, method, p, body, creds.password); }),
+        replay: guard((method, p, body) => localJson(REPLAY_BASE, method, p, body)),
+        startRecording: async (file, o) => {
+          if (job.cancelled) throw cancelled();
+          const rec = await startRecording(file, Object.assign({ log: note }, o));
+          note('capture', rec.info());
+          if (job.cancelled) { await rec.cancel(); throw cancelled(); } // annulé pendant le démarrage de la capture
+          job.rec = rec;
+          return rec;
+        },
+        selectPlayer: guard(key => selectPlayerInReplay(key)),
+        killGame, sleep: guard(sleep), now: Date.now, status, log: note
       }, {
         gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: m.custom ? 0 : 420, gameType: m.custom ? 'CUSTOM_GAME' : 'MATCHED_GAME', gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
         playerKey: (me.teamId === 200 || (!me.teamId && me.id > 5) ? 'qwert' : '12345')[m.participants.filter(p => p.teamId === me.teamId).sort((a, b) => a.id - b.id).findIndex(p => p.id === me.id)] || null,
         label: champName(me.champion) + (m.opp ? ' contre ' + champName((m.participants.find(p => p.id === m.opp) || {}).champion) : '') + (gm && gm.date ? ' du ' + new Date(gm.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(' ', ' à ') : ''), championName: champName(me.champion), gameName: String(me.name || '').split('#')[0], moments: picked,
-        file: (i, w) => path.join(dir, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
-      }, FAST ? { poll: 250 } : {});
-      m.clips = r.clips.map(c => ({ start: c.start, end: c.end, times: c.times, file: path.basename(c.file), bytes: fs.statSync(c.file).size }));
+        file: (i, w) => path.join(tmp, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
+      }, Object.assign({ screenFallback: process.platform === 'win32' }, FAST ? { poll: 250, tick: 250, clipWall: 1500 } : {}));
+      if (job.cancelled) throw cancelled();
+      const clips = r.clips.map(c => ({ start: c.start, end: c.end, times: c.times, file: path.basename(c.file), bytes: fs.statSync(c.file).size, lead: c.lead, sync: c.sync }));
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.renameSync(tmp, dir);
+      m.clips = clips;
       m.camera = r.camera;
       delete m.pending;
       writeMoments(playerId, m);
-      sendVideo({ playerId, matchId, done: true, text: r.clips.length + ' extrait' + (r.clips.length > 1 ? 's' : '') + ' filmé' + (r.clips.length > 1 ? 's' : '') + '.' });
+      note('terminé', { extraits: clips.length, octets: clips.reduce((n, c) => n + c.bytes, 0) });
+      sendVideo({ playerId, matchId, done: true, text: clips.length + ' extrait' + (clips.length > 1 ? 's' : '') + ' filmé' + (clips.length > 1 ? 's' : '') + '.' });
     } catch (e) {
-      note('ERREUR ' + e.message);
-      sendVideo({ playerId, matchId, error: e.message, journal: true });
+      fs.rmSync(tmp, { recursive: true, force: true });
+      if (job.cancelled || e.cancelled) {
+        write('ANNULÉ par le joueur');
+        if (job.launched) { await killGame().catch(() => {}); await gameGone(10000); } // seulement le replay ouvert par l'app
+        if (videoJob === job) sendVideo({ playerId, matchId, cancelled: true, text: 'Enregistrement annulé.' });
+      } else {
+        write('ERREUR ' + e.message);
+        sendVideo({ playerId, matchId, error: e.message, journal: true });
+      }
     } finally {
-      videoJob = null;
+      if (videoJob === job) videoJob = null;
     }
   })();
+  return { ok: true };
+}
+// Bouton « Annuler l'enregistrement » : arrête tout (capture, replay) ; les anciennes vidéos restent.
+function cancelVideos({ playerId, matchId } = {}) {
+  const job = videoJob;
+  if (!job || (playerId && job.playerId !== playerId) || (matchId && job.matchId !== matchId)) return { none: true };
+  if (job.cancelled) return { already: true };
+  job.cancelled = true;
+  for (const w of job.wake) w();
+  job.wake.clear();
+  sendVideo({ playerId: job.playerId, matchId: job.matchId, text: 'Annulation…', progress: job.progress, cancelling: true });
+  // filet de sécurité : si un appel ne rend pas la main (client LoL figé), on libère quand même l'app après 15 s
+  setTimeout(() => {
+    if (videoJob !== job) return;
+    videoJob = null;
+    if (job.rec) job.rec.cancel();
+    if (job.launched) killGame().catch(() => {});
+    fs.rmSync(path.join(videosDir(), videoKey(job.playerId, job.matchId)) + '.nouveau', { recursive: true, force: true });
+    sendVideo({ playerId: job.playerId, matchId: job.matchId, cancelled: true, text: 'Enregistrement annulé.' });
+  }, FAST ? 4000 : 15000);
   return { ok: true };
 }
 function deleteVideos({ playerId, matchId }) {
@@ -1797,6 +1907,7 @@ function registerIpc() {
   handle('moments:get', q => getMoments(q || {}));
   handle('videos:record', q => recordVideos(q || {}));
   handle('videos:delete', q => deleteVideos(q || {}));
+  handle('videos:cancel', q => cancelVideos(q || {}));
   handle('analyses:refresh', async () => { await refreshAnalyses(); return { ok: true, data: viewData() }; });
   handle('analysis:get', q => getAnalysis(q || {}));
   handle('analysis:send', q => sendAnalysis(q || {}));
@@ -1982,3 +2093,4 @@ app.whenReady().then(async () => {
 app.on('will-quit', () => { if (process.platform === 'darwin' && macUpdate.state === 'ready') installMacUpdate(false); });
 // Fermer la fenêtre quitte l'app, sur Mac aussi : c'est ce qui déclenche l'installation des mises à jour
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => { if (videoJob && videoJob.launched) { videoJob.cancelled = true; killGame().catch(() => {}); } });
