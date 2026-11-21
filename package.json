@@ -1,7 +1,7 @@
 {
   "name": "coaching-lol",
   "productName": "Coaching LoL",
-  "version": "1.6.19",
+  "version": "1.6.20",
   "description": "Suivi privé de coaching League of Legends : parties SoloQ au rôle coaché, objectifs, sessions.",
   "main": "main.js",
   "author": "Theo Fauviaux",
@@ -16,7 +16,8 @@
     "test:e2e-fiches": "node tests/e2e-fiches.js",
     "test:e2e-live": "node tests/e2e-live.js",
     "test:e2e-analyses": "node tests/e2e-analyses.js",
-    "test:e2e-cours": "node tests/e2e-cours.js"
+    "test:e2e-cours": "node tests/e2e-cours.js",
+    "test:e2e-maj": "node tests/e2e-maj.js"
   },
   "dependencies": {
     "electron-updater": "^6.6.2"

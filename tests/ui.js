@@ -6,11 +6,15 @@ module.exports = async function ({ app, win, fs, path }) {
   const js = code => win.webContents.executeJavaScript(code);
   const shot = async name => { await wait(450); fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   const click = sel => js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
-  const type = async code => { for (const k of code) { await click(`[data-key="${k}"]`); await wait(60); } await wait(900); };
+  const type = async code => { await click('.wl-eye'); await wait(450); for (const k of code) { await click(`[data-key="${k}"]`); await wait(60); } await wait(900); };
   const out = { erreurs: [] };
   win.webContents.on('console-message', (e, level, msg) => { if (level >= 3) out.erreurs.push(msg); });
   try {
     await wait(1200);
+    out.accueil = await js(`!!document.querySelector('.welcome .wl-eye') && document.querySelector('.wl-hint').textContent`);
+    await shot('00-accueil');
+    await click('.wl-eye');
+    await wait(500);
     out.ecranInitial = await js(`document.querySelector('.login-card h1') && document.querySelector('.login-card h1').textContent`);
     await shot('01-creation-code');
     await type('4821');

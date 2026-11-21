@@ -39,6 +39,10 @@ for (const c of Courses.LIST) {
 for (const a of Courses.ADCS) assert.ok(Courses.ADC_PROFILES[a.profile] && Courses.ROAM_LABEL[a.roam] && a.note, 'ADC ' + a.name);
 // vocabulaire : pas de crédit externe dans le contenu
 assert.ok(!/karakal|coach k\b/i.test(JSON.stringify(Courses.LIST)), 'aucun crédit externe');
+// or des minions (Season 16 : melee 20, caster 14, cannon 50 avant 11 min) : 2 waves dont une cannon wave = 254
+assert.ok(/12 CS à 10 minutes.*254 gold.*204 sans le cannon/.test(JSON.stringify(Courses.byId('farm'))), 'gold exact des CS ratés');
+assert.ok(!/item en retard/.test(JSON.stringify(Courses.LIST)), 'pas de « item en retard »');
+assert.strictEqual(3 * 20 + 3 * 14, 102);
 
 // ------------------------------------------------------------------ progression
 assert.throws(() => P.cleanPatch({ seen: 'x' }));

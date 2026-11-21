@@ -6,6 +6,7 @@ module.exports = async function ({ app, win, fs, path }) {
   const out = {};
   await wait(1200);
   if (process.env.PHASE === '1') {
+    await js(`document.querySelector('.wl-eye').click()`); await wait(450);
     for (const code of ['4821', '4821']) {
       for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); }
       await wait(900);

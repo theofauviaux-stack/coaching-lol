@@ -6,7 +6,7 @@ module.exports = async function ({ app, win, fs, path }) {
   const js = code => win.webContents.executeJavaScript(code);
   const shot = async name => { await wait(700); fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   const until = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await js(code)) return true; await wait(300); } throw new Error('délai dépassé : ' + code); };
-  const type = async code => { for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); } await wait(900); };
+  const type = async code => { await js(`(() => { const e = document.querySelector('.wl-eye'); if (e) e.click(); return 1; })()`); await wait(450); for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); } await wait(900); };
   const riot = p => new Promise((resolve, reject) => require('http').get(process.env.COACHING_LOL_RIOT + p, r => { r.resume(); r.on('end', resolve); }).on('error', reject));
   const toastText = async () => { await until(`!document.querySelector('#toast').classList.contains('hidden')`, 15000); return js(`document.querySelector('#toast').textContent.trim()`); };
   const hideToast = () => js(`document.querySelector('#toast').classList.add('hidden'); 0`);

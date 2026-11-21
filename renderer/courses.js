@@ -143,7 +143,7 @@ const Courses = (() => {
       lessons: [
         { id: 'pourquoi', t: "Pourquoi le farm d'abord", blocks: [
           { p: "Ton programme corrige d'abord ce qui coûte le plus de LP. Pour la plupart des joueurs, ce sont les **morts évitables**, le **farm** et la **gestion de la lane**, bien avant la macro avancée." },
-          { p: "Chaque minion raté, c'est du gold en moins. Une wave compte environ 6 minions : rater 10 CS à 10 minutes, c'est presque 2 waves entières, donc un item en retard sur ton adversaire." },
+          { p: "Chaque minion raté, c'est du gold en moins. Une wave compte 6 minions : 3 melee à **20 gold** et 3 casters à **14 gold**, soit 102 gold. Une wave sur trois a en plus un **cannon** à **50 gold** (sa valeur monte un peu après 11 min). Rater 12 CS à 10 minutes, c'est presque 2 waves entières : 2 waves complètes dont une cannon wave valent **254 gold** (204 sans le cannon). Ce n'est pas un item d'écart, mais c'est déjà un vrai retard au premier back, et il grandit à chaque wave ratée." },
           { schema: { type: 'curve', target: 70, caption: "Repères pour 70 CS à 10 min. Si tu es en dessous à 4 min, tu as raté trop de minions en early." } },
           { w: 'cs', id: 'farm-calc' },
           { key: "Les repères de ton programme : **7 CS/min ou plus**, puis **8 ou plus** selon le rang, et **70 CS à 10 min**. En practice tool, sans adversaire : 80 CS à 10 min." }
@@ -189,7 +189,7 @@ const Courses = (() => {
       ],
       quiz: [
         { q: "Quel repère de CS à 10 min vise ton programme en ranked ?", opts: ["50", "70", "100", "Peu importe"], a: 1, why: "70 CS à 10 min en ranked, 80 en practice tool sans adversaire." },
-        { q: "Rater 12 CS à 10 min, c'est environ…", opts: ["Un minion", "2 waves", "5 waves", "Rien de grave"], a: 1, why: "Une wave compte environ 6 minions : 12 CS, c'est 2 waves entières." },
+        { q: "Rater 12 CS à 10 min, c'est environ…", opts: ["Un minion", "2 waves", "5 waves", "Rien de grave"], a: 1, why: "Une wave compte 6 minions (7 avec le cannon) : 12 CS, c'est presque 2 waves, environ 250 gold." },
         { q: "Sous ta tower, un melee minion full HP arrive. Que fais-tu ?", opts: ["Je le frappe tout de suite", "J'attends 2 coups de tower, puis mon auto le finit", "Je le laisse à la tower", "J'utilise mon ult"], a: 1, why: "Melee : tower, tower, puis ton auto." },
         { q: "Combien de champions jouer pendant la phase de fondamentaux ?", opts: ["1", "2 ou 3 dans un rôle", "5 ou 6", "Le plus possible"], a: 1, why: "2 ou 3 champions dans un rôle principal, plus un rôle secondaire." },
         { q: "Quel minion tombe le plus vite ?", opts: ["Le melee", "Le caster", "Le cannon", "Ils ont tous les mêmes HP"], a: 1, why: "Le caster a moins de HP." },

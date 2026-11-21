@@ -6,7 +6,7 @@ module.exports = async function ({ app, win, fs, path }) {
   const shot = async name => { await wait(500); fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   const until = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await js(code)) return true; await wait(300); } throw new Error('délai dépassé : ' + code); };
   const mark = name => fs.writeFileSync(path.join(dir, name), '1');
-  const type = async code => { for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); } await wait(900); };
+  const type = async code => { await js(`(() => { const e = document.querySelector('.wl-eye'); if (e) e.click(); return 1; })()`); await wait(450); for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); } await wait(900); };
   const click = async sel => { const ok = await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`); if (!ok) throw new Error('absent : ' + sel); await wait(250); };
   const out = { phase: process.env.PHASE };
   try {

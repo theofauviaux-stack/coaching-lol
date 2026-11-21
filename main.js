@@ -82,7 +82,7 @@ const canEdit = () => isCoach() && session.source === 'local';
 
 // ---------------------------------------------------------------- données envoyées à l'interface
 function viewData() {
-  const base = { appVersion: app.getVersion(), cloudConfigured: !!cloud };
+  const base = { appVersion: app.getVersion(), cloudConfigured: !!cloud, update: updateView() };
   if (!session) {
     return Object.assign(base, { locked: true, setup: needsCoachSetup(), coachMachine: isCoachMachine(), blockedMs: limiter.blockedFor() });
   }
@@ -2120,7 +2120,8 @@ async function refreshDDragon() {
 // Windows : electron-updater télécharge en arrière-plan et installe à la fermeture.
 // Mac : module maison (src/macupdate.js), car electron-updater exige un certificat Apple payant.
 // Rien n'est affiché : l'état est seulement visible dans Paramètres › À propos (coach).
-const updateInfo = { checkedAt: null, state: 'idle', version: null, error: '' };
+const updateInfo = { checkedAt: null, state: 'idle', version: null, error: '', progress: -1 };
+const updateView = () => ({ state: updateInfo.state, version: updateInfo.version, error: updateInfo.error, checkedAt: updateInfo.checkedAt, progress: updateInfo.progress, installed: updateInfo.installed || null, packaged: app.isPackaged });
 const macUpdate = { state: 'idle', version: null, newApp: null, blocked: null };
 const macWorkDir = () => path.join(app.getPath('temp'), 'coaching-lol-maj');
 const pendingFile = () => path.join(app.getPath('userData'), 'maj-en-cours.json');
@@ -2145,7 +2146,8 @@ async function checkUpdatesNow() {
       checkUpdates.ready = true;
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = true;
-      autoUpdater.on('update-downloaded', info => Object.assign(updateInfo, { state: 'ready', version: info.version }));
+      autoUpdater.on('update-downloaded', info => { Object.assign(updateInfo, { state: 'ready', version: info.version, progress: 100 }); refreshView(); });
+      autoUpdater.on('download-progress', p => { updateInfo.progress = Math.floor((p && p.percent) || 0); });
       autoUpdater.on('error', e => Object.assign(updateInfo, { state: 'error', error: e.message }));
       autoUpdater.logger = null;
     }
@@ -2182,13 +2184,42 @@ async function checkMacUpdate() {
   macUpdate.state = 'downloading'; macUpdate.version = info.version;
   Object.assign(updateInfo, { state: 'downloading', version: info.version, error: '' });
   try {
-    macUpdate.newApp = await mu.prepareUpdate({ repo: REPO, info, workDir: macWorkDir(), fetchImpl: webFetch });
+    updateInfo.progress = 0;
+    macUpdate.newApp = await mu.prepareUpdate({ repo: REPO, info, workDir: macWorkDir(), fetchImpl: webFetch, onProgress: pct => { updateInfo.progress = pct; } });
     macUpdate.state = 'ready';
     updateInfo.state = 'ready';
+    refreshView();
   } catch (e) {
     macUpdate.state = 'idle';
     Object.assign(updateInfo, { state: 'error', error: 'téléchargement impossible (' + e.message + ')' });
   }
+}
+
+// Recherche demandée depuis l'interface (bouton « Rechercher une mise à jour ») : on attend la réponse de GitHub,
+// pas le téléchargement, qui continue en arrière-plan.
+const waitUntil = (test, ms) => new Promise(resolve => { const t0 = Date.now(); const tick = () => (test() || Date.now() - t0 > ms ? resolve() : setTimeout(tick, 200)); tick(); });
+// tests de l'interface : fausse mise à jour (recherche, téléchargement, prête), sans réseau
+const FAKE_UPDATE = process.env.COACHING_LOL_TEST && process.env.COACHING_LOL_FAKE_UPDATE;
+async function fakeUpdateCheck() {
+  Object.assign(updateInfo, { state: 'checking', error: '', checkedAt: Date.now() });
+  await new Promise(r => setTimeout(r, 500));
+  Object.assign(updateInfo, { state: 'downloading', version: FAKE_UPDATE, progress: 0 });
+  const t = setInterval(() => {
+    updateInfo.progress = Math.min(100, updateInfo.progress + 25);
+    if (updateInfo.progress >= 100) { clearInterval(t); updateInfo.state = 'ready'; refreshView(); }
+  }, 400);
+  return { ok: true, data: viewData() };
+}
+async function checkUpdatesManual() {
+  if (FAKE_UPDATE) return updateInfo.state === 'ready' || updateInfo.state === 'downloading' ? { ok: true, data: viewData() } : fakeUpdateCheck();
+  if (!app.isPackaged) return { ok: false, message: "Recherche impossible ici : cette copie de l'app n'est pas une version installée.", data: viewData() };
+  if (updateInfo.state === 'downloading' || updateInfo.state === 'ready') return { ok: true, data: viewData() };
+  if (checkingUpdates) { await waitUntil(() => !checkingUpdates || updateInfo.state === 'downloading', 20000); return { ok: true, data: viewData() }; }
+  checkingUpdates = true;
+  Object.assign(updateInfo, { state: 'checking', error: '' });
+  const run = checkUpdatesNow().catch(e => Object.assign(updateInfo, { state: 'error', error: e.message })).finally(() => { checkingUpdates = false; if (updateInfo.state === 'checking') updateInfo.state = 'idle'; refreshView(); });
+  await Promise.race([run, waitUntil(() => updateInfo.state !== 'checking', 20000)]);
+  return { ok: true, data: viewData() };
 }
 
 // Remplace l'app par la nouvelle version une fois fermée
@@ -2417,6 +2448,13 @@ function registerIpc() {
   });
   handle('mac:screen-settings', async q => {
     await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + (q && q.panel === 'acces' ? 'Privacy_Accessibility' : 'Privacy_ScreenCapture'));
+    return { ok: true };
+  });
+  handle('update:check', () => checkUpdatesManual());
+  handle('update:install', () => {
+    if (FAKE_UPDATE && updateInfo.state === 'ready') { fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'installation-demandee'), FAKE_UPDATE); return { ok: true }; }
+    if (!app.isPackaged || !updateReady()) throw new Error("Aucune mise à jour prête à installer pour l'instant.");
+    setTimeout(restartForUpdate, 150);
     return { ok: true };
   });
   handle('app:relaunch', () => {

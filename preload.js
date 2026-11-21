@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('api', {
   openScreenSettings: panel => call('mac:screen-settings', { panel }),
   showJournal: () => call('videos:journal'),
   relaunch: () => call('app:relaunch'),
+  checkUpdate: () => call('update:check'),
+  installUpdate: () => call('update:install'),
   onAnalysisStatus: cb => ipcRenderer.on('analysis:status', (e, v) => cb(v)),
   onAlert: cb => ipcRenderer.on('coach:alert', (e, v) => cb(v)),
   openClaudeFolder: () => ipcRenderer.invoke('claude:open'),

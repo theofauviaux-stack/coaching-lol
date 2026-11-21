@@ -7,7 +7,7 @@ module.exports = async function ({ app, win, fs, path }) {
   const until = async (code, ms = 25000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await js(code)) return true; await wait(300); } throw new Error('délai dépassé : ' + code); };
   const waitFile = async (name, ms = 60000) => { const t = Date.now(); while (!fs.existsSync(path.join(dir, name))) { if (Date.now() - t > ms) throw new Error('attente ' + name); await wait(200); } };
   const mark = name => fs.writeFileSync(path.join(dir, name), '1');
-  const type = async code => { for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); } await wait(900); };
+  const type = async code => { await js(`(() => { const e = document.querySelector('.wl-eye'); if (e) e.click(); return 1; })()`); await wait(450); for (const k of code) { await js(`document.querySelector('[data-key="${k}"]').click()`); await wait(80); } await wait(900); };
   const out = { phase: process.env.PHASE };
   try {
     await wait(1200);

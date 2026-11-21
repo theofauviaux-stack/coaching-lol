@@ -39,7 +39,7 @@ const PERIODS = [['10', '10 dernières'], ['20', '20 dernières'], ['all', 'Tout
 
 const state = {
   data: null, page: 'accueil', playerId: null, period: '20', metric: null, sessionOpen: null, settingsTab: 'joueur',
-  code: '', setupFirst: null, busy: false, loginMsg: '', shake: false,
+  code: '', setupFirst: null, busy: false, loginMsg: '', shake: false, loginView: 'welcome', wlOut: false, updBusy: false, updMsg: '',
   gameFilter: 'all', q: '', showCodes: {}, drawer: null, pending: false,
   collapsed: (() => { try { return localStorage.getItem('collapsed') === '1'; } catch (e) { return false; } })()
 };
@@ -220,6 +220,7 @@ function render() {
   hideTip();
   if (d.locked) {
     state.shown = null; // après la connexion, la page sera recréée (avec son animation d'entrée)
+    if (!$('#app').classList.contains('hidden')) { state.loginView = 'welcome'; state.code = ''; state.setupFirst = null; } // déconnexion : retour à l'accueil
     $('#app').classList.add('hidden');
     closeDrawer(true); closeModal();
     $('#login').classList.remove('hidden');
@@ -326,9 +327,46 @@ const isTyping = () => {
   return a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) && a.id !== 'q';
 };
 
-// ======================================================================== écran de code
-function renderLogin() {
-  const d = D();
+// ======================================================================== accueil et écran de code
+// L'app s'ouvre sur un accueil animé (carte de la Faille, wards qui s'allument, l'œil « Vision » qui suit la souris).
+// Un clic sur l'œil (ou Entrée, ou un chiffre tapé au clavier) ouvre le pavé du code ; Échap ou un clic à côté y revient.
+const WL_WARDS = [[27, 33, 0], [70, 68, 1.3], [38, 61, 2.6], [61, 38, 3.9], [22, 62, 5.2], [78, 40, 0.7], [50, 50, 2], [57, 81, 3.3], [44, 19, 4.6], [84, 84, 5.9]];
+function riftSvg() {
+  const wards = WL_WARDS.map(([x, y, dl], i) => `<g class="wl-ward ${i === 6 ? 'pink' : ''}" transform="translate(${x} ${y})"><circle class="vis" r="9" style="animation-delay:${dl}s"/><circle class="dot" r=".9" style="animation-delay:${dl}s"/></g>`).join('');
+  const towers = [[11, 64], [11, 38], [36, 11], [62, 11], [36, 89], [64, 89], [89, 62], [89, 36], [31, 69], [41, 59], [59, 41], [69, 31]]
+    .map(([x, y]) => `<rect class="tw" x="${x - 1.1}" y="${y - 1.1}" width="2.2" height="2.2" rx=".5"/>`).join('');
+  return `<svg class="wl-map" viewBox="0 0 100 100" aria-hidden="true">
+    <path class="river" d="M14 14C30 34 42 44 50 50S70 66 86 86"/>
+    <path class="lane" d="M11 86V11H86"/><path class="lane" d="M14 89H89V14"/><path class="lane" d="M16 84L84 16"/>
+    <circle class="base ally" cx="9" cy="91" r="5"/><circle class="base enemy" cx="91" cy="9" r="5"/>${towers}${wards}</svg>`;
+}
+function eyeSvg() {
+  return `<svg class="wl-eye-svg" viewBox="0 0 100 100" aria-hidden="true">
+    <defs><clipPath id="wl-clip"><path d="M8 50C21 30 35 22 50 22s29 8 42 28C79 70 65 78 50 78S21 70 8 50Z"/></clipPath></defs>
+    <g class="wl-lid"><path class="white" d="M8 50C21 30 35 22 50 22s29 8 42 28C79 70 65 78 50 78S21 70 8 50Z"/>
+      <g clip-path="url(#wl-clip)"><g id="wl-pupil"><circle class="iris" cx="50" cy="50" r="19"/><circle class="core" cx="50" cy="50" r="9"/><circle class="glint" cx="57" cy="43" r="4"/></g></g></g></svg>`;
+}
+function loginFoot(d) {
+  return !d.coachMachine && !d.cloudConfigured ? 'Cet ordinateur n\'est relié à aucun coach.' : 'Coaching LoL · version ' + esc(d.appVersion);
+}
+function welcomeHtml(d) {
+  const h = new Date().getHours();
+  const hello = h >= 18 || h < 5 ? 'Bonsoir' : 'Bonjour';
+  const hint = d.setup ? 'Première ouverture : clique sur l\'œil pour créer ton code coach' : 'Clique sur l\'œil pour entrer ton code';
+  return `<div class="welcome ${state.wlOut ? 'out' : ''}">
+    ${riftSvg()}
+    <div class="wl-fog"></div>
+    <div class="wl-center">
+      <div class="wl-hello">${hello}</div>
+      <button class="wl-eye" data-login="open" aria-label="${d.setup ? 'Créer le code coach' : 'Entrer mon code'}">
+        <span class="wl-sweep"></span><span class="wl-halo"></span>${eyeSvg()}</button>
+      <h1 class="wl-title">Coaching <span>LoL</span></h1>
+      <div class="wl-tag">Tes parties, ta vision, ta progression.</div>
+      <div class="wl-hint"><span class="wl-arrow">↑</span> ${hint}<small>ou tape-le directement au clavier</small></div>
+    </div>
+    <div class="login-foot wl-foot">${loginFoot(d)}</div></div>`;
+}
+function codeHtml(d) {
   const setup = d.setup;
   const title = setup ? (state.setupFirst ? 'Confirme ton code coach' : 'Crée ton code coach') : 'Entre ton code';
   const sub = setup
@@ -341,15 +379,45 @@ function renderLogin() {
         : `<button data-key="${k}">${k}</button>`).join('');
   let msg = state.loginMsg;
   if (!msg && d.blockedMs) msg = 'Trop d\'essais. Réessaie dans ' + Math.ceil(d.blockedMs / 1000) + ' s.';
-  const foot = !d.coachMachine && !d.cloudConfigured ? 'Cet ordinateur n\'est relié à aucun coach.' : 'Coaching LoL · version ' + esc(d.appVersion);
-  morph($('#login'), `<div class="login-card">
+  return `<div class="login-card">
+    <button class="login-back" data-login="back" title="Retour à l'accueil (Échap)">${icon('chevron', 14, 'flip')} Accueil</button>
     <div class="logo">${brandLogo(54, 'Coaching LoL')}</div>
     <h1>${title}</h1><div class="sub">${sub}</div>
     <div class="boxes ${state.shake ? 'shake' : ''}">${boxes}</div>
     <div class="login-msg ${msg ? '' : 'info'}">${state.busy ? '<span class="spinner"></span>' : esc(msg)}</div>
     <div class="keypad">${keys}</div>
-    <div class="login-foot">${foot}</div></div>`);
+    <div class="login-foot">${loginFoot(d)}</div></div>`;
 }
+let lastLoginHtml = '';
+function renderLogin() {
+  const d = D();
+  const html = state.loginView === 'welcome' ? welcomeHtml(d) : codeHtml(d);
+  if (html === lastLoginHtml && $('#login').firstChild) return; // rien n'a changé : on ne touche pas aux animations
+  lastLoginHtml = html;
+  morph($('#login'), html);
+}
+function openCode() {
+  if (state.loginView !== 'welcome' || state.wlOut) return;
+  state.wlOut = true;
+  renderLogin();
+  setTimeout(() => { state.wlOut = false; state.loginView = 'code'; renderLogin(); }, 280);
+}
+function backToWelcome() {
+  if (state.busy || state.loginView === 'welcome') return;
+  Object.assign(state, { loginView: 'welcome', code: '', setupFirst: null, loginMsg: '', shake: false });
+  renderLogin();
+}
+// l'œil suit la souris, la carte bouge un peu (parallaxe)
+document.addEventListener('mousemove', e => {
+  if (state.loginView !== 'welcome' || $('#login').classList.contains('hidden')) return;
+  const eye = $('.wl-eye'), pupil = document.getElementById('wl-pupil'), map = $('.wl-map');
+  if (!eye || !pupil) return;
+  const r = eye.getBoundingClientRect();
+  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  const dist = Math.hypot(dx, dy) || 1, k = Math.min(1, dist / 260);
+  pupil.setAttribute('transform', `translate(${(dx / dist * 11 * k).toFixed(2)} ${(dy / dist * 7 * k).toFixed(2)})`);
+  if (map) map.style.transform = `translate(calc(-50% + ${(-dx / 60).toFixed(1)}px), calc(-50% + ${(-dy / 60).toFixed(1)}px))`;
+});
 
 function pressKey(k) {
   if (state.busy) return;
@@ -430,7 +498,7 @@ function renderSidebar() {
     ${nav}
     <div class="bottom">
       <div class="profile">${who}<button class="icon-btn" data-action="logout" title="Changer de profil">${icon('logout', 17)}</button></div>
-      <div class="version">Version ${esc(d.appVersion)}</div>
+      <button class="version" data-action="upd-open" title="Rechercher une mise à jour">Version ${esc(d.appVersion)}${(d.update || {}).state === 'ready' ? ' · <b>mise à jour prête</b>' : ''}</button>
     </div>`);
 }
 
@@ -1717,11 +1785,6 @@ function settingsJoueur(p) {
 function settingsGeneral() {
   const d = D(), s = d.settings, c = d.coach || {};
   const cl = c.cloud || {};
-  const up = c.update || {};
-  const upTxt = up.state === 'ready' ? `La version ${esc(up.version)} est prête : elle s'installera à la fermeture de l'app.`
-    : up.state === 'downloading' ? `Téléchargement de la version ${esc(up.version)} en arrière-plan.`
-      : up.state === 'error' ? `Dernière vérification impossible : ${esc(up.error)}`
-                : up.state === 'uptodate' ? 'À jour (vérifié ' + esc(ago(up.checkedAt)) + ').' : 'Vérification automatique toutes les 30 secondes.';
   const objRows = Object.entries(s.objectives).map(([k, o]) => `<tr><td class="l">${esc(k)}</td><td class="muted">${esc(o.sens)}</td>${ROLES.map(r => `<td><input type="number" step="any" style="width:84px" data-tobj="${esc(k)}" data-role="${r}" value="${o[r] === null || o[r] === undefined ? '' : o[r]}"></td>`).join('')}</tr>`).join('');
   return `
     <div class="section"><h3>${icon('crown', 17)} Code coach</h3><div class="muted small">Il ouvre tous les joueurs, ici et sur n'importe quel ordinateur où l'app est installée (en lecture seule ailleurs).</div>
@@ -1752,7 +1815,54 @@ function settingsGeneral() {
       <div class="actions"><button class="btn primary" data-action="save-axes">Enregistrer</button></div></div>
     <div class="section"><h3>${icon('download', 17)} Sauvegarde</h3><div class="row" style="margin-top:8px"><button class="btn" data-action="export">${icon('download', 15)} Exporter</button><button class="btn" data-action="import">${icon('upload', 15)} Restaurer</button></div></div>
     ${pinnedLinks()}
-    <div class="section"><h3>${icon('info', 17)} À propos</h3><div class="muted small">Version ${esc(d.appVersion)}. ${upTxt}</div></div>`;
+    <div class="section"><h3>${icon('info', 17)} À propos</h3><div class="muted small">Version ${esc(d.appVersion)}. L'app vérifie toute seule toutes les 30 secondes et s'installe à un moment calme.</div><div class="upd-box">${updateBox()}</div></div>`;
+}
+
+// ======================================================================== mises à jour (coach et joueur)
+function updateBox() {
+  const d = D(), u = d.update || {};
+  const busy = state.updBusy || u.state === 'checking';
+  let line, cls = '';
+  if (busy) line = `<span class="spinner"></span><span>Recherche d'une nouvelle version…</span>`;
+  else if (state.updMsg) { line = `${icon('alert', 15)}<span>${esc(state.updMsg)}</span>`; cls = 'ko'; }
+  else if (u.state === 'ready') { line = `${icon('check', 15)}<span>La version <b>${esc(u.version)}</b> est prête. Elle s'installe au redémarrage de l'app.</span>`; cls = 'ok'; }
+  else if (u.state === 'downloading') line = `<span class="spinner"></span><span>Version <b>${esc(u.version)}</b> trouvée : téléchargement${u.progress >= 0 ? ' (' + u.progress + ' %)' : ''}…</span>`;
+  else if (u.state === 'error') { line = `${icon('alert', 15)}<span>Recherche impossible : ${esc(u.error)}</span>`; cls = 'ko'; }
+  else if (u.state === 'uptodate') { line = `${icon('check', 15)}<span>Tu as la dernière version (${esc(d.appVersion)}). Vérifié ${esc(ago(u.checkedAt))}.</span>`; cls = 'ok'; }
+  else line = `${icon('info', 15)}<span>Pas encore vérifié depuis l'ouverture de l'app.</span>`;
+  const btn = u.state === 'ready'
+    ? `<button class="btn primary" data-action="upd-install">${icon('sync', 15)} Redémarrer et installer</button>`
+    : `<button class="btn" data-action="upd-check" ${busy || u.state === 'downloading' ? 'disabled' : ''}>${icon('sync', 15)} Rechercher une mise à jour</button>`;
+  return `<div class="upd-line ${cls}">${line}</div><div class="upd-btns">${btn}</div>`;
+}
+function updModal() {
+  return `<div class="mo-head"><h2>${icon('download', 17)} Mises à jour</h2><span class="spacer"></span><button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
+    <div class="muted small" style="margin:4px 0 14px">Version installée : <b>${esc(D().appVersion)}</b>. L'app vérifie toute seule toutes les 30 secondes et s'installe à un moment calme ; ici, tu vérifies tout de suite.</div>
+    <div class="upd-box">${updateBox()}</div>`;
+}
+function renderUpd() { document.querySelectorAll('.upd-box').forEach(el => morph(el, updateBox())); }
+function pollUpd() {
+  clearTimeout(state.updTimer);
+  const u = D().update || {};
+  if (!['checking', 'downloading'].includes(u.state) || !document.querySelector('.upd-box')) return;
+  state.updTimer = setTimeout(async () => { state.data = await window.api.getData(); renderUpd(); if (!$('#app').classList.contains('hidden')) renderSidebar(); pollUpd(); }, 1500);
+}
+async function updCheck() {
+  if (state.updBusy) return;
+  state.updBusy = true; state.updMsg = '';
+  renderUpd();
+  const r = await window.api.checkUpdate();
+  state.updBusy = false;
+  if (r && r.data) state.data = r.data;
+  state.updMsg = r && r.ok ? '' : ((r && r.message) || 'Recherche impossible.');
+  renderUpd();
+  if (!$('#app').classList.contains('hidden')) renderSidebar();
+  pollUpd();
+}
+async function updInstall() {
+  const r = await window.api.installUpdate();
+  if (r && r.ok) toast('Redémarrage pour installer la mise à jour…', 'ok', 4000);
+  else { state.updMsg = (r && r.message) || 'Installation impossible.'; renderUpd(); }
 }
 
 // ======================================================================== EN DIRECT (coach, sur son ordinateur)
@@ -1948,8 +2058,13 @@ async function saveObjectives() {
 }
 
 document.addEventListener('click', async e => {
-  const key = e.target.closest('[data-key]');
-  if (key && !$('#login').classList.contains('hidden')) { pressKey(key.dataset.key); return; }
+  if (!$('#login').classList.contains('hidden')) {
+    const key = e.target.closest('[data-key]');
+    if (key) { pressKey(key.dataset.key); return; }
+    if (e.target.closest('[data-login="open"]')) { openCode(); return; }
+    if (e.target.closest('[data-login="back"]') || (state.loginView === 'code' && !e.target.closest('.login-card'))) { backToWelcome(); return; }
+    return;
+  }
   if (e.target.id === 'modal') { closeModal(); return; }
   if (e.target.id === 'drawer-back') { closeDrawer(); return; }
   const el = e.target.closest('[data-action]');
@@ -1962,6 +2077,9 @@ document.addEventListener('click', async e => {
     case 'go': if (el.dataset.page === 'cours') state.cours = null; state.page = el.dataset.page; if (state.page !== 'parametres') state.settingsTab = state.settingsTab || 'joueur'; render(); $('#page').scrollTop = 0; if (state.page === 'analyses') window.api.refreshAnalyses(); break;
     case 'collapse': state.collapsed = !state.collapsed; try { localStorage.setItem('collapsed', state.collapsed ? '1' : '0'); } catch (err) { /* rien */ } render(); break;
     case 'logout': logout(); break;
+    case 'upd-open': state.updMsg = ''; openModal(updModal()); $('#modal-box').style.width = 'min(560px, 94vw)'; pollUpd(); break;
+    case 'upd-check': updCheck(); break;
+    case 'upd-install': updInstall(); break;
     case 'open-player': state.playerId = id; state.page = 'dashboard'; state.metric = null; render(); $('#page').scrollTop = 0; break;
     case 'player-settings': state.playerId = id; state.page = 'parametres'; state.settingsTab = 'joueur'; render(); break;
     case 'period': state.period = el.dataset.v; render(); break;
@@ -2483,8 +2601,14 @@ document.addEventListener('submit', async e => {
 
 document.addEventListener('keydown', e => {
   if (!$('#login').classList.contains('hidden')) {
+    if (state.loginView === 'welcome') {
+      if (/^\d$/.test(e.key)) { state.loginView = 'code'; state.wlOut = false; pressKey(e.key); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCode(); }
+      return;
+    }
     if (/^\d$/.test(e.key)) pressKey(e.key);
     else if (e.key === 'Backspace') pressKey('back');
+    else if (e.key === 'Escape') backToWelcome();
     return;
   }
   if (e.key === 'Escape') { if (!$('#modal').classList.contains('hidden')) closeModal(); else closeDrawer(); }

@@ -386,11 +386,13 @@ const Cours = (() => {
     evite: ["de mourir avant mon power spike", "les teamfights 5v5 avant 2 items", "de perdre mes waves", "de me faire catch sans vision"]
   };
   const winconText = v => `Mon champion est fort ${WC.fort[v.fort]}. Il gagne la partie ${WC.gagne[v.gagne]}. Je dois éviter ${WC.evite[v.evite]}.`;
+  // or moyen d'un CS avant 11 min : 3 waves de 6 minions (melee 20, caster 14) + 1 cannon (50) = 356 gold pour 19 CS
+  const csGold = miss => Math.round(miss * 356 / 19 / 10) * 10;
   function csOut(v) {
     const miss = 70 - v;
     const waves = Math.max(0, miss) / 6;
     return miss > 0
-      ? `<div class="cs-fb ko">${icon('alert', 14)}<span>Il te manque <b>${miss} CS</b> pour l'objectif de 70, soit environ <b>${String(waves.toFixed(1)).replace('.', ',')} wave${waves >= 2 ? 's' : ''}</b> perdue${waves >= 2 ? 's' : ''} à 10 minutes.</span></div>`
+      ? `<div class="cs-fb ko">${icon('alert', 14)}<span>Il te manque <b>${miss} CS</b> pour l'objectif de 70, soit environ <b>${String(waves.toFixed(1)).replace('.', ',')} wave${waves >= 2 ? 's' : ''}</b> perdue${waves >= 2 ? 's' : ''} à 10 minutes, environ <b>${csGold(miss)} gold</b>.</span></div>`
       : `<div class="cs-fb ok">${icon('check', 14)}<span>Objectif de 70 atteint${v >= 80 ? ', et même le repère de practice tool (80)' : ''}. Vise maintenant <b>8 CS/min</b> sur toute la partie.</span></div>`;
   }
 
