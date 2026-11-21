@@ -128,6 +128,14 @@ function launch(phase, dataDir, env) {
   Object.assign(j.settings, dd, { lolPath: path.join(DIR, 'Jeux') });
   fs.writeFileSync(path.join(DIR, 'joueur', 'coaching-data.json'), JSON.stringify(j));
 
+  // vidéo envoyée avant la 1.6.16 (ni durée ni index) : dès l'envoi du joueur, la 1re vidéo du serveur est remplacée par
+  // une vidéo brute de l'enregistreur ; l'app doit la réparer à la lecture
+  const RAW = fs.readFileSync(path.join(__dirname, 'fixtures', 'mediarecorder.webm'));
+  const swap = setInterval(() => {
+    if (!fs.existsSync(path.join(DIR, 'envoye'))) return;
+    const k = [...fake.files.keys()].find(x => x.endsWith('/01_5m55.webm'));
+    if (k) { fake.files.set(k, RAW); clearInterval(swap); }
+  }, 50);
   const coachDone = launch('coach', path.join(DIR, 'coach'), Object.assign({ COACHING_LOL_RIOT: lol.url, COACHING_LOL_LCU: lol.url, COACHING_LOL_REPLAY: lol.url, COACHING_LOL_CLAUDE_DIR: path.join(DIR, 'claude') }, cloudEnv));
   // moments envoyés au serveur par l'app du coach (calculés chez « Riot »), puis le joueur ouvre son app
   const t0 = Date.now();
@@ -188,6 +196,11 @@ function launch(phase, dataDir, env) {
   assert.strictEqual(an.clips, 4);
   assert.ok(/ANNULÉ par le joueur/.test(an.journal), an.journal);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
+  assert.deepStrictEqual(rj.navigables, [true, true, true, true], 'vidéos filmées navigables (durée + index)');
+  assert.ok(rj.videoLocale.duree !== 'Infinity' && Number(rj.videoLocale.duree) > 0, 'durée connue : ' + rj.videoLocale.duree);
+  assert.ok(Math.abs(Number(rc.video.duree) - 7.19) < 0.2 && rc.video.largeur === 160, 'ancienne vidéo du serveur réparée à la lecture : ' + JSON.stringify(rc.video));
+  assert.deepStrictEqual(rc.videosGardees, ['01_5m55.webm'], 'seule l\'ancienne vidéo est gardée sur l\'ordinateur du coach');
+  assert.ok(Math.abs(Number(rj.videoEnLigne.duree) - 7.19) < 0.2, 'joueur : même vidéo réparée : ' + JSON.stringify(rj.videoEnLigne));
   assert.strictEqual(rj.cartes, 4);
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
   assert.ok(/envoyée au coach/.test(rj.messageEnvoi), rj.messageEnvoi);
@@ -266,6 +279,8 @@ function launch(phase, dataDir, env) {
   assert.ok(/Partie personnalisée ajoutée/.test(rc.persoNotif || ''), 'notification coach : ' + rc.persoNotif);
   assert.strictEqual(Number((await fake.db.query(`select count(*) as n from custom_games`)).rows[0].n), 0, 'reprise par le coach : effacée du serveur');
   assert.strictEqual(fake.files.size, 0, 'toutes les vidéos effacées du stockage');
+  const gardees = (() => { try { return fs.readdirSync(path.join(DIR, 'coach', 'videos-serveur')); } catch (e) { return []; } })();
+  assert.deepStrictEqual(gardees, [], 'vidéos gardées effacées avec leurs analyses');
   // le joueur sur l'ordinateur du coach : moments, tournage, envoi, page Analyses
   assert.ok(rc.local.menu.includes('Analyses'), rc.local.menu.join(','));
   assert.deepStrictEqual(rc.local.liste, [], 'analyse exportée : plus dans la liste');

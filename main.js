@@ -746,6 +746,7 @@ async function refreshAnalyses() {
   }
   if (session && JSON.stringify([analyses.list, analyses.error]) !== before) refreshView();
   if (me === 'coach') syncClaudeFolder();
+  cleanServerClips();
 }
 function analysesView() {
   const me = analysisRole();
@@ -766,6 +767,7 @@ async function getAnalysis({ id }) {
   const r = me === 'coach' ? await cloud.coachAnalysisGet(getPushToken(), id) : await cloud.analysisGet(playerToken(), id);
   keepAnalysis(r.analysis, true);
   setTimeout(refreshView, 0);
+  prefetchServerClips(r.analysis); // anciennes vidéos (sans durée ni index) : préparées pendant qu'on lit
   const cd = me === 'coach' ? readClaudeDrafts()[id] : null;
   return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId), claude: cd ? { general: cd.general, moments: cd.moments, used: cd.used || {} } : null };
 }
@@ -993,11 +995,12 @@ async function prepareClaudeFolder(base, a) {
     if (!/^[\w-]+\.webm$/.test(c.file)) continue;
     const out = path.join(tmp, 'videos', c.file);
     const local = path.join(localDir, c.file);
-    if (fs.existsSync(local) && fs.statSync(local).size > 0) fs.copyFileSync(local, out);
+    const kept = path.join(serverClipsDir(), full.id, c.file);
+    if (fs.existsSync(local) && fs.statSync(local).size > 0) { ensureSeekableFile(local); fs.copyFileSync(local, out); } else if (fs.existsSync(kept)) fs.copyFileSync(kept, out);
     else {
       const res = await fetch(cloud.clipUrl(full.id, c.file));
       if (!res.ok) throw new Error('vidéo ' + c.file + ' introuvable (' + res.status + ')');
-      fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+      fs.writeFileSync(out, seekableBuffer(Buffer.from(await res.arrayBuffer())));
     }
   }
   const m = full.moments;
@@ -1102,11 +1105,12 @@ async function exportAnalysis({ id }) {
       say('Enregistrement de la vidéo ' + (i + 1) + '/' + clips.length + ' sur ton ordinateur…', 0.05 + 0.75 * i / clips.length);
       const out = path.join(dir, f);
       const local = path.join(localDir, f);
-      if (fs.existsSync(local) && fs.statSync(local).size > 0) fs.copyFileSync(local, out);
+      const kept = path.join(serverClipsDir(), id, f);
+      if (fs.existsSync(local) && fs.statSync(local).size > 0) { ensureSeekableFile(local); fs.copyFileSync(local, out); } else if (fs.existsSync(kept)) fs.copyFileSync(kept, out);
       else {
         const res = await fetch(cloud.clipUrl(id, f));
         if (!res.ok) throw new Error('La vidéo ' + f + ' est introuvable sur le serveur (' + res.status + ') : rien n\'a été supprimé.');
-        fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+        fs.writeFileSync(out, seekableBuffer(Buffer.from(await res.arrayBuffer())));
       }
       if (!(fs.statSync(out).size > 0)) throw new Error('La vidéo ' + f + ' est vide : rien n\'a été supprimé.');
       files.push(f);
@@ -1149,6 +1153,7 @@ async function sendAnalysis({ matchId, picks, note }) {
   if (!chosen.length) throw new Error('Choisis au moins une vidéo à envoyer.');
   const clips = chosen.map(({ c }) => {
     let bytes = 0;
+    ensureSeekableFile(path.join(dir, c.file));
     try { bytes = fs.statSync(path.join(dir, c.file)).size; } catch (e) { /* vidéo supprimée */ }
     if (!bytes) throw new Error('Vidéo introuvable : refilme les moments.');
     return Object.assign({ file: c.file, start: c.start, end: c.end, times: c.times, bytes }, typeof c.lead === 'number' ? { lead: c.lead } : {}, Array.isArray(c.sync) ? { sync: c.sync.slice(0, 40) } : {});
@@ -1203,6 +1208,101 @@ async function sendAnalysis({ matchId, picks, note }) {
 // Le client LoL télécharge puis ouvre le replay ; la Replay API du jeu va à chaque moment avec la caméra sur
 // le joueur ; l'app filme la fenêtre du jeu (fenêtre cachée « recorder ») ; voir src/replay.js.
 const videosDir = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'videos');
+// Vidéos navigables (durée + index, voir src/webm.js) : l'enregistreur du navigateur n'en écrit pas ; sans elles la
+// barre de lecture ne marche pas et chaque saut dans une vidéo du serveur oblige à tout télécharger depuis le début.
+const webmMod = require('./src/webm');
+const seekableBuffer = buf => (webmMod.isSeekable(buf.subarray(0, 16384)) ? buf : webmMod.makeSeekable(buf) || buf);
+const seekableChecked = new Set();
+function ensureSeekableFile(f) { // vidéos filmées avant la 1.6.16 : réparées sur place, une fois
+  if (seekableChecked.has(f)) return;
+  try {
+    const fd = fs.openSync(f, 'r');
+    const head = Buffer.alloc(16384);
+    const n = fs.readSync(fd, head, 0, head.length, 0);
+    fs.closeSync(fd);
+    if (!webmMod.isSeekable(head.subarray(0, n))) {
+      const fixed = webmMod.makeSeekable(fs.readFileSync(f));
+      if (fixed) { fs.writeFileSync(f + '.tmp', fixed); fs.renameSync(f + '.tmp', f); }
+    }
+    seekableChecked.add(f);
+  } catch (e) { /* laissée telle quelle */ }
+}
+// Réponse vidéo depuis un fichier, avec les demandes de plage (pour avancer dans la vidéo)
+function fileResponse(f, range) {
+  const { Readable } = require('stream');
+  const size = fs.statSync(f).size;
+  const m = range && /bytes=(\d*)-(\d*)/.exec(range);
+  const headers = { 'Content-Type': 'video/webm', 'Accept-Ranges': 'bytes' };
+  if (m && (m[1] || m[2])) {
+    const s0 = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+    const e0 = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+    if (s0 >= size || s0 > e0) return new Response('', { status: 416, headers: { 'Content-Range': 'bytes */' + size } });
+    return new Response(Readable.toWeb(fs.createReadStream(f, { start: s0, end: e0 })), { status: 206, headers: Object.assign(headers, { 'Content-Range': `bytes ${s0}-${e0}/${size}`, 'Content-Length': String(e0 - s0 + 1) }) });
+  }
+  return new Response(Readable.toWeb(fs.createReadStream(f)), { status: 200, headers: Object.assign(headers, { 'Content-Length': String(size) }) });
+}
+// Vidéos du serveur : lues directement si elles sont navigables ; sinon (envoyées avant la 1.6.16) téléchargées une
+// fois, réparées et gardées sur cet ordinateur tant que l'analyse existe
+const serverClipsDir = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'videos-serveur');
+const remoteSeekable = new Map();
+const caching = new Map();
+function cacheServerClip(id, file) {
+  const f = path.join(serverClipsDir(), id, file);
+  if (fs.existsSync(f)) return Promise.resolve(f);
+  const key = id + '/' + file;
+  if (!caching.has(key)) {
+    caching.set(key, (async () => {
+      const res = await net.fetch(cloud.clipUrl(id, file));
+      if (!res.ok) throw new Error('vidéo ' + file + ' introuvable (' + res.status + ')');
+      const buf = seekableBuffer(Buffer.from(await res.arrayBuffer()));
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f + '.tmp', buf);
+      fs.renameSync(f + '.tmp', f);
+      return f;
+    })().finally(() => caching.delete(key)));
+  }
+  return caching.get(key);
+}
+async function serverClip(id, file, range) {
+  const f = path.join(serverClipsDir(), id, file);
+  if (fs.existsSync(f)) return fileResponse(f, range);
+  const key = id + '/' + file;
+  if (!remoteSeekable.has(key)) {
+    try {
+      const head = await net.fetch(cloud.clipUrl(id, file), { headers: { Range: 'bytes=0-16383' } });
+      if (head.ok) remoteSeekable.set(key, webmMod.isSeekable(Buffer.from(await head.arrayBuffer())));
+    } catch (e) { /* on lira la vidéo telle quelle */ }
+  }
+  if (remoteSeekable.get(key) === false) {
+    try { return fileResponse(await cacheServerClip(id, file), range); } catch (e) { /* lecture directe ci-dessous */ }
+  }
+  return net.fetch(cloud.clipUrl(id, file), { headers: range ? { Range: range } : {} });
+}
+// analyse ouverte : ses anciennes vidéos sont préparées d'avance, en arrière-plan
+function prefetchServerClips(a) {
+  if (!cloud || !a || a.clipsState !== 'en_ligne') return;
+  (async () => {
+    for (const c of a.clips || []) {
+      if (!/^[\w-]+\.webm$/.test(c.file)) continue;
+      const key = a.id + '/' + c.file;
+      try {
+        if (!remoteSeekable.has(key)) {
+          const head = await net.fetch(cloud.clipUrl(a.id, c.file), { headers: { Range: 'bytes=0-16383' } });
+          if (!head.ok) continue;
+          remoteSeekable.set(key, webmMod.isSeekable(Buffer.from(await head.arrayBuffer())));
+        }
+        if (remoteSeekable.get(key) === false) await cacheServerClip(a.id, c.file);
+      } catch (e) { /* réessayé à la lecture */ }
+    }
+  })();
+}
+function cleanServerClips() { // vidéos gardées des analyses qui n'existent plus
+  try {
+    if (!analyses.loaded) return;
+    const ids = new Set(analyses.list.map(a => a.id));
+    for (const d of fs.readdirSync(serverClipsDir())) if (!ids.has(d)) fs.rmSync(path.join(serverClipsDir(), d), { recursive: true, force: true });
+  } catch (e) { /* pas encore de dossier */ }
+}
 const videoKey = (playerId, matchId) => String(playerId).replace(/[^\w-]/g, '') + '_' + String(matchId).replace(/[^\w-]/g, '');
 const REPLAY_BASE = (process.env.COACHING_LOL_TEST && process.env.COACHING_LOL_REPLAY) || 'https://127.0.0.1:2999';
 let videoJob = null;
@@ -1328,8 +1428,11 @@ async function startRecording(file, { source = 'fenetre', log = () => {} } = {})
       const r = await stop(false);
       if (!r || r.cancelled || !r.data) throw new Error('Enregistrement vide.');
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, Buffer.from(r.data));
-      return { bytes: r.data.byteLength, info: st.info };
+      const raw = Buffer.from(r.data);
+      const out = webmMod.makeSeekable(raw) || raw; // durée + index : barre de lecture et sauts rapides
+      fs.writeFileSync(file, out);
+      seekableChecked.add(file);
+      return { bytes: out.length, info: st.info, seekable: out !== raw };
     },
     cancel: () => stop(true).catch(() => null)
   };
@@ -2060,6 +2163,7 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.on('blur', () => { blurredAt = Date.now(); });
+  win.on('closed', () => { if (videoJob) cancelVideos({}); dropRecorder(); }); // sinon la fenêtre cachée garde l'app ouverte sans fenêtre
   win.on('focus', () => { blurredAt = null; });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
 }
@@ -2078,12 +2182,15 @@ app.whenReady().then(async () => {
     const u = new URL(req.url);
     const parts = decodeURIComponent(u.pathname).split('/').filter(Boolean);
     if (parts.length !== 2 || !/^[\w-]+$/.test(parts[0]) || !/^[\w-]+\.webm$/.test(parts[1])) return new Response('', { status: 404 });
+    const range = req.headers.get('range');
     if (u.host === 'r') { // vidéo envoyée par un joueur (serveur), avec les demandes de plage pour avancer dans la vidéo
       if (!cloud || !/^[0-9a-f-]{36}$/.test(parts[0])) return new Response('', { status: 404 });
-      const range = req.headers.get('range');
-      return net.fetch(cloud.clipUrl(parts[0], parts[1]), { headers: range ? { Range: range } : {} });
+      return serverClip(parts[0], parts[1], range).catch(() => new Response('', { status: 502 }));
     }
-    return net.fetch(pathToFileURL(path.join(videosDir(), parts[0], parts[1])).toString());
+    const f = path.join(videosDir(), parts[0], parts[1]);
+    if (!fs.existsSync(f)) return new Response('', { status: 404 });
+    ensureSeekableFile(f);
+    return fileResponse(f, range);
   });
   createWindow();
   refreshDDragon();
@@ -2131,7 +2238,7 @@ app.whenReady().then(async () => {
     setInterval(refreshRoleRates, 6 * 3600 * 1000);
   });
   if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => { if (!win || win.isDestroyed()) createWindow(); else { if (win.isMinimized()) win.restore(); win.show(); } }); // la fenêtre cachée de l'enregistreur ne compte pas
 });
 
 // Mac : une mise à jour prête s'installe quand on quitte l'app (comme sur Windows)

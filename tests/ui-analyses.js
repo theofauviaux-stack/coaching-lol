@@ -16,7 +16,7 @@ module.exports = async function ({ app, win, fs, path }) {
   const videoOk = async () => {
     await until(`!!document.querySelector('.mo-video video')`, 20000);
     await wait(2500);
-    return js(`(() => { const v = document.querySelector('.mo-video video'); return { src: v.src, largeur: v.readyState >= 1 ? v.videoWidth : 0, erreur: v.error ? v.error.code : null }; })()`);
+    return js(`(() => { const v = document.querySelector('.mo-video video'); return { src: v.src, largeur: v.readyState >= 1 ? v.videoWidth : 0, erreur: v.error ? v.error.code : null, duree: String(v.duration) }; })()`);
   };
   const out = { phase: process.env.PHASE };
   try {
@@ -50,6 +50,7 @@ module.exports = async function ({ app, win, fs, path }) {
       out.progression = await js(`window.__vp`);
       out.videoLocale = await videoOk();
       out.fichiers = fs.readdirSync(path.join(data, 'videos', 'p1_EUW1_7300000099')).sort();
+      out.navigables = out.fichiers.map(f => require(path.join(__dirname, '..', 'src', 'webm')).isSeekable(fs.readFileSync(path.join(data, 'videos', 'p1_EUW1_7300000099', f))));
       out.journal = fs.readFileSync(path.join(data, 'videos', 'journal.txt'), 'utf8');
       out.touches = fs.readFileSync(path.join(data, 'videos', 'touches.txt'), 'utf8').trim().split('\n');
       // « Refilmer » puis « Annuler l'enregistrement » : tout s'arrête, les 4 vidéos d'avant restent, on peut relancer
@@ -193,6 +194,7 @@ module.exports = async function ({ app, win, fs, path }) {
       out.filMoment = await js(`[...document.querySelectorAll('.an-msg')].map(m => m.querySelector('.an-txt').textContent)`);
       out.claudeMoment = await js(`({ bandeau: !!document.querySelector('.an-ai'), texte: document.querySelector('#an-text').value })`);
       out.video = await videoOk();
+      out.videosGardees = (() => { try { return fs.readdirSync(path.join(data, 'videos-serveur')).map(d => fs.readdirSync(path.join(data, 'videos-serveur', d))).flat(); } catch (e) { return []; } })();
       out.filmes = await js(`document.querySelectorAll('.mo-has').length`);
       await shot('a5-analyse-coach');
       await fill('#an-text', 'Regarde la mini-carte à 6:10 : Kha\'Zix était top. Ward la rivière avant 6:00.');
