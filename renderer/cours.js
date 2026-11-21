@@ -53,7 +53,7 @@ const Cours = (() => {
     const d15 = avg(g => g.deaths15), cs10 = avg(g => g.cs10), vis = avg(g => (g.duration ? g.vision / g.duration : null));
     if (d15 !== null && d15 > 2) { out.survie = `${String(d15.toFixed(1)).replace('.', ',')} morts avant 15 min en moyenne`; out.tracking = 'beaucoup de morts en early'; }
     if (p.role !== 'Support' && p.role !== 'Jungle' && cs10 !== null && cs10 < 70) out.farm = `${Math.round(cs10)} CS à 10 min en moyenne`;
-    if (p.role === 'Support') out.support = vis !== null && vis < 2 ? `${String(vis.toFixed(2)).replace('.', ',')} de vision score par minute` : 'ton rôle';
+    if (p.role === 'Support') out.support = vis !== null && vis < 2 ? `${String(vis.toFixed(2)).replace('.', ',')} de score de vision par minute` : 'ton rôle';
     return out;
   }
 
@@ -375,7 +375,7 @@ const Cours = (() => {
 
   const ROAM = [
     { t: "Ta wave a crash sous leur tower, ou les 2 prochaines waves n'ont pas de cannon", short: 'une wave qui couvre ton absence', need: true },
-    { t: "Ton ADC peut clear seul (premier item, Statikk Shiv ou level 6 selon le champion)", short: 'un ADC capable de tenir seul', need: true },
+    { t: "Ton ADC peut clear seul (premier item, Poignard de Statikk ou level 6 selon le champion)", short: 'un ADC capable de tenir seul', need: true },
     { t: "Ton roam mène à quelque chose : un kill, un objectif, une vision importante", short: 'un vrai but au roam', need: true },
     { t: "La botlane adverse n'a pas de gros CC (enchanter ou mage)", short: '', need: false },
     { t: "Le jungler adverse est tracké loin de la botlane", short: '', need: false }
