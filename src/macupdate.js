@@ -2,7 +2,10 @@
 // electron-updater refuse d'installer une app non signée par un développeur Apple : on fait donc nous-mêmes
 // ce qu'il ferait : télécharger le zip de la nouvelle version, vérifier son empreinte, le décompresser,
 // puis remplacer l'app une fois qu'elle est fermée et la relancer.
-const fs = require('fs');
+// Dans Electron, « fs » ouvre les archives .asar comme des dossiers : effacer une app déjà décompressée
+// (…/Contents/Resources/app.asar, reste d'une mise à jour pas installée) échouait alors (ENOTDIR) et bloquait
+// toutes les mises à jour suivantes. « original-fs » voit les vrais fichiers ; hors Electron (tests), « fs ».
+const fs = (() => { try { return require('original-fs'); } catch (e) { return require('fs'); } })();
 const path = require('path');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
