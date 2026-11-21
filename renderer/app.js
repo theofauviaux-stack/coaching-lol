@@ -401,7 +401,8 @@ function pages() {
     { id: 'accueil', label: 'Accueil', ico: 'home', sec: 'Espace' },
     { id: 'dashboard', label: 'Tableau de bord', ico: 'dashboard', sec: 'Espace' },
     { id: 'parties', label: 'Parties', ico: 'games', sec: 'Espace' },
-    { id: 'seances', label: 'Séances', ico: 'sessions', sec: 'Espace' }
+    { id: 'seances', label: 'Séances', ico: 'sessions', sec: 'Espace' },
+    { id: 'cours', label: 'Cours', ico: 'graduation', sec: 'Espace', badge: Cours.badge() }
   ];
   if (coach && canEdit()) list.splice(1, 0, { id: 'direct', label: 'En direct', ico: 'radio', sec: 'Espace', badge: liveGames().length });
   if (!coach) list.push({ id: 'objectifs', label: 'Mes objectifs', ico: 'target', sec: 'Espace' });
@@ -436,7 +437,7 @@ function renderSidebar() {
 function renderTopbar() {
   const d = D();
   const pg = pages().find(x => x.id === state.page);
-  const perPlayer = ['dashboard', 'parties', 'seances', 'parametres'].includes(state.page);
+  const perPlayer = ['dashboard', 'parties', 'seances', 'cours', 'parametres'].includes(state.page);
   const p = player();
   const sw = isCoach() && perPlayer && d.players.length && !(state.page === 'parametres' && state.settingsTab === 'general')
     ? `<select class="select-player" data-change="player">${d.players.map(x => opt(x.id, state.playerId, x.riotId)).join('')}</select>` : '';
@@ -1836,7 +1837,7 @@ function pageDirect() {
     : `<div class="empty lv-empty">${icon('radio', 26)}<b>Aucun de tes joueurs n'est en partie classée Solo/Duo.</b><span>Dès que l'un d'eux lance une partie, elle s'affiche ici avec ses adversaires (et tu reçois une notification).</span></div>`) + idleList;
 }
 
-const PAGES = { accueil: pageAccueil, direct: pageDirect, analyses: pageAnalyses, dashboard: pageDashboard, parties: pageParties, seances: pageSeances, objectifs: pageObjectifs, joueurs: pageJoueurs, parametres: pageParametres };
+const PAGES = { cours: () => Cours.page(), accueil: pageAccueil, direct: pageDirect, analyses: pageAnalyses, dashboard: pageDashboard, parties: pageParties, seances: pageSeances, objectifs: pageObjectifs, joueurs: pageJoueurs, parametres: pageParametres };
 
 // le coach refuse un horaire en en proposant un autre
 function openProposeModal(bookingId) {
@@ -1956,8 +1957,9 @@ document.addEventListener('click', async e => {
   if (el.closest('[data-stop]') && el.dataset.action === 'toggle-session') return;
   const a = el.dataset.action, id = el.dataset.id;
   const p = player();
+  if (a.startsWith('c-')) { Cours.click(el); return; }
   switch (a) {
-    case 'go': state.page = el.dataset.page; if (state.page !== 'parametres') state.settingsTab = state.settingsTab || 'joueur'; render(); $('#page').scrollTop = 0; if (state.page === 'analyses') window.api.refreshAnalyses(); break;
+    case 'go': if (el.dataset.page === 'cours') state.cours = null; state.page = el.dataset.page; if (state.page !== 'parametres') state.settingsTab = state.settingsTab || 'joueur'; render(); $('#page').scrollTop = 0; if (state.page === 'analyses') window.api.refreshAnalyses(); break;
     case 'collapse': state.collapsed = !state.collapsed; try { localStorage.setItem('collapsed', state.collapsed ? '1' : '0'); } catch (err) { /* rien */ } render(); break;
     case 'logout': logout(); break;
     case 'open-player': state.playerId = id; state.page = 'dashboard'; state.metric = null; render(); $('#page').scrollTop = 0; break;
@@ -2346,6 +2348,7 @@ document.addEventListener('click', async e => {
 
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (Cours.change(e)) return;
   if (el.dataset.change === 'send-pick' && state.moments && state.moments.sendDraft) {
     const P = state.moments.sendDraft.picks;
     P[el.dataset.file] = Object.assign(P[el.dataset.file] || {}, { on: el.checked });
@@ -2377,6 +2380,7 @@ document.addEventListener('change', async e => {
 
 document.addEventListener('input', e => {
   const el = e.target;
+  if (Cours.input(e)) return;
   if (el.dataset.input === 'q') { state.q = el.value; render(); return; }
   if (el.id === 'an-text' && state.moments && state.moments.drafts) { state.moments.drafts[state.moments.sel] = el.value; return; }
   if (el.dataset.gr !== undefined && state.moments && state.moments.goalRows) {
