@@ -18,7 +18,10 @@ const partie = require('./fixtures/partie-moments')('P-UAWAWA');
 // ---------------------------------------------------------------- faux Riot (partie + timeline), client LoL et jeu
 const calls = { match: 0, lcu: [], replay: [] };
 // comme le vrai client : pas de fiche replay tant qu'on ne l'a pas créée, puis « checking », puis « download »
-const rp = { state: null, polls: 0, checks: 0, watching: false, loading: 3, time: 0, paused: true, at: 0, selection: '' };
+const rp = { state: null, polls: 0, checks: 0, watching: false, loading: 3, time: 0, paused: true, at: 0, selection: '', hud: { interfaceReplay: true, interfaceTimeline: true, interfaceChat: true, outlineHover: true } };
+// réglages de jeu du joueur dans son client LoL (le faux jeu en change pendant le replay, comme s'il gardait l'interface épurée)
+const REGLAGES = { General: { WindowMode: 2, Height: 900 }, HUD: { ShowTimestamps: true, MinimapScale: 1.2, ChatScale: 100 }, Replay: { HideInterface: false } };
+const gs = { settings: JSON.parse(JSON.stringify(REGLAGES)), patches: [], saves: 0 };
 const perso = require('./fixtures/lcu-v4')('P-UAWAWA', 7300000777);
 function startLol() {
   const srv = http.createServer((req, res) => {
@@ -33,6 +36,11 @@ function startLol() {
       if (req.url.startsWith('/lol-match-history/v1/products/lol/current-summoner/matches')) return send(200, perso.list);
       if (req.url === '/lol-match-history/v1/games/7300000777') return send(200, perso.game);
       if (req.url === '/lol-match-history/v1/game-timelines/7300000777') return send(200, perso.timeline);
+      if (req.url === '/lol-game-settings/v1/game-settings') {
+        if (req.method === 'PATCH' && body) { gs.patches.push(Object.keys(body)); Object.assign(gs.settings, JSON.parse(JSON.stringify(body))); }
+        return send(200, gs.settings);
+      }
+      if (req.url === '/lol-game-settings/v1/save' && req.method === 'POST') { gs.saves++; return send(204); }
       if (req.url.startsWith('/lol-replays/')) {
         calls.lcu.push(req.method + ' ' + req.url);
         if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: true, isPatching: false });
@@ -44,7 +52,11 @@ function startLol() {
           return send(200, { gameId: 7300000099, state: rp.state, downloadProgress: rp.polls / 3 });
         }
         if (req.url === '/lol-replays/v1/rofls/7300000099/download') { rp.state = 'downloading'; return send(204); }
-        if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
+        if (req.url === '/lol-replays/v1/rofls/7300000099/watch') {
+          rp.watching = true;
+          gs.settings.Replay = { HideInterface: true }; gs.settings.HUD = Object.assign({}, gs.settings.HUD, { ChatScale: 0 }); // le jeu garde ses changements
+          return send(204);
+        }
         return send(404, {});
       }
       if (req.url === '/liveclientdata/playerlist') return rp.watching ? send(200, [{ team: 'ORDER', championName: 'Darius', riotIdGameName: 'UCE Uawawa' }, { team: 'ORDER', championName: 'LeeSin' }, { team: 'CHAOS', championName: 'Garen', riotIdGameName: 'Demacia' }]) : send(503, {});
@@ -65,7 +77,8 @@ function startLol() {
           // comme le jeu : sélection puis attache de la caméra (l'attache vaut pour la sélection en cours)
           if (req.method === 'POST' && body && 'selectionName' in body) { rp.selection = body.selectionName === 'UCE Uawawa' ? 'UCE Uawawa' : ''; rp.attached = false; }
           if (req.method === 'POST' && body && 'cameraAttached' in body && !('selectionName' in body)) rp.attached = !!body.cameraAttached && !!rp.selection;
-          return send(200, { selectionName: rp.selection, cameraAttached: !!rp.attached, cameraMode: 'top' });
+          if (req.method === 'POST' && body) for (const k of Object.keys(rp.hud)) if (k in body) rp.hud[k] = body[k];
+          return send(200, Object.assign({ selectionName: rp.selection, cameraAttached: !!rp.attached, cameraMode: 'top' }, rp.hud));
         }
       }
       return send(404, { status: { message: 'Data not found', status_code: 404 } });
@@ -149,6 +162,12 @@ function launch(phase, dataDir, env) {
   assert.ok(/macOS bloque l'enregistrement de l'écran.*Ouvrir les réglages.*Relancer l'app/.test(rj.encadre), rj.encadre);
   assert.deepStrictEqual(rj.fichiers, ['01_5m55.webm', '02_8m25.webm', '03_13m25.webm', '04_15m25.webm'], 'extraits commencés 35 s avant chaque moment');
   assert.deepStrictEqual(rj.touches, ['1', '1', '1', '1'], 'touche du joueur (1er de l\'équipe bleue) avant chaque moment');
+  assert.ok(calls.replay.includes('POST /replay/render {"interfaceReplay":true,"interfaceTimeline":true,"interfaceChat":true,"outlineHover":true}'), 'interface du replay du joueur remise à la fin');
+  assert.deepStrictEqual(rp.hud, { interfaceReplay: true, interfaceTimeline: true, interfaceChat: true, outlineHover: true }, 'interface du replay comme avant le tournage');
+  assert.deepStrictEqual(gs.settings, REGLAGES, 'réglages de jeu du joueur remis à l\'identique : ' + JSON.stringify(gs.settings));
+  assert.ok(gs.patches.length >= 1 && gs.patches.every(k => k.sort().join() === 'HUD,Replay') && gs.saves >= 1, 'seules les parties changées sont renvoyées, puis enregistrées : ' + JSON.stringify(gs.patches));
+  assert.ok(/réglages du joueur remis comme avant \{"changes":\{"HUD":\["ChatScale"\],"Replay":\["HideInterface"\]\},"restent":null\}/.test(rj.journal), rj.journal);
+  assert.ok(/ANNULÉ par le joueur[\s\S]*réglages du joueur remis comme avant/.test(rj.annulation.journal), 'réglages remis aussi après une annulation : ' + rj.annulation.journal);
   assert.ok(calls.replay.includes('POST /replay/render {"interfaceReplay":false,"interfaceTimeline":false,"interfaceChat":false,"outlineHover":false}')
     && !calls.replay.some(x => x.startsWith('POST /replay/render') && /selectionName|cameraAttached/.test(x)), 'interface du replay épurée, pas de sélection par l\'API');
   assert.ok(calls.replay.includes('POST /replay/playback {"time":355,"paused":true,"speed":1}') && calls.replay.includes('POST /replay/playback {"paused":false,"speed":1}'), 'pause au début de l\'extrait puis lecture');

@@ -1400,6 +1400,36 @@ async function gameGone(ms) {
   for (const t0 = Date.now(); Date.now() - t0 < ms; await new Promise(r => setTimeout(r, 500))) if (!await gameRunning()) return true;
   return false;
 }
+// Réglages de jeu du joueur (ceux du client LoL, synchronisés avec son compte) : photographiés avant le tournage, remis
+// à l'identique après si le replay en a changé (interface, etc.). On ne renvoie que les parties qui ont changé.
+async function readGameSettings(creds) {
+  const s = await localJson(creds.base, 'GET', '/lol-game-settings/v1/game-settings', undefined, creds.password);
+  return s && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).length ? s : null;
+}
+function settingsDiff(before, after) {
+  const out = {};
+  for (const k of Object.keys(before)) {
+    if (JSON.stringify(before[k]) === JSON.stringify(after ? after[k] : undefined)) continue;
+    const b = before[k], a = (after && after[k]) || {};
+    out[k] = b && typeof b === 'object' ? Object.keys(Object.assign({}, b, a)).filter(x => JSON.stringify(b[x]) !== JSON.stringify(a[x])) : [];
+  }
+  return out;
+}
+async function restoreGameSettings(creds, before, note) {
+  if (!before) return null;
+  const after = await readGameSettings(creds).catch(() => null);
+  if (!after) { note('réglages du joueur', 'illisibles après le tournage'); return null; }
+  const diff = settingsDiff(before, after);
+  if (!Object.keys(diff).length) { note('réglages du joueur', 'inchangés'); return diff; }
+  const patch = {};
+  for (const k of Object.keys(diff)) patch[k] = before[k];
+  await localJson(creds.base, 'PATCH', '/lol-game-settings/v1/game-settings', patch, creds.password);
+  await localJson(creds.base, 'POST', '/lol-game-settings/v1/save', {}, creds.password).catch(() => null);
+  const check = await readGameSettings(creds).catch(() => null);
+  const left = check ? settingsDiff(before, check) : null;
+  note('réglages du joueur remis comme avant', { changes: diff, restent: left && Object.keys(left).length ? left : null });
+  return diff;
+}
 async function recordVideos({ playerId, matchId }) {
   if (!isPlayer() || playerId !== session.playerId) throw new Error('Les moments se filment depuis l\'espace du joueur (code joueur), avec le client League of Legends de cet ordinateur.');
   if (sendJob) throw new Error('Attends la fin de l\'envoi.');
@@ -1452,6 +1482,16 @@ async function recordVideos({ playerId, matchId }) {
   const sleep = ms => new Promise(res => { const t = setTimeout(() => { job.wake.delete(w); res(); }, ms); const w = () => { clearTimeout(t); res(); }; job.wake.add(w); });
   const gm = ((session && session.source === 'cloud' && remoteData ? remoteData.games : store.data.games) || []).find(x => x.matchId === matchId && x.playerId === playerId);
   (async () => {
+    let settingsBefore = null;
+    try { settingsBefore = await readGameSettings(creds); note('réglages du joueur notés', Object.keys(settingsBefore || {})); } catch (e) { note('réglages du joueur', 'illisibles : ' + e.message); }
+    const giveBack = async () => {
+      if (!job.launched || !settingsBefore) return;
+      try {
+        await gameGone(10000);
+        if (!FAST) await new Promise(r => setTimeout(r, 2500)); // le client relit les réglages laissés par le jeu
+        await restoreGameSettings(creds, settingsBefore, note);
+      } catch (e) { note('réglages du joueur', 'non remis : ' + e.message); }
+    };
     try {
       const r = await replayMod.recordGame({
         lcu: guard((method, p, body) => { if (p.endsWith('/watch')) job.launched = true; return localJson(creds.base, method, p, body, creds.password); }),
@@ -1465,7 +1505,8 @@ async function recordVideos({ playerId, matchId }) {
           return rec;
         },
         selectPlayer: guard(key => selectPlayerInReplay(key)),
-        killGame, sleep: guard(sleep), now: Date.now, status, log: note
+        killGame, sleep: guard(sleep), now: Date.now, status, log: note,
+        raw: { replay: (method, p, body) => localJson(REPLAY_BASE, method, p, body), sleep: ms => new Promise(res => setTimeout(res, ms)) }
       }, {
         gameId: m.gameId, duration: m.duration, gameVersion: m.version || '', queueId: m.custom ? 0 : 420, gameType: m.custom ? 'CUSTOM_GAME' : 'MATCHED_GAME', gameEnd: gm && gm.date ? gm.date + m.duration * 1000 : 0, champion: me.champion,
         playerKey: (me.teamId === 200 || (!me.teamId && me.id > 5) ? 'qwert' : '12345')[m.participants.filter(p => p.teamId === me.teamId).sort((a, b) => a.id - b.id).findIndex(p => p.id === me.id)] || null,
@@ -1473,6 +1514,8 @@ async function recordVideos({ playerId, matchId }) {
         file: (i, w) => path.join(tmp, String(i + 1).padStart(2, '0') + '_' + Math.floor(w.start / 60) + 'm' + String(w.start % 60).padStart(2, '0') + '.webm')
       }, Object.assign({ screenFallback: process.platform === 'win32' }, FAST ? { poll: 250, tick: 250, clipWall: 1500 } : {}));
       if (job.cancelled) throw cancelled();
+      status('Remise de tes réglages League of Legends…', 0.995);
+      await giveBack();
       const clips = r.clips.map(c => ({ start: c.start, end: c.end, times: c.times, file: path.basename(c.file), bytes: fs.statSync(c.file).size, lead: c.lead, sync: c.sync }));
       fs.rmSync(dir, { recursive: true, force: true });
       fs.renameSync(tmp, dir);
@@ -1487,9 +1530,11 @@ async function recordVideos({ playerId, matchId }) {
       if (job.cancelled || e.cancelled) {
         write('ANNULÉ par le joueur');
         if (job.launched) { await killGame().catch(() => {}); await gameGone(10000); } // seulement le replay ouvert par l'app
+        await giveBack();
         if (videoJob === job) sendVideo({ playerId, matchId, cancelled: true, text: 'Enregistrement annulé.' });
       } else {
         write('ERREUR ' + e.message);
+        await giveBack();
         sendVideo({ playerId, matchId, error: e.message, journal: true });
       }
     } finally {

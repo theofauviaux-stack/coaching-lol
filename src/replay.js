@@ -98,6 +98,7 @@ const REPLAY_ERRORS = {
  *     { health() → { samples, black, frozenSec, bytes, live }, stop() → Promise ({ bytes }), cancel() → Promise, info }
  *     source : 'fenetre' (fenêtre du jeu) ou 'ecran' (écran entier)
  *   selectPlayer(touche) ; killGame() → Promise ; sleep(ms) ; now() ; status(texte, avancement) ; log(quoi, détail)
+ *   raw : { replay, sleep } sans contrôle d'annulation (pour remettre l'interface du joueur avant de fermer le replay)
  * }
  * Toutes ces fonctions peuvent lever une erreur (annulation par le joueur comprise) : le replay est alors fermé et
  * l'enregistrement en cours abandonné.
@@ -182,6 +183,19 @@ async function recordGame(io, job, opt = {}) {
   let key = job.playerKey || null;
   const clips = [];
   let rec = null; // enregistrement en cours
+  let hudBefore = null; // interface du replay du joueur, remise avant de fermer le replay
+  // appels qui doivent passer même après une annulation (remettre les réglages du joueur)
+  const raw = io.raw || io;
+  const restoreHud = async () => {
+    if (!hudBefore) return;
+    const h = hudBefore;
+    hudBefore = null;
+    try {
+      await raw.replay('POST', '/replay/render', h);
+      log('interface du replay remise comme avant', h);
+      await raw.sleep(800); // le temps que le jeu l'enregistre
+    } catch (e) { log('interface du replay', 'non remise : ' + e.message); }
+  };
   try {
     // 3. lancement et attente de la Replay API
     status('Ouverture du replay dans League of Legends…', 0.41);
@@ -205,7 +219,18 @@ async function recordGame(io, job, opt = {}) {
     } catch (e) { log('joueurs du replay', 'indisponible : ' + e.message); }
     if (!key) throw new Error('Impossible de trouver ' + (job.championName || job.champion) + ' parmi les joueurs du replay.');
     log('touche du joueur', key);
-    try { await io.replay('POST', '/replay/render', CLEAN_HUD); log('interface du replay épurée', CLEAN_HUD); } catch (e) { log('interface du replay', 'inchangée : ' + e.message); }
+    // interface épurée pendant le tournage, après avoir noté celle du joueur pour la lui remettre à la fin (le jeu peut
+    // garder ces réglages pour ses prochains replays) ; si on ne peut pas la lire, on n'y touche pas
+    try {
+      const r = await io.replay('GET', '/replay/render');
+      const keep = {};
+      for (const k of Object.keys(CLEAN_HUD)) if (r && typeof r[k] === 'boolean') keep[k] = r[k];
+      if (Object.keys(keep).length === Object.keys(CLEAN_HUD).length) {
+        hudBefore = keep;
+        await io.replay('POST', '/replay/render', CLEAN_HUD);
+        log('interface du replay épurée', { avant: hudBefore, pendant: CLEAN_HUD });
+      } else log('interface du replay', 'laissée telle quelle (réglages du joueur illisibles)');
+    } catch (e) { log('interface du replay', 'inchangée : ' + e.message); }
     const select = async () => {
       await io.selectPlayer(key); // erreur claire si la touche ne peut pas être envoyée (fenêtre, autorisation)
       const r = await io.replay('GET', '/replay/render').catch(() => null);
@@ -288,10 +313,12 @@ async function recordGame(io, job, opt = {}) {
     }
   } catch (e) {
     if (rec) await rec.cancel().catch(() => {});
+    await restoreHud();
     await io.killGame().catch(() => {});
     throw e;
   }
   status('Fermeture du replay…', 0.99);
+  await restoreHud();
   await io.killGame().catch(() => {});
   return { clips, camera: key };
 }

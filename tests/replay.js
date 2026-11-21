@@ -28,7 +28,7 @@ assert.strictEqual(R.enableReplayApi('').text, '[General]\nEnableReplayApi=1\n')
 
 // ---- enregistrement complet avec un faux client et un faux jeu (le temps du replay avance avec l'horloge)
 function fakeWorld(opts = {}) {
-  const w = { clock: 0, log: [], states: opts.states || ['download', 'downloading', 'downloading', 'watch'], loadPolls: opts.loadPolls || 2, playback: { time: 0, seeking: false, length: 1200, paused: true, speed: 1 }, base: 0, at: 0, render: { selectionName: '' }, renderPosts: [], recorded: [], recs: [], keys: [], selected: null, killed: 0, sleeps: 0 };
+  const w = { clock: 0, log: [], states: opts.states || ['download', 'downloading', 'downloading', 'watch'], loadPolls: opts.loadPolls || 2, playback: { time: 0, seeking: false, length: 1200, paused: true, speed: 1 }, base: 0, at: 0, render: Object.assign({ selectionName: '' }, opts.render || { interfaceReplay: true, interfaceTimeline: true, interfaceChat: true, outlineHover: true }), renderPosts: [], recorded: [], recs: [], keys: [], selected: null, killed: 0, sleeps: 0 };
   let si = 0, loaded = 0;
   const advance = () => {
     if (w.playback.paused || opts.stall) return;
@@ -55,7 +55,7 @@ function fakeWorld(opts = {}) {
         const r = Object.assign({}, w.playback); w.playback.seeking = false; return r;
       }
       if (p === '/replay/render') {
-        if (method === 'POST') { w.renderPosts.push(body); Object.assign(w.render, body); }
+        if (method === 'POST') { w.renderPosts.push(Object.assign({ killedBefore: w.killed }, body)); Object.assign(w.render, body); }
         return w.render;
       }
       if (p === '/liveclientdata/playerlist') {
@@ -93,7 +93,10 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
   assert.deepStrictEqual(r.clips.map(x => [x.lead, x.sync]), [[0, [[0, 355], [85, 440]]], [0, [[0, 505], [45, 550]]], [0, [[0, 805], [45, 850]]], [0, [[0, 925], [85, 1010]]]], 'lecture sans à-coups : début et fin');
   assert.deepStrictEqual(w.keys, [['3', 355, true], ['3', 505, true], ['3', 805, true], ['3', 925, true]], 'touche du joueur (3e de l\'équipe bleue dans le replay) avant chaque moment, replay en pause');
   assert.ok(w.recorded.every(x => x[4] === '3'), 'joueur sélectionné pendant chaque extrait');
-  assert.deepStrictEqual(w.renderPosts, [R.CLEAN_HUD], 'interface du replay épurée une fois, pas de sélection par l\'API');
+  const HUD_JOUEUR = { interfaceReplay: true, interfaceTimeline: true, interfaceChat: true, outlineHover: true };
+  assert.deepStrictEqual(w.renderPosts, [Object.assign({ killedBefore: 0 }, R.CLEAN_HUD), Object.assign({ killedBefore: 0 }, HUD_JOUEUR)],
+    'interface épurée pendant le tournage, puis remise comme celle du joueur AVANT de fermer le replay ; pas de sélection par l\'API');
+  assert.ok(w.log.some(x => x.startsWith('journal interface du replay remise comme avant')));
   assert.deepStrictEqual(R.CLEAN_HUD, { interfaceReplay: false, interfaceTimeline: false, interfaceChat: false, outlineHover: false });
   assert.ok(w.recs.every(x => x.source === 'fenetre'), 'fenêtre du jeu filmée');
   assert.ok(w.log.some(x => x.startsWith('POST /lol-replays/v1/rofls/')) && !w.log.some(x => x.includes('/create')), 'pas de création de fiche quand le replay est déjà proposé');
@@ -113,6 +116,14 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
   assert.ok(c0.sync.length >= 3, JSON.stringify(c0.sync));
   assert.strictEqual(w.recorded[0][0] > 85, true, 'extrait plus long en vidéo, mais complet en temps de jeu');
   assert.ok(Math.abs(R.videoAt(c0, 360) - 5) < 0.6 && Math.abs(R.videoAt(c0, 400) - (45 + (w.recorded[0][0] - 85))) < 1.2, 'seconde de la vidéo après la pause : ' + JSON.stringify(c0.sync) + ' ' + R.videoAt(c0, 400));
+  // réglages d'interface du joueur différents : on remet les siens
+  ({ w, io } = fakeWorld({ states: ['watch'], render: { interfaceReplay: true, interfaceTimeline: false, interfaceChat: false, outlineHover: true } }));
+  await R.recordGame(io, job, { poll: 1000 });
+  assert.deepStrictEqual(w.renderPosts.map(({ killedBefore, ...b }) => b)[1], { interfaceReplay: true, interfaceTimeline: false, interfaceChat: false, outlineHover: true });
+  // interface du joueur illisible : on n'y touche pas du tout
+  ({ w, io } = fakeWorld({ states: ['watch'], render: { cameraMode: 'top' } }));
+  r = await R.recordGame(io, job, { poll: 1000 });
+  assert.ok(r.clips.length === 4 && w.renderPosts.length === 0, 'interface laissée telle quelle');
   // conversion temps de jeu → seconde de la vidéo
   assert.strictEqual(R.videoAt({ start: 355, end: 440 }, 380), 25, 'ancienne vidéo : début de l\'extrait');
   assert.strictEqual(R.videoAt({ start: 355, lead: 0.4 }, 380), 25.4);
@@ -122,10 +133,12 @@ const job = { gameId: 7300000099, duration: 1200, champion: 'Darius', championNa
   ({ w, io } = fakeWorld({ states: ['watch'], stall: true }));
   await assert.rejects(R.recordGame(io, job, { poll: 1000 }), /n'avance plus depuis 15 s/);
   assert.ok(w.killed === 1 && w.recs[0].cancelled, 'replay fermé, capture abandonnée');
+  assert.ok(w.renderPosts.length === 2 && w.renderPosts[1].killedBefore === 0 && w.renderPosts[1].interfaceChat === true, 'erreur : interface du joueur remise avant de fermer');
   // annulation par le joueur pendant un extrait
   ({ w, io } = fakeWorld({ states: ['watch'], cancelAfter: 30 }));
   await assert.rejects(R.recordGame(io, job, { poll: 1000 }), e => e.cancelled === true);
   assert.ok(w.killed === 1 && w.recs.length === 1 && w.recs[0].cancelled && !w.recorded.length, 'annulation : replay fermé, extrait en cours abandonné');
+  assert.ok(w.renderPosts.length === 2 && w.renderPosts[1].interfaceReplay === true && w.renderPosts[1].killedBefore === 0, 'annulation : interface du joueur remise avant de fermer');
   // annulation pendant le téléchargement : rien à fermer
   ({ w, io } = fakeWorld({ states: ['download', 'downloading'], cancelAfter: 2 }));
   await assert.rejects(R.recordGame(io, job, { poll: 1000 }), e => e.cancelled === true);
