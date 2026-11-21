@@ -28,6 +28,7 @@ const ERREURS = {
   export_impossible: 'Cette analyse ne peut pas être exportée (pas encore terminée par le coach, ou déjà exportée).',
   videos_restantes: 'Les vidéos ne sont pas encore effacées du serveur.',
   partie_invalide: 'Partie illisible : elle n\'a pas pu être envoyée.',
+  journal_invalide: 'Journal du tournage illisible.',
   trop_de_parties: 'Trop de parties personnalisées en attente : ton coach doit d\'abord ouvrir son app pour les reprendre.'
 };
 
@@ -98,7 +99,10 @@ class CloudClient {
   coachMomentsPush(key, items) { return this.rpc('coach_moments_push', { p_key: key, p: items }); }
   coachAnalyses(key) { return this.rpc('coach_analyses', { p_key: key }); }
   coachAnalysisGet(key, id) { return this.rpc('coach_analysis_get', { p_key: key, p_id: id }); }
-  coachAnalysisComment(key, id, t, text) { return this.rpc('coach_analysis_comment', { p_key: key, p_id: id, p_t: t, p_text: text }); }
+  // dessin : envoyé seulement s'il y en a un (les serveurs pas encore à jour acceptent les messages sans dessin)
+  coachAnalysisComment(key, id, t, text, drawing) { return this.rpc('coach_analysis_comment', Object.assign({ p_key: key, p_id: id, p_t: t, p_text: text }, drawing ? { p_drawing: drawing } : {})); }
+  coachFilmReports(key) { return this.rpc('coach_film_reports', { p_key: key }); }
+  coachFilmReportsDone(key, ids) { return this.rpc('coach_film_reports_done', { p_key: key, p_ids: ids }); }
   coachAnalysisClose(key, id) { return this.rpc('coach_analysis_close', { p_key: key, p_id: id }); }
   coachAnalysisDelete(key, id) { return this.rpc('coach_analysis_delete', { p_key: key, p_id: id }); }
   customGameAdd(token, matchId, game, moments) { return this.rpc('custom_game_add', { p_token: token, p_match: matchId, p_game: game, p_moments: moments || null }); }
@@ -111,7 +115,8 @@ class CloudClient {
   analysisReady(token, id) { return this.rpc('analysis_ready', { p_token: token, p_id: id }); }
   analysesMine(token) { return this.rpc('analyses_mine', { p_token: token }); }
   analysisGet(token, id) { return this.rpc('analysis_get', { p_token: token, p_id: id }); }
-  analysisComment(token, id, t, text) { return this.rpc('analysis_comment', { p_token: token, p_id: id, p_t: t, p_text: text }); }
+  analysisComment(token, id, t, text, drawing) { return this.rpc('analysis_comment', Object.assign({ p_token: token, p_id: id, p_t: t, p_text: text }, drawing ? { p_drawing: drawing } : {})); }
+  filmReport(token, report) { return this.rpc('film_report_add', { p_token: token, p: report }); }
   analysisExportDone(token, id) { return this.rpc('analysis_export_done', { p_token: token, p_id: id }); }
   analysisForget(token, id) { return this.rpc('analysis_forget', { p_token: token, p_id: id }); }
 

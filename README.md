@@ -117,3 +117,13 @@ Les données sont dans le dossier de l'application :
 Une copie de sauvegarde (`.bak`) est faite à chaque enregistrement. Paramètres › *Exporter une sauvegarde* permet aussi d'en garder une copie ailleurs.
 
 Coaching LoL n'est ni approuvé ni soutenu par Riot Games.
+
+## Suivi des joueurs (1.6.17)
+
+- **Objectifs de travail** : les priorités d'une analyse (« Suivre des objectifs » dans la fenêtre d'analyse, préremplies avec les priorités proposées par Claude) ou d'un bilan deviennent des objectifs du joueur (`player.goals`), avec un indicateur par partie (`Stats.GOAL_KPIS`) et une cible (objectif du joueur ou du rôle par défaut). Le tableau de bord montre, pour chacun, la moyenne avant / depuis, la réussite partie par partie et un état (atteint, en progrès, à travailler) ; le coach les coche, les rouvre ou les supprime. Envoyés au serveur avec le joueur, qui les voit sur son tableau de bord.
+- **Discussion sur la vidéo** : « 6:10 » dans un message devient un lien qui montre ce moment dans la vidéo (autre extrait si besoin). « Dessiner » met la vidéo en pause : flèches, cercles, traits libres (4 couleurs) en coordonnées 0..1 de l'image, joints au message (colonne `drawing` d'`analysis_comments`, 30 formes et 8 000 caractères au plus) ; « Dessin à 6:02 » les remet sur l'image. Le débrief exporté garde liens et dessins.
+- **Erreurs récurrentes** (`src/trends.js`) : sur les 20 dernières parties au rôle (moments clés), carte des morts ramenée au côté bleu par symétrie sur la diagonale (les lanes restent les mêmes), zones, minutes, circonstances (seul, gank, 3 ennemis…), objectifs perdus en son absence, et phrases quand quelque chose revient vraiment (5 parties et 5 morts au moins). Calculées sur l'ordinateur du coach, envoyées avec le joueur.
+- **Bilan du mois avec Claude** : « Préparer le bilan » (tableau de bord, ordinateur du coach) écrit `Analyses pour Claude/Bilans/<mois> <joueur> [bilan-…]` : indicateurs des 30 derniers jours, erreurs récurrentes, objectifs et leur suivi, analyses et séances du mois, parties (`a-analyser.json`, `parties.txt`). Claude écrit `bilan-claude.json` ; l'app le montre en brouillon, le coach le corrige et l'envoie (avec les objectifs proposés cochés). Le joueur est prévenu et le lit sur son tableau de bord.
+- **Journaux de tournage** : si « Filmer les moments » échoue chez un joueur, son app envoie le journal au serveur (`supabase/journaux.sql`) ; le coach est prévenu, le lit dans « Analyses » (« Tournages en échec ») puis l'efface.
+- **Stockage des vidéos** : jauge dans « Analyses » (900 Mo), alerte à 80 %.
+- Serveur : `supabase/analyses.sql` (dessins) et `supabase/journaux.sql`, exécutés dans Supabase le 21/11/2026.

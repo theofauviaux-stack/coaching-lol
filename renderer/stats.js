@@ -140,6 +140,57 @@
     return { before, after, delta, ok, sens };
   }
 
-  const api = { METRICS, METRIC_SENS, METRIC_FMT, KPIS, fmt, mean, playerGames, objectiveFor, status, progress, kpiTable, groupBy, sessionResult };
+  // ---- objectifs de travail (priorités d'une analyse ou d'un bilan, suivies sur les parties suivantes)
+  // goal : { id, text, kpi (une clé de METRICS, ou null : suivi libre), target, since (ms), status: 'actif'|'atteint'|'abandonne' }
+  const GOAL_KPIS = ['Morts avant 15 min', 'Morts', 'CS à 10 min', 'CS/min', 'Vision/min', 'Wards posées', 'Wards détruites', 'Pinks achetées',
+    'KP', 'Écart or à 10 min', 'Écart or à 15 min', 'Écart XP à 10 min', 'KDA', 'Dégâts/min', 'Note mentale'];
+  const AGG_FOR = { 'Morts': 'Morts moyennes' }; // objectif par défaut d'un indicateur par partie
+  // indicateur probable d'après le texte d'une priorité (mots du coaching LoL)
+  const KPI_WORDS = [
+    [/\b(mort|meurs|mourir|death|survi|positionnement|overextend|surextension|recul)/i, 'Morts avant 15 min'],
+    [/\b(cs|farm|sbire|minion|last ?hit|wave|vague)/i, 'CS à 10 min'],
+    [/\b(pink|contr[ôo]le|balise de contr)/i, 'Pinks achetées'],
+    [/\b(ward|vision|balise|trinket)/i, 'Vision/min'],
+    [/\b(kp|participation|teamfight|combat d'[ée]quipe|roam|regroup)/i, 'KP'],
+    [/\b(trade|[ée]cart d'or|avance d'or|gold)/i, 'Écart or à 10 min'],
+    [/\b(mental|tilt|calme|humeur)/i, 'Note mentale']
+  ];
+  function suggestKpi(text) {
+    for (const [re, k] of KPI_WORDS) if (re.test(String(text || ''))) return k;
+    return null;
+  }
+  const goalSens = kpi => METRIC_SENS[kpi] || (AGG_FOR[kpi] && METRIC_SENS[AGG_FOR[kpi]]) || '≥';
+  // cible proposée : l'objectif du joueur (ou celui du rôle) pour cet indicateur
+  function goalTarget(data, player, kpi) {
+    if (!kpi) return null;
+    const o = objectiveFor(data, player, kpi);
+    if (o.value !== null) return o.value;
+    return AGG_FOR[kpi] ? objectiveFor(data, player, AGG_FOR[kpi]).value : null;
+  }
+  // suivi : parties jouées depuis l'objectif, réussite partie par partie, moyenne avant/après
+  function goalProgress(data, player, goal) {
+    const metric = goal && METRICS[goal.kpi];
+    const gs = data.games.filter(g => g.playerId === player.id && g.role === player.role && !g.custom).sort((a, b) => a.date - b.date);
+    const after = gs.filter(g => g.date >= goal.since);
+    const out = { games: after.length, kpi: metric ? goal.kpi : null, format: METRIC_FMT[goal.kpi] || 'dec1', sens: goalSens(goal.kpi), target: goal.target === '' || goal.target === null || goal.target === undefined ? null : Number(goal.target) };
+    if (!metric) return Object.assign(out, { state: goal.status === 'atteint' ? 'atteint' : after.length ? 'libre' : 'attente' });
+    const before = mean(gs.filter(g => g.date < goal.since).slice(-20).map(metric));
+    const vals = after.map(metric).filter(v => v !== null && v !== undefined && !Number.isNaN(v));
+    const now = mean(vals);
+    const last5 = mean(vals.slice(-5));
+    const hit = v => (out.target === null ? null : out.sens === '≤' ? v <= out.target : v >= out.target);
+    const hits = out.target === null ? null : vals.filter(hit).length;
+    const better = before === null || now === null ? null : out.sens === '≤' ? now < before : now > before;
+    let state;
+    if (goal.status === 'atteint') state = 'atteint';
+    else if (vals.length < 3) state = 'attente';
+    else if (out.target !== null && hit(last5 !== null ? last5 : now) && hits / vals.length >= 0.6) state = 'atteint';
+    else if (better) state = 'progres';
+    else state = 'travail';
+    return Object.assign(out, { before, now, last5, hits, measured: vals.length, rate: hits === null || !vals.length ? null : hits / vals.length, state,
+      series: after.slice(-15).map(g => ({ v: metric(g), ok: out.target === null ? null : hit(metric(g)), id: g.matchId, date: g.date })) });
+  }
+
+  const api = { METRICS, METRIC_SENS, METRIC_FMT, KPIS, GOAL_KPIS, fmt, mean, playerGames, objectiveFor, status, progress, kpiTable, groupBy, sessionResult, suggestKpi, goalSens, goalTarget, goalProgress };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Stats = api;
 })(typeof window !== 'undefined' ? window : globalThis);

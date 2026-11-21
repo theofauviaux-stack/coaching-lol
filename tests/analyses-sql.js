@@ -91,6 +91,20 @@ const { prepareDb, storageOp } = require('./fake-supabase');
   assert.strictEqual((await r(`analysis_comment($1, $2, null, '   ')`, [t1, a.id])).error, 'commentaire_invalide');
   assert.strictEqual((await r(`analysis_comment($1, $2, null, 'x')`, [t2, a.id])).error, 'analyse_fermee', 'pas dans l\'analyse d\'un autre');
   assert.strictEqual((await r(`analysis_comment($1, $2, null, $3)`, [t1, a.id, 'x'.repeat(2001)])).error, 'commentaire_invalide');
+  // dessin joint (1.6.17) : avec ou sans texte ; forme vérifiée
+  const DESSIN = { file: '01_6m10.webm', v: 12.5, g: 382.5, w: 1600, h: 900, shapes: [{ k: 'fleche', c: '#ff5c5c', p: [0.1, 0.2, 0.4, 0.5] }, { k: 'cercle', c: '#f5d547', p: [0.5, 0.5, 0.6, 0.6] }] };
+  c = await r(`coach_analysis_comment($1, $2, 390000, 'Regarde ici', $3::jsonb)`, [KEY, a.id, JSON.stringify(DESSIN)]);
+  assert.deepStrictEqual(c.analysis.comments[c.analysis.comments.length - 1].drawing, DESSIN);
+  assert.strictEqual(c.analysis.comments[0].drawing, undefined, 'pas de champ « drawing » sans dessin');
+  c = await r(`analysis_comment($1, $2, 390000, '', $3::jsonb)`, [t1, a.id, JSON.stringify(Object.assign({}, DESSIN, { shapes: [DESSIN.shapes[0]] }))]);
+  assert.ok(c.ok, 'dessin seul, sans texte');
+  for (const bad of [{ shapes: [] }, { shapes: 'x' }, [1], { shapes: Array(31).fill(DESSIN.shapes[0]) }, { shapes: [{ k: 'trait', pts: Array(900).fill([0.123, 0.456]) }] }]) {
+    assert.strictEqual((await r(`analysis_comment($1, $2, null, 'x', $3::jsonb)`, [t1, a.id, JSON.stringify(bad)])).error, 'commentaire_invalide', JSON.stringify(bad).slice(0, 60));
+  }
+  assert.strictEqual((await r(`analysis_comment($1, $2, null, '')`, [t1, a.id])).error, 'commentaire_invalide', 'ni texte ni dessin');
+  // les anciennes versions de l'app (4 paramètres) passent toujours
+  assert.ok((await r(`analysis_comment(p_token := $1, p_id := $2, p_t := null, p_text := 'ancienne app')`, [t1, a.id])).ok);
+  assert.strictEqual(Number((await one(`select count(*) as n from pg_proc where proname in ('analysis_comment', 'coach_analysis_comment', '_comment_add')`)).n), 3, 'une seule version de chaque fonction (pas d\'ambiguïté)');
 
   // --- limites : 3 analyses ouvertes par joueur
   for (let i = 0; i < 2; i++) assert.ok((await create(t1)).ok);
@@ -216,5 +230,23 @@ const { prepareDb, storageOp } = require('./fake-supabase');
     const g = await one(`select has_function_privilege('anon', p.oid, 'execute') as ok from pg_proc p where proname = $1`, [f]);
     assert.strictEqual(g.ok, false, f + ' ne doit pas être appelable');
   }
+  // --- journaux de tournage (1.6.17)
+  const J = { matchId: 'EUW1_7300000099', error: 'Le replay n\'avance plus depuis 15 s.', journal: 'Coaching LoL 1.6.17\n12:00:01 » Préparation…', version: '1.6.17' };
+  { const x = await r(`film_report_add($1, $2)`, [t1, JSON.stringify(J)]); assert.ok(x.ok, JSON.stringify(x)); }
+  assert.strictEqual((await r(`film_report_add('faux', $1)`, [JSON.stringify(J)])).error, 'session_expiree');
+  for (const bad of [{}, Object.assign({}, J, { matchId: 'x' }), Object.assign({}, J, { error: ' ' }), Object.assign({}, J, { journal: 'x'.repeat(60001) }), Object.assign({}, J, { error: 'x'.repeat(1001) })]) {
+    assert.strictEqual((await r(`film_report_add($1, $2)`, [t1, JSON.stringify(bad)])).error, 'journal_invalide');
+  }
+  for (let i = 0; i < 22; i++) await r(`film_report_add($1, $2)`, [t2, JSON.stringify(Object.assign({}, J, { error: 'erreur ' + i }))]);
+  let fr = (await r(`coach_film_reports($1)`, [KEY])).reports;
+  assert.strictEqual(fr.filter(x => x.playerId === 'p2').length, 20, '20 journaux gardés par joueur');
+  assert.strictEqual(fr.filter(x => x.playerId === 'p2')[0].error, 'erreur 21', 'du plus récent au plus ancien');
+  const mine = fr.find(x => x.playerId === 'p1');
+  assert.deepStrictEqual([mine.matchId, mine.error, mine.journal, mine.version], [J.matchId, J.error, J.journal, J.version]);
+  assert.strictEqual((await r(`coach_film_reports('mauvais')`)).error, 'jeton_inconnu');
+  assert.ok((await r(`coach_film_reports_done($1, $2::bigint[])`, [KEY, '{' + fr.map(x => x.id).join(',') + '}'])).ok);
+  assert.deepStrictEqual((await r(`coach_film_reports($1)`, [KEY])).reports, []);
+  assert.strictEqual((await r(`coach_film_reports_done('mauvais', null)`)).error, 'jeton_inconnu');
+
   console.log('✅ Analyses de parties et vidéos (base) : OK');
 })().catch(e => { console.error(e); process.exit(1); });

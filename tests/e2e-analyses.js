@@ -43,7 +43,7 @@ function startLol() {
       if (req.url === '/lol-game-settings/v1/save' && req.method === 'POST') { gs.saves++; return send(204); }
       if (req.url.startsWith('/lol-replays/')) {
         calls.lcu.push(req.method + ' ' + req.url);
-        if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: true, isPatching: false });
+        if (req.url === '/lol-replays/v1/configuration') return send(200, { isReplaysEnabled: !fs.existsSync(path.join(DIR, 'replays-off')), isPatching: false });
         if (req.url === '/lol-replays/v2/metadata/7300000099/create' && req.method === 'POST') { if (!rp.state) rp.state = 'checking'; return send(204); }
         if (req.url === '/lol-replays/v1/metadata/7300000099') {
           if (!rp.state) return send(404, { message: 'pas de fiche' });
@@ -116,6 +116,15 @@ function launch(phase, dataDir, env) {
     cs: 140, gold: 7400, damage: 9000, vision: 12, wardsPlaced: 4, wardsKilled: 1, pinks: 1, level: 13, side: 'Bleu', cs10: 70, goldDiff10: -200, xpDiff10: 0, goldDiff15: -300, deaths15: 1, lpDelta: null, mental: null, objectiveMet: null, comment: '' });
   // vieille partie (plus de 30 jours) : ses moments ne partent pas
   c.games.push(Object.assign({}, c.games[0], { matchId: 'EUW1_7200000001', date: NOW - 40 * 86400e3 }));
+  // 5 parties de plus ces derniers jours, avec leurs moments clés (erreurs récurrentes, bilan du mois)
+  const M = require('../src/moments');
+  const extraMoments = M.buildMoments(partie.match, partie.timeline, 'P-UAWAWA');
+  fs.mkdirSync(path.join(DIR, 'coach', 'moments'), { recursive: true });
+  for (let i = 1; i <= 5; i++) {
+    const id = 'EUW1_73000001' + String(i).padStart(2, '0');
+    c.games.push(Object.assign({}, c.games[0], { matchId: id, date: NOW - (i + 1) * 86400e3, win: i % 2 === 0, deaths15: i % 3, cs10: 65 + i }));
+    fs.writeFileSync(path.join(DIR, 'coach', 'moments', 'p1_' + id + '.json'), JSON.stringify(Object.assign({}, extraMoments, { matchId: id })));
+  }
   fs.writeFileSync(path.join(DIR, 'coach', 'coaching-data.json'), JSON.stringify(c));
 
   // ordinateur du joueur : fausse installation de League of Legends (organisation Mac)
@@ -154,7 +163,8 @@ function launch(phase, dataDir, env) {
 
   // moments sur le serveur : seulement les parties récentes, sans les vidéos locales
   const mom = (await fake.db.query(`select match_id, data from moments`)).rows;
-  assert.deepStrictEqual(mom.map(x => x.match_id).sort(), ['EUW1_7300000099', 'EUW1_7300000777'], 'la classée (envoyée par le coach) et la partie perso (envoyée par le joueur)');
+  assert.deepStrictEqual(mom.map(x => x.match_id).sort(), ['EUW1_7300000099', 'EUW1_7300000101', 'EUW1_7300000102', 'EUW1_7300000103', 'EUW1_7300000104', 'EUW1_7300000105', 'EUW1_7300000777'],
+    'les classées des 30 derniers jours (envoyées par le coach) et la partie perso (envoyée par le joueur)');
   const m99 = mom.find(x => x.match_id === 'EUW1_7300000099');
   assert.ok(!('clips' in m99.data) && m99.data.moments.length > 5);
   assert.strictEqual(mom.find(x => x.match_id === 'EUW1_7300000777').data.custom, true);
@@ -196,6 +206,40 @@ function launch(phase, dataDir, env) {
   assert.strictEqual(an.clips, 4);
   assert.ok(/ANNULÉ par le joueur/.test(an.journal), an.journal);
   assert.ok(rj.videoLocale.largeur > 0 && rj.videoLocale.src.startsWith('clip://v/'), JSON.stringify(rj.videoLocale));
+  // tournage en échec : journal envoyé au coach, qui le lit puis l'efface
+  assert.ok(/replays sont désactivés.*Le journal du tournage a été envoyé au coach/.test(rj.echec.toast), rj.echec.toast);
+  assert.ok(/Le journal a été envoyé au coach/.test(rj.echec.encadre), rj.echec.encadre);
+  const jr = rc.journalEchec;
+  assert.ok(/^Tournage en échec — UCE Uawawa/.test(jr.notif), jr.notif);
+  assert.ok(/UCE Uawawa · Darius contre Garen .*app 1\.6\.\d+.*replays sont désactivés/.test(jr.ligne), jr.ligne);
+  assert.ok(/ERREUR Les replays sont désactivés/.test(jr.journal) && /» Préparation…/.test(jr.journal) && /réglages du joueur notés/.test(jr.journal), jr.journal);
+  assert.ok(/^Vidéos sur le serveur : [\d,]+ Mo sur 900 Mo\s?\d+ %$/.test(jr.jauge), jr.jauge);
+  // dessins, temps cliquables, objectifs depuis l'analyse
+  const ds = rc.dessin;
+  assert.deepStrictEqual(ds.liens, ['6:10', '6:00'], 'temps du message du coach devenus des liens');
+  assert.deepStrictEqual(ds.formes, ['fleche', 'cercle']);
+  assert.deepStrictEqual(ds.envoye, { texte: 'Ici tu aurais dû reculer, comme à 15:30.', dessin: { file: '01_5m55.webm', formes: ['fleche', 'cercle'], w: 160 } });
+  assert.strictEqual(ds.vu, 1, 'dessin affiché sur la vidéo');
+  assert.ok(/^15:30 moment cité dans la discussion/.test(ds.lien), ds.lien);
+  const ob = rc.objectifs;
+  assert.deepStrictEqual(ob.lignes.slice(0, 2), [[true, 'Ward la rivière avant 6:00', 'Vision/min', 1], [true, 'Back avec la wave poussée', 'CS à 10 min', 70]], JSON.stringify(ob.lignes));
+  assert.deepStrictEqual(ob.objectifs, [['Ward la rivière avant 6:00', 'Vision/min', 'analyse', true], ['Back avec la wave poussée', 'CS à 10 min', 'analyse', true]]);
+  assert.ok(/^2 objectifs ajoutés au tableau de bord de UCE Uawawa/.test(ob.toast), ob.toast);
+  // tableau de bord : objectifs suivis, erreurs récurrentes, bilan du mois
+  const tb = rc.tableau;
+  assert.ok(tb.objectifs.length === 2 && /Ward la rivière avant 6:00/.test(tb.objectifs[0] + tb.objectifs[1]) && tb.objectifs.every(x => /issu d'une analyse/.test(x)), JSON.stringify(tb.objectifs));
+  assert.ok(tb.tendances.points >= 10 && tb.tendances.phrases.length >= 2 && /de tes morts arrivent/.test(tb.tendances.phrases[0]), JSON.stringify(tb.tendances));
+  assert.strictEqual(tb.cibleProposee, '2', 'cible proposée : objectif du rôle');
+  assert.deepStrictEqual(tb.bilanDossier.fichiers, ['a-analyser.json', 'parties.txt']);
+  assert.ok(/^\d{4}-\d{2} UCE Uawawa \[bilan-p1-\d{4}-\d{2}\]$/.test(tb.bilanDossier.nom), tb.bilanDossier.nom);
+  assert.deepStrictEqual([tb.bilanDossier.type, tb.bilanDossier.parties, tb.bilanDossier.objectifs, tb.bilanDossier.erreurs], ['bilan', 6, 3, true], JSON.stringify(tb.bilanDossier));
+  assert.ok(/^Bon mois : ta lane progresse\.\n\nPoints forts :\n• 78 CS/.test(tb.brouillon), tb.brouillon);
+  assert.ok(/^Bilan envoyé à UCE Uawawa · 1 objectif ajouté au suivi/.test(tb.envoi), tb.envoi);
+  assert.deepStrictEqual([tb.envoyes, tb.objectifsApres], [1, 4]);
+  const pdata = (await fake.db.query(`select data from players where id = 'p1'`)).rows[0].data;
+  assert.strictEqual(pdata.goals.length, 4, 'objectifs envoyés au serveur (espace du joueur)');
+  assert.ok(pdata.bilans.length === 1 && /Bon mois/.test(pdata.bilans[0].text), 'bilan envoyé au serveur');
+  assert.ok(pdata.trends && pdata.trends.games >= 6, 'erreurs récurrentes envoyées au serveur');
   assert.deepStrictEqual(rj.navigables, [true, true, true, true], 'vidéos filmées navigables (durée + index)');
   assert.ok(rj.videoLocale.duree !== 'Infinity' && Number(rj.videoLocale.duree) > 0, 'durée connue : ' + rj.videoLocale.duree);
   assert.ok(Math.abs(Number(rc.video.duree) - 7.19) < 0.2 && rc.video.largeur === 160, 'ancienne vidéo du serveur réparée à la lecture : ' + JSON.stringify(rc.video));

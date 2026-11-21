@@ -16,6 +16,8 @@ const momentsMod = require('./src/moments');
 const replayMod = require('./src/replay');
 const debriefMod = require('./src/debrief');
 const claudeMod = require('./src/claude');
+const trendsMod = require('./src/trends');
+const Stats = require('./renderer/stats');
 const { pathToFileURL } = require('url');
 // vidéos des moments : lues dans l'app par l'adresse clip://v/<joueur_partie>/<fichier>.webm
 protocol.registerSchemesAsPrivileged([{ scheme: 'clip', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -97,6 +99,7 @@ function viewData() {
   d.bookings = bookingsView();
   d.analyses = analysesView();
   d.claude = claudeView();
+  d.bilanDrafts = bilansView();
   if (session.role === 'joueur') mergePendingCustoms(d);
   if (session.source === 'cloud') d.reports = session.role === 'joueur' ? reports.mine.map(r => Object.assign({ playerId: session.playerId }, r)) : [];
   if (canEdit()) {
@@ -194,7 +197,10 @@ function startRemoteRefresh() {
   remoteTimer = setInterval(async () => {
     if (!session || session.source !== 'cloud') return clearInterval(remoteTimer);
     try {
+      const seen = new Set(((((remoteData && remoteData.players) || []).find(p => p.id === session.playerId) || {}).bilans || []).map(b => b.id));
       remoteData = cloudMod.dataFromCloud(await cloud.getData(session.token), store.data);
+      const me = ((remoteData.players || []).find(p => p.id === session.playerId) || {});
+      for (const b of me.bilans || []) if (!seen.has(b.id) && session.role === 'joueur') notifyCoach('Nouveau bilan de ton coach', 'Bilan de ' + (b.label || 'ce mois') + ' : il est sur ton tableau de bord.');
       refreshView();
     } catch (e) {
       if (e.code === 'session_expiree') { logout(); refreshView(); }
@@ -444,6 +450,7 @@ async function runSync(playerIds) {
     if (session && session.source === 'local') refreshView();
     schedulePush(1000);
     setTimeout(pushMoments, 3000); // moments des nouvelles parties, pour les joueurs
+    setTimeout(() => { try { refreshTrends(); } catch (e) { /* au prochain passage */ } }, 1500);
   }
 }
 
@@ -693,6 +700,7 @@ async function pushMoments() {
     /* serveur injoignable ou pas encore à jour : nouvel essai au prochain passage */
   } finally {
     momentsPushing = false;
+    try { refreshTrends(); } catch (e) { /* tendances : au prochain passage */ }
   }
 }
 
@@ -745,14 +753,15 @@ async function refreshAnalyses() {
     analyses.error = e.message;
   }
   if (session && JSON.stringify([analyses.list, analyses.error]) !== before) refreshView();
-  if (me === 'coach') syncClaudeFolder();
+  if (me === 'coach') { syncClaudeFolder(); syncBilans(); checkStorage(); refreshFilmReports(); }
   cleanServerClips();
 }
 function analysesView() {
   const me = analysisRole();
   if (!me) return null;
   const list = analyses.list.filter(a => me === 'coach' || a.playerId === session.playerId).map(a => Object.assign({}, a, { unread: unreadOf(a, me), label: gameLabel(a) }));
-  return { me, list, unread: list.filter(a => a.unread).length, error: analyses.error || (me === 'coach' && analyses.purgeError) || '', loaded: analyses.loaded };
+  const extra = me === 'coach' && isCoachMachine() ? { storage: { used: storageUsed(), limit: STORAGE_LIMIT }, filmReports: filmReportsView() } : {};
+  return Object.assign({ me, list, unread: list.filter(a => a.unread).length, error: analyses.error || (me === 'coach' && analyses.purgeError) || '', loaded: analyses.loaded }, extra);
 }
 function keepAnalysis(a, seen) {
   const i = analyses.list.findIndex(x => x.id === a.id);
@@ -769,15 +778,32 @@ async function getAnalysis({ id }) {
   setTimeout(refreshView, 0);
   prefetchServerClips(r.analysis); // anciennes vidéos (sans durée ni index) : préparées pendant qu'on lit
   const cd = me === 'coach' ? readClaudeDrafts()[id] : null;
-  return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId), claude: cd ? { general: cd.general, moments: cd.moments, used: cd.used || {} } : null };
+  return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId), claude: cd ? { general: cd.general, moments: cd.moments, used: cd.used || {}, priorities: cd.priorities || [] } : null, goals: me === 'coach' ? goalsOfAnalysis(r.analysis) : [] };
 }
-async function commentAnalysis({ id, t, text }) {
+// Dessin joint à un message : formes ramenées à des coordonnées 0..1 de l'image, couleurs connues, taille bornée
+const DRAW_COLORS = ['#ff5c5c', '#f5d547', '#c3ec7f', '#69c3d8', '#ffffff'];
+function cleanDrawing(d) {
+  if (!d || typeof d !== 'object') return null;
+  const n = v => Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 1000) / 1000;
+  let shapes = (Array.isArray(d.shapes) ? d.shapes : []).slice(0, 20).map(x => {
+    const c = DRAW_COLORS.includes(x && x.c) ? x.c : DRAW_COLORS[0];
+    if (x && x.k === 'trait') { const pts = (Array.isArray(x.pts) ? x.pts : []).filter(q => Array.isArray(q)).slice(0, 60).map(q => [n(q[0]), n(q[1])]); return pts.length >= 2 ? { k: 'trait', c, pts } : null; }
+    if (x && (x.k === 'fleche' || x.k === 'cercle')) { const q = (Array.isArray(x.p) ? x.p : []).slice(0, 4).map(n); return q.length === 4 ? { k: x.k, c, p: q } : null; }
+    return null;
+  }).filter(Boolean);
+  const out = () => ({ file: /^[\w-]+\.webm$/.test(d.file) ? d.file : null, v: Math.round(Math.max(0, Number(d.v) || 0) * 10) / 10, g: Math.round(Math.max(0, Number(d.g) || 0) * 10) / 10,
+    w: Math.max(0, Math.round(Number(d.w) || 0)), h: Math.max(0, Math.round(Number(d.h) || 0)), shapes });
+  while (shapes.length && JSON.stringify(out()).length > 7500) shapes = shapes.slice(0, -1); // limite du serveur
+  return shapes.length ? out() : null;
+}
+async function commentAnalysis({ id, t, text, drawing }) {
   const me = analysisRole();
   if (!me || !cloud) throw new Error('Analyses indisponibles ici.');
   const msg = String(text || '').trim();
-  if (!msg) throw new Error('Message vide.');
+  const dr = cleanDrawing(drawing);
+  if (!msg && !dr) throw new Error('Message vide.');
   const tt = t === null || t === undefined || t === '' ? null : Math.round(Number(t));
-  const r = me === 'coach' ? await cloud.coachAnalysisComment(getPushToken(), id, tt, msg) : await cloud.analysisComment(playerToken(), id, tt, msg);
+  const r = me === 'coach' ? await cloud.coachAnalysisComment(getPushToken(), id, tt, msg, dr) : await cloud.analysisComment(playerToken(), id, tt, msg, dr);
   keepAnalysis(r.analysis, true);
   if (me === 'coach') claudeDraftUsed(id, tt);
   refreshView();
@@ -1074,6 +1100,224 @@ async function syncClaudeFolder() {
     claudeState.error = err;
   }
   if (session && JSON.stringify([claudeState.waiting, claudeState.ready, claudeState.error]) !== before) refreshView();
+}
+
+// ---------------------------------------------------------------- objectifs de travail (priorités suivies)
+// player.goals : [{ id, text, kpi, target, since, status, source: 'analyse'|'bilan'|'coach', analysisId, createdAt }]
+// Envoyés au serveur avec le joueur : il les voit (et leur suivi) sur son tableau de bord.
+function cleanGoal(g, base) {
+  const text = String((g && g.text) || '').trim().slice(0, 300);
+  if (!text) throw new Error('Objectif vide.');
+  const kpi = g.kpi && Stats.GOAL_KPIS.includes(g.kpi) ? g.kpi : null;
+  const n = g.target === '' || g.target === null || g.target === undefined ? null : Number(String(g.target).replace(',', '.'));
+  return Object.assign({}, base, { text, kpi, target: kpi && Number.isFinite(n) ? n : null });
+}
+function playerOf(playerId) {
+  const p = store.data.players.find(x => x.id === playerId);
+  if (!p) throw new Error('Joueur introuvable.');
+  return p;
+}
+function addGoals({ playerId, goals, source, analysisId }) {
+  requireEdit();
+  const p = playerOf(playerId);
+  const now = Date.now();
+  const list = (Array.isArray(goals) ? goals : []).filter(g => g && String(g.text || '').trim()).map(g => cleanGoal(g, {
+    id: crypto.randomUUID(), since: now, status: 'actif', source: ['analyse', 'bilan'].includes(source) ? source : 'coach', analysisId: analysisId || null, createdAt: now }));
+  if (!list.length) throw new Error('Écris au moins un objectif.');
+  const active = (p.goals || []).filter(g => g.status === 'actif').length;
+  if (active + list.length > 8) throw new Error('8 objectifs actifs au plus : marque d\'abord des objectifs comme atteints ou abandonnés.');
+  p.goals = (p.goals || []).concat(list);
+  return { ok: true, added: list.length, data: changed(1500) };
+}
+function updateGoal({ playerId, id, patch }) {
+  requireEdit();
+  const p = playerOf(playerId);
+  const i = (p.goals || []).findIndex(g => g.id === id);
+  if (i < 0) throw new Error('Objectif introuvable.');
+  const g = p.goals[i];
+  const q = patch || {};
+  let next = g;
+  if ('text' in q || 'kpi' in q || 'target' in q) next = cleanGoal(Object.assign({}, g, q), g);
+  if (q.status && ['actif', 'atteint', 'abandonne'].includes(q.status)) next = Object.assign({}, next, { status: q.status, doneAt: q.status === 'actif' ? null : Date.now() });
+  p.goals[i] = next;
+  return { ok: true, data: changed(1500) };
+}
+function deleteGoal({ playerId, id }) {
+  requireEdit();
+  const p = playerOf(playerId);
+  p.goals = (p.goals || []).filter(g => g.id !== id);
+  return { ok: true, data: changed(1500) };
+}
+function goalsOfAnalysis(a) {
+  const p = a && store.data.players.find(x => x.id === a.playerId);
+  return p ? (p.goals || []).filter(g => g.analysisId === a.id) : [];
+}
+
+// ---------------------------------------------------------------- erreurs récurrentes (ordinateur du coach)
+// Calculées à partir des moments clés des 20 dernières parties au rôle ; envoyées au serveur avec le joueur.
+function refreshTrends() {
+  if (!isCoachMachine()) return false;
+  let dirty = false;
+  const strip = t => (t ? JSON.stringify(Object.assign({}, t, { at: 0 })) : null);
+  for (const p of store.data.players) {
+    const gs = store.data.games.filter(g => g.playerId === p.id && g.role === p.role && !g.custom).sort((a, b) => b.date - a.date);
+    const entries = [];
+    for (const g of gs) {
+      if (entries.length >= 20) break;
+      const m = readMoments(p.id, g.matchId);
+      if (m) entries.push({ matchId: g.matchId, date: g.date, m });
+    }
+    const tr = trendsMod.compute(entries);
+    if (strip(tr) === strip(p.trends)) continue;
+    if (tr) p.trends = tr; else delete p.trends;
+    dirty = true;
+  }
+  if (dirty) { changed(5000); if (session) refreshView(); }
+  return dirty;
+}
+
+// ---------------------------------------------------------------- bilan du mois (préparé pour Claude)
+const bilansFile = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'claude-bilans.json');
+function readBilans() { try { return JSON.parse(fs.readFileSync(bilansFile(), 'utf8')) || {}; } catch (e) { return {}; } }
+function writeBilans(b) { fs.writeFileSync(bilansFile() + '.tmp', JSON.stringify(b)); fs.renameSync(bilansFile() + '.tmp', bilansFile()); }
+const monthKey = (t = Date.now()) => new Date(t).toLocaleDateString('fr-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit' }).slice(0, 7);
+const monthLabel = k => { const [y, m] = k.split('-').map(Number); return new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' }); };
+function prepareBilan({ playerId }) {
+  requireEdit();
+  if (!isCoachMachine()) throw new Error('Le bilan se prépare sur l\'ordinateur du coach.');
+  const p = playerOf(playerId);
+  const now = Date.now(), from = now - 30 * 86400e3, month = monthKey(now);
+  const gs = store.data.games.filter(g => g.playerId === p.id && g.role === p.role && !g.custom && g.date >= from).sort((a, b) => a.date - b.date);
+  if (gs.length < 3) throw new Error('Pas assez de parties ce mois-ci (3 au moins) pour un bilan.');
+  const base = path.join(claudeDir(), claudeMod.BILAN_DIR);
+  const name = claudeMod.bilanFolderName(p.id, month, String(p.riotId || '').split('#')[0]);
+  const dir = path.join(base, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.rmSync(path.join(dir, claudeMod.BILAN_RESULT), { force: true }); // nouveau bilan : l'ancienne réponse ne vaut plus
+  const kpis = Stats.kpiTable(store.data, p, '', gs).filter(r => r.label !== 'Parties jouées').map(r => ({
+    indicateur: r.label, valeur: r.value === null ? null : Stats.fmt(r.value, r.format), objectif: r.obj.value === null ? null : r.obj.sens + ' ' + Stats.fmt(r.obj.value, r.format),
+    atteint: r.ok, dixDernieres: r.v10 === null ? null : Stats.fmt(r.v10, r.format), tendance: r.trend === 1 ? 'mieux' : r.trend === -1 ? 'moins bien' : r.trend === 0 ? 'stable' : null }));
+  const entries = gs.slice().reverse().map(g => ({ matchId: g.matchId, date: g.date, m: readMoments(p.id, g.matchId) })).filter(e => e.m);
+  const tr = trendsMod.compute(entries, { limit: 40 });
+  const goals = (p.goals || []).map(g => { const pr = Stats.goalProgress(store.data, p, g); return {
+    texte: g.text, indicateur: g.kpi, cible: g.target, depuis: new Date(g.since).toISOString().slice(0, 10), statut: g.status,
+    suivi: { parties: pr.games, avant: pr.before === undefined || pr.before === null ? null : Stats.fmt(pr.before, pr.format), maintenant: pr.now === undefined || pr.now === null ? null : Stats.fmt(pr.now, pr.format),
+      reussite: pr.rate === undefined || pr.rate === null ? null : Math.round(pr.rate * 100) + ' %', etat: pr.state } }; });
+  const ans = analyses.list.filter(a => a.playerId === p.id && new Date(a.createdAt).getTime() >= from).map(a => ({
+    partie: gameLabel(a), envoyeeLe: a.createdAt, statut: a.status, noteDuJoueur: a.note || '',
+    messagesDuCoach: (a.comments || []).filter(c => c.author === 'coach').map(c => (c.t === null ? '' : momentsMod.mmss(c.t) + ' : ') + c.text).slice(0, 20) }));
+  const sess = store.data.sessions.filter(x => x.playerId === p.id && new Date(x.date).getTime() >= from).map(x => {
+    const r = Stats.sessionResult(store.data, x, p);
+    const cut = v => String(v || '').slice(0, 600);
+    return { date: x.date, axe: x.axis || '', indicateur: x.kpi || null, cible: x.target || null, avant: r.before, apres: r.after,
+      constats: cut(x.findings), points: cut(x.points), devoirs: cut(x.homework), suite: cut(x.next) };
+  });
+  const parties = gs.map(g => ({ date: new Date(g.date).toISOString().slice(0, 10), champion: champName(g.champion), contre: g.opponent ? champName(g.opponent) : null, resultat: g.win ? 'victoire' : 'défaite',
+    kda: g.kills + '/' + g.deaths + '/' + g.assists, csA10: g.cs10, ecartOrA15: g.goldDiff15, mortsAvant15: g.deaths15, vision: g.vision, lp: g.lpDelta }));
+  const man = {
+    version: 1, type: 'bilan', bilanId: claudeMod.bilanId(p.id, month), mois: monthLabel(month), joueur: p.riotId, role: p.role,
+    periode: { du: new Date(from).toISOString().slice(0, 10), au: new Date(now).toISOString().slice(0, 10) }, rangActuel: (lastRankOf(p) || {}).label || null,
+    indicateurs: kpis, erreursRecurrentes: tr ? { phrases: tr.sentences, zones: tr.zones, minutes: tr.windows, circonstances: tr.tags, objectifsPerdus: tr.objectives, mortsParPartie: Math.round(tr.perGame * 10) / 10 } : null,
+    objectifsDeTravail: goals, analysesDuMois: ans, seancesDuMois: sess, parties,
+    aRendre: {
+      fichier: claudeMod.BILAN_RESULT,
+      format: { bilanId: claudeMod.bilanId(p.id, month), general: 'Bilan du mois pour le joueur, en le tutoyant (moins de 1500 caractères).', pointsForts: ['2 ou 3 points forts, chiffrés'],
+        axes: ['2 ou 3 axes de travail, concrets'], objectifs: [{ texte: 'Objectif pour le mois prochain', indicateur: 'un de « indicateurs » (ou null)', cible: 'nombre (ou null)' }] },
+      indicateurs: Stats.GOAL_KPIS
+    }
+  };
+  fs.writeFileSync(path.join(dir, claudeMod.MANIFEST), JSON.stringify(man, null, 1));
+  const txt = ['BILAN DU MOIS (Coaching LoL) — ' + p.riotId + ' — ' + monthLabel(month), '', 'Erreurs récurrentes :', trendsMod.toText(tr), ''];
+  for (const e of entries.slice(0, 10)) txt.push(momentsMod.toText(e.m, { player: p.riotId, champName }), '');
+  fs.writeFileSync(path.join(dir, 'parties.txt'), txt.join('\n'));
+  const all = readBilans();
+  all[p.id] = { bilanId: man.bilanId, month, folder: path.join(claudeMod.BILAN_DIR, name), at: now };
+  writeBilans(all);
+  refreshView();
+  return { ok: true, folder: dir, data: viewData() };
+}
+function lastRankOf(p) { const r = store.data.ranks.filter(x => x.playerId === p.id).sort((a, b) => a.date - b.date); return r[r.length - 1] || null; }
+// réponses de Claude (bilan-claude.json) → brouillons
+function syncBilans() {
+  if (!isCoachMachine() || !canEdit()) return;
+  const all = readBilans();
+  let dirty = false;
+  for (const [pid, b] of Object.entries(all)) {
+    const p = store.data.players.find(x => x.id === pid);
+    if (!p) { delete all[pid]; dirty = true; continue; }
+    const dir = path.join(claudeDir(), b.folder || '');
+    const rf = path.join(dir, claudeMod.BILAN_RESULT);
+    if (!fs.existsSync(rf)) { if (b.draft || b.error) { delete b.draft; delete b.error; delete b.mtime; dirty = true; } continue; }
+    const mtime = fs.statSync(rf).mtimeMs;
+    if (b.mtime === mtime) continue;
+    let r;
+    try { r = claudeMod.parseBilan(JSON.parse(fs.readFileSync(rf, 'utf8')), JSON.parse(fs.readFileSync(path.join(dir, claudeMod.MANIFEST), 'utf8'))); } catch (e) { r = { ok: false, errors: ['Fichier illisible : ' + e.message] }; }
+    b.mtime = mtime;
+    if (r.ok) { b.draft = r.draft; delete b.error; notifyCoach('Bilan de Claude prêt', p.riotId + ' : relis-le sur son tableau de bord, puis envoie-le.'); } else { b.error = r.errors.join(' '); delete b.draft; }
+    dirty = true;
+  }
+  if (dirty) { writeBilans(all); if (session) refreshView(); }
+}
+function bilansView() {
+  if (!isCoachMachine() || !canEdit()) return null;
+  const out = {};
+  for (const [pid, b] of Object.entries(readBilans())) out[pid] = { month: b.month, monthLabel: monthLabel(b.month), state: b.draft ? 'pret' : b.error ? 'erreur' : 'attente', draft: b.draft || null, error: b.error || '', text: b.draft ? claudeMod.bilanText(b.draft) : '' };
+  return out;
+}
+function sendBilan({ playerId, text, goals }) {
+  requireEdit();
+  const p = playerOf(playerId);
+  const body = String(text || '').trim().slice(0, 4000);
+  if (!body) throw new Error('Le bilan est vide.');
+  const all = readBilans();
+  const month = (all[p.id] && all[p.id].month) || monthKey();
+  const list = (Array.isArray(goals) ? goals : []).filter(g => g && String(g.text || '').trim());
+  if (list.length) addGoals({ playerId, goals: list, source: 'bilan' });
+  p.bilans = [{ id: crypto.randomUUID(), month, label: monthLabel(month), text: body, at: Date.now() }].concat(p.bilans || []).slice(0, 12);
+  delete all[p.id];
+  writeBilans(all);
+  return { ok: true, data: changed(1000) };
+}
+function dismissBilan({ playerId }) { requireEdit(); const all = readBilans(); delete all[playerId]; writeBilans(all); return { ok: true, data: viewData() }; }
+function deleteBilan({ playerId, id }) { requireEdit(); const p = playerOf(playerId); p.bilans = (p.bilans || []).filter(b => b.id !== id); return { ok: true, data: changed(1000) }; }
+
+// ---------------------------------------------------------------- journaux des tournages en échec (coach)
+const filmReports = { list: [], loaded: false };
+async function refreshFilmReports() {
+  if (!cloud || !isCoachMachine()) return;
+  try {
+    const list = (await cloud.coachFilmReports(getPushToken())).reports || [];
+    if (filmReports.loaded) for (const r of list) if (!filmReports.list.some(x => x.id === r.id)) notifyCoach('Tournage en échec — ' + playerName(r.playerId), excerpt(r.error));
+    const before = JSON.stringify(filmReports.list.map(x => x.id));
+    Object.assign(filmReports, { list, loaded: true });
+    if (session && JSON.stringify(list.map(x => x.id)) !== before) refreshView();
+  } catch (e) { /* serveur pas encore à jour (journaux.sql) : rien à montrer */ }
+}
+async function filmReportsDone({ ids }) {
+  requireEdit();
+  const list = (Array.isArray(ids) ? ids : [ids]).map(Number).filter(Number.isFinite);
+  await cloud.coachFilmReportsDone(getPushToken(), list);
+  filmReports.list = filmReports.list.filter(r => !list.includes(Number(r.id)));
+  refreshView();
+  return { ok: true };
+}
+function filmReportsView() {
+  if (!filmReports.loaded) return [];
+  return filmReports.list.map(r => {
+    const g = store.data.games.find(x => x.matchId === r.matchId && x.playerId === r.playerId);
+    return Object.assign({}, r, { playerName: playerName(r.playerId), label: g ? champName(g.champion) + (g.opponent ? ' contre ' + champName(g.opponent) : '') : r.matchId });
+  });
+}
+// place des vidéos sur le serveur (900 Mo sur le plan gratuit) ; alerte à 80 %
+const STORAGE_LIMIT = 900 * 1048576;
+function storageUsed() { return analyses.list.filter(a => ['envoi', 'en_ligne', 'a_effacer'].includes(a.clipsState)).reduce((n, a) => n + (Number(a.bytes) || 0), 0); }
+function checkStorage() {
+  const used = storageUsed(), s = store.data.settings;
+  if (used >= 0.8 * STORAGE_LIMIT && !s.storageAlerted) {
+    s.storageAlerted = Date.now();
+    store.save();
+    notifyCoach('Stockage des vidéos presque plein', Math.round(used / 1048576) + ' Mo sur 900 Mo : termine des analyses (le joueur les exporte) ou supprimes-en, sinon les prochains envois seront refusés.');
+  } else if (used < 0.7 * STORAGE_LIMIT && s.storageAlerted) { delete s.storageAlerted; store.save(); }
 }
 
 async function exportAnalysis({ id }) {
@@ -1638,7 +1882,17 @@ async function recordVideos({ playerId, matchId }) {
       } else {
         write('ERREUR ' + e.message);
         await giveBack();
-        sendVideo({ playerId, matchId, error: e.message, journal: true });
+        let reported = false;
+        if (isPlayerOnline()) { // le coach reçoit le journal : il voit ce qui a bloqué sans rien demander au joueur
+          try {
+            let j = fs.readFileSync(journal, 'utf8');
+            if (j.length > 59000) j = j.slice(0, 3000) + '\n[…]\n' + j.slice(-55000);
+            await cloud.filmReport(playerToken(), { matchId, error: String(e.message).slice(0, 1000), journal: j, version: app.getVersion() });
+            reported = true;
+            write('journal envoyé au coach');
+          } catch (err) { write('journal non envoyé au coach : ' + err.message); }
+        }
+        sendVideo({ playerId, matchId, error: e.message, journal: true, reported });
       }
     } finally {
       if (videoJob === job) videoJob = null;
@@ -2065,6 +2319,15 @@ function registerIpc() {
   handle('custom:list', () => listCustomGames());
   handle('custom:add', q => addCustomGame(q || {}));
   handle('analysis:export', q => exportAnalysis(q || {}));
+  handle('goals:add', q => addGoals(q || {}));
+  handle('goal:update', q => updateGoal(q || {}));
+  handle('goal:delete', q => deleteGoal(q || {}));
+  handle('bilan:prepare', q => prepareBilan(q || {}));
+  handle('bilan:send', q => sendBilan(q || {}));
+  handle('bilan:dismiss', q => dismissBilan(q || {}));
+  handle('bilan:delete', q => deleteBilan(q || {}));
+  handle('bilan:open', async q => { requireEdit(); const b = readBilans()[(q || {}).playerId]; const d = b ? path.join(claudeDir(), b.folder) : path.join(claudeDir(), claudeMod.BILAN_DIR); fs.mkdirSync(d, { recursive: true }); const e = await shell.openPath(d); if (e) throw new Error(e); return { ok: true }; });
+  handle('filmreport:done', q => filmReportsDone(q || {}));
   handle('claude:open', async () => { requireEdit(); fs.mkdirSync(claudeDir(), { recursive: true }); const e = await shell.openPath(claudeDir()); if (e) throw new Error(e); return { ok: true }; });
   handle('claude:dismiss', async q => { requireEdit(); claudeDraftUsed(String((q || {}).id || ''), (q || {}).t === null || (q || {}).t === undefined ? null : Number(q.t)); await syncClaudeFolder(); return { ok: true }; });
   // autorisation « Enregistrement de l'écran » (Mac) : ouvrir le bon panneau des réglages, relancer l'app
@@ -2208,6 +2471,7 @@ app.whenReady().then(async () => {
         setInterval(pushMoments, 4000);
         setInterval(pullCustomGames, 2000);
         setInterval(purgeClips, 3000);
+        setTimeout(refreshTrends, 1200);
       }
       return require(process.env.COACHING_LOL_TEST)({ app, win, store, fs, path });
     }
@@ -2235,6 +2499,7 @@ app.whenReady().then(async () => {
     setTimeout(purgeClips, 2 * 60 * 1000);
     setInterval(purgeClips, 3600 * 1000);
     setTimeout(refreshRoleRates, 30 * 1000);
+    setTimeout(() => { try { refreshTrends(); } catch (e) { /* au prochain passage */ } }, 25 * 1000);
     setInterval(refreshRoleRates, 6 * 3600 * 1000);
   });
   if (process.env.COACHING_LOL_TEST) app.on('coaching-lol:test-resume', writeResume); // tests uniquement

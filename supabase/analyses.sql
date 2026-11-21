@@ -50,6 +50,9 @@ create table if not exists public.analysis_comments (
 );
 alter table public.analysis_comments enable row level security;
 create index if not exists analysis_comments_a on public.analysis_comments (analysis_id, id);
+-- 1.6.17 : dessin joint à un message (flèches, cercles, traits sur une image de la vidéo)
+-- { file, v (seconde de la vidéo), g (temps de jeu), w, h, shapes: [{ k: 'fleche'|'cercle'|'trait', c, p: [x1, y1, x2, y2] | pts }] }
+alter table public.analysis_comments add column if not exists drawing jsonb;
 
 -- ---------------------------------------------------------------- outils internes
 create or replace function public._analysis_json(a public.analyses, p_full boolean) returns jsonb
@@ -58,23 +61,29 @@ language sql stable security definer set search_path = public as $$
     'id', a.id, 'playerId', a.player_id, 'matchId', a.match_id, 'status', a.status,
     'clips', a.clips, 'clipsState', a.clips_state, 'bytes', a.bytes, 'note', a.note,
     'createdAt', a.created_at, 'updatedAt', a.updated_at, 'closedAt', a.closed_at,
-    'comments', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 't', c.t, 'author', c.author, 'text', c.text, 'at', c.created_at) order by c.id)
+    'comments', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 't', c.t, 'author', c.author, 'text', c.text, 'at', c.created_at)
+                                            || case when c.drawing is null then '{}'::jsonb else jsonb_build_object('drawing', c.drawing) end order by c.id)
                           from analysis_comments c where c.analysis_id = a.id), '[]'::jsonb))
     || case when p_full then jsonb_build_object('moments', a.moments) else '{}'::jsonb end
 $$;
 
-create or replace function public._comment_add(p_id uuid, p_author text, p_t int, p_text text) returns jsonb
+drop function if exists public._comment_add(uuid, text, int, text);
+create or replace function public._comment_add(p_id uuid, p_author text, p_t int, p_text text, p_drawing jsonb default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   v_text text := btrim(coalesce(p_text, ''));
 begin
-  if v_text = '' or length(v_text) > 2000 then
+  if p_drawing is not null and (jsonb_typeof(p_drawing) <> 'object' or jsonb_typeof(p_drawing->'shapes') <> 'array'
+     or jsonb_array_length(p_drawing->'shapes') < 1 or jsonb_array_length(p_drawing->'shapes') > 30 or length(p_drawing::text) > 8000) then
+    return jsonb_build_object('error', 'commentaire_invalide');
+  end if;
+  if (v_text = '' and p_drawing is null) or length(v_text) > 2000 then
     return jsonb_build_object('error', 'commentaire_invalide');
   end if;
   if (select count(*) from analysis_comments where analysis_id = p_id) >= 300 then
     return jsonb_build_object('error', 'commentaire_invalide');
   end if;
-  insert into analysis_comments (analysis_id, t, author, text) values (p_id, p_t, p_author, v_text);
+  insert into analysis_comments (analysis_id, t, author, text, drawing) values (p_id, p_t, p_author, v_text, p_drawing);
   update analyses set updated_at = now() where id = p_id;
   return jsonb_build_object('ok', true, 'analysis', (select _analysis_json(a, false) from analyses a where a.id = p_id));
 end $$;
@@ -160,7 +169,8 @@ begin
   return jsonb_build_object('analysis', (select _analysis_json(a, true) from analyses a where a.id = p_id));
 end $$;
 
-create or replace function public.coach_analysis_comment(p_key text, p_id uuid, p_t int, p_text text) returns jsonb
+drop function if exists public.coach_analysis_comment(text, uuid, int, text);
+create or replace function public.coach_analysis_comment(p_key text, p_id uuid, p_t int, p_text text, p_drawing jsonb default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
   if not public._coach_ok(p_key) then
@@ -169,7 +179,7 @@ begin
   if not exists (select 1 from analyses where id = p_id and status = 'ouverte') then
     return jsonb_build_object('error', 'analyse_fermee');
   end if;
-  return _comment_add(p_id, 'coach', p_t, p_text);
+  return _comment_add(p_id, 'coach', p_t, p_text, p_drawing);
 end $$;
 
 -- fin de l'analyse : discussion close ; les vidéos restent 7 jours pour l'export par le joueur
@@ -346,7 +356,8 @@ begin
   return jsonb_build_object('analysis', (select _analysis_json(a, true) from analyses a where a.id = p_id));
 end $$;
 
-create or replace function public.analysis_comment(p_token text, p_id uuid, p_t int, p_text text) returns jsonb
+drop function if exists public.analysis_comment(text, uuid, int, text);
+create or replace function public.analysis_comment(p_token text, p_id uuid, p_t int, p_text text, p_drawing jsonb default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   v_player text := public._player_of(p_token);
@@ -357,7 +368,7 @@ begin
   if not exists (select 1 from analyses where id = p_id and player_id = v_player and status = 'ouverte') then
     return jsonb_build_object('error', 'analyse_fermee');
   end if;
-  return _comment_add(p_id, 'joueur', p_t, p_text);
+  return _comment_add(p_id, 'joueur', p_t, p_text, p_drawing);
 end $$;
 
 -- export par le joueur (vidéos + débrief enregistrés sur son ordinateur) : l'analyse quitte le serveur.
@@ -415,7 +426,7 @@ create policy "clips : effacement" on storage.objects for delete to anon, authen
 
 -- ---------------------------------------------------------------- droits
 revoke all on function public._analysis_json(public.analyses, boolean) from public, anon, authenticated;
-revoke all on function public._comment_add(uuid, text, int, text) from public, anon, authenticated;
+revoke all on function public._comment_add(uuid, text, int, text, jsonb) from public, anon, authenticated;
 revoke all on function public._clip_upload_ok(text) from public;
 revoke all on function public._clip_delete_ok(text) from public;
 grant execute on function public._clip_upload_ok(text) to anon, authenticated;   -- utilisées par les règles du stockage
@@ -425,9 +436,9 @@ declare f text;
 begin
   foreach f in array array[
     'coach_moments_push(text, jsonb)', 'coach_analyses(text)', 'coach_analysis_get(text, uuid)',
-    'coach_analysis_comment(text, uuid, int, text)', 'coach_analysis_close(text, uuid)', 'coach_analysis_delete(text, uuid)', 'coach_clips_purge(text)',
+    'coach_analysis_comment(text, uuid, int, text, jsonb)', 'coach_analysis_close(text, uuid)', 'coach_analysis_delete(text, uuid)', 'coach_clips_purge(text)',
     'coach_clips_gone(text, uuid)', 'moments_get(text, text)', 'analysis_create(text, jsonb)', 'analysis_ready(text, uuid)',
-    'analyses_mine(text)', 'analysis_get(text, uuid)', 'analysis_comment(text, uuid, int, text)',
+    'analyses_mine(text)', 'analysis_get(text, uuid)', 'analysis_comment(text, uuid, int, text, jsonb)',
     'analysis_export_done(text, uuid)', 'analysis_forget(text, uuid)'] loop
     execute 'revoke all on function public.' || f || ' from public';
     execute 'grant execute on function public.' || f || ' to anon, authenticated';

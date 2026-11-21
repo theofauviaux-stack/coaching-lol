@@ -629,9 +629,94 @@ function pageDashboard() {
       points: snaps.slice(-40).map(r => ({ v: r.score, label: dateFr(r.date).slice(0, 5), tip: r.label + '\n' + dateTimeFr(r.date) + (typeof r.wins === 'number' ? '\n' + r.wins + ' V · ' + r.losses + ' D cette saison' : '') })),
       fmt: scoreText, color: '#69c3d8' })}</div>` : ''}
     <h2>Forme récente</h2>${formHtml}
+    ${goalsSection(p)}
+    ${trendsSection(p)}
+    ${bilanSection(p)}
     <h2>Objectifs et indicateurs</h2>
     <table class="table"><tr><th class="l">Indicateur</th><th>Valeur</th><th>Objectif</th><th>Statut</th><th>Progression</th><th>10 dern.</th><th>Tendance</th><th>Évolution</th></tr>${table}</table>
     <div class="two" style="margin-top:6px"><div><h2>Champions</h2>${group(Stats.groupBy(gs, 'champion').slice(0, 8), 'Champion')}</div><div><h2>Adversaires directs</h2>${group(Stats.groupBy(gs, 'opponent').slice(0, 8), 'Adversaire')}</div></div>`;
+}
+
+// ---- objectifs de travail : priorités d'une analyse ou d'un bilan, suivies sur les parties suivantes
+const GOAL_STATE = { atteint: ['accent', 'Atteint'], progres: ['blue', 'En progrès'], travail: ['amber', 'À travailler'], attente: ['', 'En attente de parties'], libre: ['', 'Suivi par le coach'] };
+function goalCard(p, g, edit) {
+  const pr = Stats.goalProgress(D(), p, g);
+  const [cls, lab] = g.status === 'abandonne' ? ['', 'Abandonné'] : GOAL_STATE[pr.state] || ['', ''];
+  const f = v => Stats.fmt(v, pr.format);
+  const ft = v => (Number.isInteger(v) && pr.format === 'dec1' ? String(v) : f(v)); // cible ronde : sans décimale
+  const what = pr.kpi ? `${esc(pr.kpi)}${pr.target === null ? '' : ' ' + pr.sens + ' ' + ft(pr.target)}` : 'Pas d\'indicateur : le coach coche quand c\'est acquis';
+  const nums = pr.kpi && pr.measured
+    ? `<div class="gl-nums"><span>Avant <b>${f(pr.before)}</b></span><span>Depuis <b>${f(pr.now)}</b></span>${pr.rate === null ? '' : `<span>Réussi <b>${pr.hits}/${pr.measured}</b> parties</span>`}</div>`
+    : `<div class="faint small">${pr.games ? pr.games + ' partie' + (pr.games > 1 ? 's' : '') : 'Aucune partie'} depuis le ${dateFr(g.since)}</div>`;
+  const dots = pr.series && pr.series.length ? `<div class="gl-dots">${pr.series.map(x => `<i class="${x.ok === null ? '' : x.ok ? 'ok' : 'ko'}" data-tip="${esc(dateFr(x.date) + ' : ' + f(x.v))}"></i>`).join('')}</div>` : '';
+  const from = g.source === 'analyse' ? 'issu d\'une analyse' : g.source === 'bilan' ? 'issu d\'un bilan' : '';
+  const act = !edit ? '' : `<div class="gl-act">${g.status === 'actif'
+    ? `<button class="icon-btn" data-action="goal-done" data-id="${esc(g.id)}" data-tip="Marquer comme atteint">${icon('check', 15)}</button>`
+    : `<button class="icon-btn" data-action="goal-reopen" data-id="${esc(g.id)}" data-tip="Remettre en cours">${icon('undo', 15)}</button>`}
+    <button class="icon-btn" data-action="goal-del" data-id="${esc(g.id)}" data-tip="Supprimer cet objectif">${icon('trash', 15)}</button></div>`;
+  return `<div class="gl-card ${g.status !== 'actif' ? 'done' : ''}" data-id="${esc(g.id)}"><div class="gl-top"><b>${esc(g.text)}</b>${act}</div>
+    <div class="gl-meta"><span class="chip ${cls}">${lab}</span><span class="muted small">${what}</span>${from ? `<span class="faint tiny">${from} · ${dateFr(g.since)}</span>` : ''}</div>${nums}${dots}</div>`;
+}
+function goalForm(p) {
+  const f = state.goalForm || {};
+  return `<div class="gl-form"><input id="gl-text" placeholder="Nouvel objectif (ex. : 1 mort au plus avant 15 min)" value="${esc(f.text || '')}" maxlength="300">
+    <select id="gl-kpi" data-change="goal-kpi"><option value="">Sans indicateur</option>${Stats.GOAL_KPIS.map(k => `<option ${f.kpi === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select>
+    <input id="gl-target" placeholder="Cible" value="${esc(f.target === undefined || f.target === null ? '' : f.target)}" style="width:80px">
+    <button class="btn primary" data-action="goal-add">${icon('plus', 14)} Ajouter</button></div>`;
+}
+function goalsSection(p) {
+  const edit = isCoach() && canEdit();
+  const goals = (p.goals || []).slice().sort((a, b) => (a.status === 'actif' ? 0 : 1) - (b.status === 'actif' ? 0 : 1) || b.since - a.since);
+  if (!goals.length && !edit) return '';
+  const active = goals.filter(g => g.status === 'actif'), old = goals.filter(g => g.status !== 'actif');
+  return `<h2>${icon('target', 16)} Objectifs de travail <span class="muted small" style="font-weight:400">suivis automatiquement sur les parties suivantes</span></h2>
+    ${active.length ? `<div class="gl-grid">${active.map(g => goalCard(p, g, edit)).join('')}</div>` : `<div class="muted small" style="margin-bottom:10px">${edit ? 'Aucun objectif en cours. Ajoute-en un ici, ou depuis une analyse (« Suivre des objectifs ») ou un bilan.' : 'Aucun objectif en cours.'}</div>`}
+    ${edit ? goalForm(p) : ''}
+    ${old.length ? `<details class="gl-old"><summary class="muted small">${old.length} objectif${old.length > 1 ? 's' : ''} terminé${old.length > 1 ? 's' : ''}</summary><div class="gl-grid">${old.map(g => goalCard(p, g, edit)).join('')}</div></details>` : ''}`;
+}
+
+// ---- erreurs récurrentes : carte des morts et ce qui revient, sur les 20 dernières parties
+function trendsSection(p) {
+  const tr = p.trends;
+  if (!tr || tr.games < 3) return '';
+  const v = D().settings.ddVersion;
+  const tip = d => mmss(d.t) + ' · ' + d.zone + ' · ' + dateFr(d.date) + (d.tags.length ? ' · ' + d.tags.join(', ') : '');
+  const dots = tr.points.map(d => { const [l, t] = mapPct(d.x, d.y); return `<i class="tr-dot ${d.t < 15 * 60000 ? 'early' : ''}" style="left:${l}%;top:${t}%" data-tip="${esc(tip(d))}"></i>`; }).join('');
+  const bars = (list, max) => list.slice(0, 5).map(x => `<div class="tr-bar"><span>${esc(x.label)}</span><i><b style="width:${Math.round(100 * x.n / max)}%"></b></i><em>${x.n}</em></div>`).join('');
+  const maxZ = Math.max(1, ...tr.zones.map(z => z.n));
+  const maxW = Math.max(1, ...tr.windows.map(w => w.n));
+  return `<h2>${icon('skull', 16)} Erreurs récurrentes <span class="muted small" style="font-weight:400">${tr.games} dernières parties · ${tr.deaths} morts (${String(tr.perGame.toFixed(1)).replace('.', ',')} par partie)</span></h2>
+    <div class="tr-box"><div class="tr-map" ${v ? `style="background-image:url(https://ddragon.leagueoflegends.com/cdn/${v}/img/map/map11.png)"` : ''}>${dots}
+      <div class="tr-legend"><span><i class="tr-dot early"></i> avant 15 min</span><span><i class="tr-dot"></i> après</span><span class="faint">vue depuis ta base (en bas à gauche)</span></div></div>
+      <div class="tr-side">${tr.sentences.length ? `<ul class="tr-said">${tr.sentences.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div class="muted small">Rien qui revient nettement pour l\'instant.</div>'}
+        <div class="two tr-bars"><div><h3>Où</h3>${bars(tr.zones, maxZ)}</div><div><h3>Quand</h3>${bars(tr.windows.slice().sort((a, b) => a.from - b.from), maxW)}</div></div>
+        ${tr.objectives.lost ? `<div class="faint small">Objectifs perdus par l'équipe : ${tr.objectives.lost}, dont ${tr.objectives.absent} sans toi.</div>` : ''}</div></div>`;
+}
+
+// ---- bilans du mois : préparés pour Claude, relus par le coach, envoyés au joueur
+function bilanSection(p) {
+  const coach = isCoach() && canEdit();
+  const sent = p.bilans || [];
+  const dr = coach && D().bilanDrafts ? D().bilanDrafts[p.id] : null;
+  if (!coach && !sent.length) return '';
+  let card = '';
+  if (coach && D().claude) {
+    if (!dr) card = `<div class="bl-card"><div>${icon('sparkles', 15)} <b>Bilan du mois avec Claude</b><div class="muted small">L'app prépare un dossier (statistiques des 30 derniers jours, erreurs récurrentes, objectifs et leur suivi, analyses, séances) ; Claude écrit le bilan, tu le relis puis tu l'envoies à ${esc(gameNameOf(p.riotId))}.</div></div>
+      <button class="btn" data-action="bilan-prepare">${icon('file-text', 15)} Préparer le bilan</button></div>`;
+    else if (dr.state === 'attente') card = `<div class="bl-card"><div>${icon('clock', 15)} <b>Bilan de ${esc(dr.monthLabel)} prêt pour Claude</b><div class="muted small">Dans une conversation Claude reliée à cet ordinateur, demande « fais les bilans ». Sa proposition arrivera ici.</div></div>
+      <button class="btn ghost" data-action="bilan-open">${icon('folder', 15)} Ouvrir le dossier</button><button class="icon-btn" data-action="bilan-dismiss" data-tip="Annuler ce bilan">${icon('close', 15)}</button></div>`;
+    else if (dr.state === 'erreur') card = `<div class="bl-card bad"><div>${icon('alert', 15)} <b>La réponse de Claude n'a pas pu être lue</b><div class="muted small">${esc(dr.error)}</div></div><button class="btn" data-action="bilan-prepare">Préparer à nouveau</button></div>`;
+    else {
+      const txt = (state.bilanEdit || {})[p.id] !== undefined ? state.bilanEdit[p.id] : dr.text;
+      const goals = dr.draft.objectifs || [];
+      card = `<div class="bl-draft"><div class="an-ai">${icon('sparkles', 14)}<span><b>Bilan de ${esc(dr.monthLabel)} proposé par Claude</b> : relis-le, corrige-le, puis envoie-le à ${esc(gameNameOf(p.riotId))}.</span></div>
+        <textarea id="bl-text" data-pid="${esc(p.id)}" rows="12">${esc(txt)}</textarea>
+        ${goals.length ? `<div class="bl-goals"><div class="small muted">Objectifs proposés pour le mois prochain (cochés : ajoutés au suivi à l'envoi)</div>${goals.map((g, i) => `<label class="bl-goal"><input type="checkbox" data-bl-goal="${i}" checked> <span>${esc(g.text)}</span>${g.kpi ? `<span class="faint small">${esc(g.kpi)}${g.target === null ? '' : ' ' + Stats.goalSens(g.kpi) + ' ' + esc(Stats.fmt(g.target, Stats.METRIC_FMT[g.kpi] || 'dec1'))}</span>` : ''}</label>`).join('')}</div>` : ''}
+        <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn ghost" data-action="bilan-dismiss">Effacer</button><button class="btn primary" data-action="bilan-send">${icon('send', 15)} Envoyer à ${esc(gameNameOf(p.riotId))}</button></div></div>`;
+    }
+  }
+  const list = sent.map((b, i) => `<details class="bl-sent" ${i === 0 && !coach ? 'open' : ''}><summary><b>Bilan de ${esc(b.label || b.month)}</b><span class="faint small">envoyé le ${dateFr(b.at)}</span>${coach ? `<button class="icon-btn" data-action="bilan-del" data-id="${esc(b.id)}" data-tip="Supprimer ce bilan (aussi chez le joueur)">${icon('trash', 14)}</button>` : ''}</summary><div class="bl-text">${esc(b.text)}</div></details>`).join('');
+  return `<h2>${icon('file-text', 16)} ${coach ? 'Bilans du mois' : 'Bilans de ton coach'}</h2>${card}${list}`;
 }
 
 // ======================================================================== PARTIES
@@ -763,19 +848,36 @@ function videoAt(c, g) {
   }
   return Math.max(0, (Number(c && c.lead) || 0) + (g - ((c && c.start) || 0)));
 }
-function momentsVideo(m, x, c) {
+// Temps de jeu montré à la seconde v d'un extrait (inverse de videoAt)
+function gameAt(c, v) {
+  const s = Array.isArray(c && c.sync) ? c.sync.filter(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)) : [];
+  if (s.length >= 2) {
+    const last = s[s.length - 1];
+    if (v <= s[0][0]) return s[0][1] - (s[0][0] - v);
+    if (v >= last[0]) return last[1] + (v - last[0]);
+    let i = 1;
+    while (s[i][0] < v) i++;
+    const [v0, g0] = s[i - 1], [v1, g1] = s[i];
+    return v1 > v0 ? g0 + (v - v0) * (g1 - g0) / (v1 - v0) : g0;
+  }
+  return ((c && c.start) || 0) + v - (Number(c && c.lead) || 0);
+}
+// at : temps de jeu cité dans un message (lien « 6:10 ») ; sinon 30 s avant le moment, pour voir ce qui l'amène
+function momentsVideo(m, x, c, at) {
   const S = state.moments;
-  const from = Math.round(videoAt(c, x.t / 1000 - 30) * 10) / 10; // 30 s avant le moment : on voit ce qui l'amène
+  const pend = S.pendingDrawing && S.pendingDrawing.file === c.file ? S.pendingDrawing : null;
+  const from = pend ? pend.v : Math.round(videoAt(c, at !== undefined && at !== null ? at - 1 : x.t / 1000 - 30) * 10) / 10;
   const src = S.mode === 'analysis' ? `clip://r/${esc(S.analysis.id)}/${esc(c.file)}` : `clip://v/${esc(S.videoKey)}/${esc(c.file)}`;
-  return `<div class="mo-video"><video src="${src}" data-from="${from}" controls autoplay muted playsinline></video>
-    <div class="mo-maptime"><b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay · caméra sur le joueur</div></div>`;
+  const draw = S.mode === 'analysis' && S.analysis.status === 'ouverte' ? `<button class="btn ghost an-drawbtn" data-action="an-draw" data-tip="Met la vidéo en pause : dessine des flèches ou des cercles sur l'image, puis joins le dessin à ton message">${icon('pen', 13)} Dessiner</button>` : '';
+  return `<div class="mo-video"><video src="${src}" data-file="${esc(c.file)}" data-from="${from}" ${pend ? 'data-pause="1"' : ''} controls ${pend ? '' : 'autoplay'} muted playsinline></video>
+    <div class="mo-maptime">${at !== undefined && at !== null ? `<b>${mmss(at * 1000)}</b> moment cité dans la discussion` : `<b>${mmss(c.start * 1000)} → ${mmss(c.end * 1000)}</b> extrait du replay · caméra sur le joueur`}${draw}</div></div>`;
 }
 function momentsButtons(S) {
   const m = S.data;
   if (!m || S.loading) return '';
   if (S.mode === 'analysis') {
     if (S.me === 'coach') {
-      return (S.analysis.status === 'ouverte'
+      return (canEdit() ? `<button class="btn ghost" data-action="an-goals" data-tip="Transforme les priorités de cette analyse en objectifs suivis automatiquement sur les prochaines parties">${icon('target', 15)} Suivre des objectifs</button>` : '') + (S.analysis.status === 'ouverte'
         ? `<button class="btn" data-action="an-close" data-tip="Ferme la discussion ; le joueur pourra exporter vidéos + débrief sur son ordinateur">${icon('check', 15)} Terminer l'analyse</button>` : '')
         + `<button class="icon-btn" data-action="an-delete" data-id="${esc(S.analysis.id)}" data-tip="Supprimer l'analyse (discussion et vidéos), pour toi et pour le joueur">${icon('trash', 16)}</button>`;
     }
@@ -828,16 +930,129 @@ function threadHtml(S) {
   const who = c => (c.author === 'coach' ? (S.me === 'coach' ? 'Toi (coach)' : 'Coach') : S.me === 'coach' ? esc(gameNameOf(S.playerName)) : 'Toi');
   const draft = (S.drafts || {})[S.sel] || '';
   return `<div class="an-thread"><div class="an-title">${icon('chat', 15)} ${mo ? 'Discussion sur ' + mmss(mo.t) + ' · ' + moTitle(mo) : 'Discussion générale'}</div>
-    <div class="an-msgs">${items.length ? items.map(c => `<div class="an-msg ${c.author}${c.author === S.me ? ' mine' : ''}"><div class="an-who">${who(c)} <span class="faint">${dateTimeFr(c.at)}</span></div><div class="an-txt">${esc(c.text)}</div></div>`).join('')
+    <div class="an-msgs">${items.length ? items.map(c => `<div class="an-msg ${c.author}${c.author === S.me ? ' mine' : ''}"><div class="an-who">${who(c)} <span class="faint">${dateTimeFr(c.at)}</span></div>${c.text ? `<div class="an-txt">${linkTimes(esc(c.text), S)}</div>` : ''}${c.drawing ? `<button class="an-draw-chip" data-action="an-drawing" data-cid="${esc(String(c.id))}" data-tip="Voir le dessin sur la vidéo">${icon('pen', 13)} Dessin à ${mmss(c.drawing.g * 1000)}</button>` : ''}</div>`).join('')
       : `<div class="faint small">Pas encore de message${mo ? ' sur ce moment' : ''}.</div>`}</div>
     ${A.status === 'ouverte'
-      ? `${(S.fromClaude || {})[S.sel] ? `<div class="an-ai">${icon('sparkles', 14)}<span><b>Proposition de Claude</b> : relis-la, corrige-la si besoin, puis envoie-la au joueur.</span><button class="btn ghost" data-action="an-ai-clear" data-tip="Retirer cette proposition">Effacer</button></div>` : ''}<div class="an-reply"><textarea id="an-text" rows="${(S.fromClaude || {})[S.sel] ? 8 : 2}" placeholder="${S.me === 'coach' ? 'Ta réponse au joueur…' : 'Ta réponse ou ta question au coach…'}">${esc(draft)}</textarea><button class="btn primary" data-action="an-send">${icon('send', 15)} Envoyer</button></div>`
+      ? `${(S.fromClaude || {})[S.sel] ? `<div class="an-ai">${icon('sparkles', 14)}<span><b>Proposition de Claude</b> : relis-la, corrige-la si besoin, puis envoie-la au joueur.</span><button class="btn ghost" data-action="an-ai-clear" data-tip="Retirer cette proposition">Effacer</button></div>` : ''}${S.drawing ? `<div class="an-attach">${icon('pen', 13)} Dessin joint : ${mmss(S.drawing.g * 1000)}, ${S.drawing.shapes.length} forme${S.drawing.shapes.length > 1 ? 's' : ''}<button class="icon-btn" data-action="an-draw-drop" data-tip="Retirer le dessin">${icon('close', 13)}</button></div>` : ''}<div class="an-reply"><textarea id="an-text" rows="${(S.fromClaude || {})[S.sel] ? 8 : 2}" placeholder="${S.me === 'coach' ? 'Ta réponse au joueur…' : 'Ta réponse ou ta question au coach…'}">${esc(draft)}</textarea><button class="btn primary" data-action="an-send">${icon('send', 15)} Envoyer</button></div>`
       : `<div class="an-closed">${icon('check', 14)} Analyse terminée${A.closedAt ? ' le ' + dateFr(A.closedAt) : ''} : la discussion est fermée.
         ${S.me === 'coach'
           ? 'Le joueur peut l\'exporter sur son ordinateur (vidéos + débrief) ; elle sera alors supprimée du serveur. Sans export, les vidéos sont effacées 7 jours après la fin.'
           : 'Exporte-la sur ton ordinateur avec le bouton « Exporter sur mon ordinateur » : vidéos + débrief dans un dossier, puis l\'analyse est supprimée de l\'app. Sans export, les vidéos sont effacées 7 jours après la fin.'}</div>`}</div>`;
 }
 const gameNameOf = riotId => String(riotId || 'Joueur').split('#')[0];
+// « 6:10 » dans un message → lien qui montre ce moment dans la vidéo
+function linkTimes(html, S) {
+  const max = ((S.data && S.data.duration) || 3600) + 30;
+  return html.replace(/(^|[^\d:])(\d{1,2}):([0-5]\d)(?![\d:])/g, (all, pre, mm, ss) => {
+    const t = Number(mm) * 60 + Number(ss);
+    return t > max ? all : `${pre}<a class="an-time" data-action="an-seek" data-t="${t}" data-tip="Voir ce moment dans la vidéo">${mm}:${ss}</a>`;
+  });
+}
+// objectifs à suivre, depuis les priorités de l'analyse (propositions de Claude, ou texte libre)
+function analysisGoalRows(S) {
+  const A = S.analysis, p = (D().players || []).find(x => x.id === A.playerId);
+  let rows = (S.claudePriorities || []).map(x => ({ text: x.text, kpi: x.kpi || null, target: x.target }));
+  if (!rows.length) {
+    const txt = [(S.drafts || {})[-1] || ''].concat(A.comments.filter(c => c.author === 'coach' && c.t === null).map(c => c.text)).join('\n');
+    const m = /Priorités de travail\s*:?\s*\n([\s\S]+)/i.exec(txt);
+    rows = (m ? m[1].split('\n').map(l => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean).slice(0, 4) : []).map(t => ({ text: t, kpi: Stats.suggestKpi(t), target: null }));
+  }
+  while (rows.length < 3) rows.push({ text: '', kpi: null, target: null });
+  return rows.map(r => Object.assign(r, { on: !!r.text, target: r.target !== null && r.target !== undefined ? r.target : p ? Stats.goalTarget(D(), p, r.kpi) : null }));
+}
+function analysisGoalsHtml(S) {
+  const A = S.analysis, p = (D().players || []).find(x => x.id === A.playerId);
+  if (!S.goalRows) S.goalRows = analysisGoalRows(S);
+  const done = p ? (p.goals || []).filter(g => g.analysisId === A.id) : [];
+  const fmtT = v => (v === null || v === undefined || v === '' ? '' : String(v).replace('.', ','));
+  return `<div class="an-goals"><div class="an-goals-head">${icon('target', 15)} <b>Objectifs de travail pour ${esc(gameNameOf(S.playerName))}</b><span class="spacer"></span><button class="icon-btn" data-action="an-goals" data-tip="Fermer">${icon('close', 15)}</button></div>
+    <div class="faint small">Cochés : ajoutés à son tableau de bord et suivis automatiquement sur ses prochaines parties (avant / après, partie par partie).${(S.claudePriorities || []).length ? ' Proposés par Claude d\'après son analyse.' : ''}</div>
+    ${S.goalRows.map((r, i) => `<div class="an-goal-row"><input type="checkbox" data-gr="${i}" data-gf="on" ${r.on ? 'checked' : ''}><input data-gr="${i}" data-gf="text" value="${esc(r.text || '')}" placeholder="Priorité ${i + 1}" maxlength="300">
+      <select data-gr="${i}" data-gf="kpi"><option value="">Sans indicateur</option>${Stats.GOAL_KPIS.map(k => `<option ${r.kpi === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select>
+      <input data-gr="${i}" data-gf="target" value="${esc(fmtT(r.target))}" placeholder="Cible" class="an-goal-t"></div>`).join('')}
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">${done.length ? `<span class="muted small" style="margin-right:auto">Déjà suivis : ${done.map(g => esc(g.text)).join(' · ')}</span>` : ''}<button class="btn primary" data-action="an-goals-save">${icon('check', 14)} Ajouter au suivi</button></div></div>`;
+}
+
+// ---- dessins sur la vidéo : flèches, cercles, traits sur l'image en pause, joints à un message
+const DRAW_COLORS = ['#ff5c5c', '#f5d547', '#c3ec7f', '#69c3d8'];
+const Draw = { mode: null, d: null, cur: null, tool: 'fleche', color: DRAW_COLORS[0] };
+function videoBox(v) { // image dans l'élément vidéo (sans les bandes noires), relative au conteneur
+  const W = v.clientWidth, H = v.clientHeight, vw = v.videoWidth || 16, vh = v.videoHeight || 9;
+  const k = Math.min(W / vw, H / vh), w = vw * k, h = vh * k;
+  return { left: v.offsetLeft + (W - w) / 2, top: v.offsetTop + (H - h) / 2, width: w, height: h };
+}
+function shapeSvg(sh, w, h) {
+  const sw = Math.max(2.5, w / 150), X = x => (x * w).toFixed(1), Y = y => (y * h).toFixed(1);
+  if (sh.k === 'trait') return `<polyline points="${sh.pts.map(q => X(q[0]) + ',' + Y(q[1])).join(' ')}" fill="none" stroke="${sh.c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const x1 = sh.p[0] * w, y1 = sh.p[1] * h, x2 = sh.p[2] * w, y2 = sh.p[3] * h;
+  if (sh.k === 'cercle') return `<ellipse cx="${(x1 + x2) / 2}" cy="${(y1 + y2) / 2}" rx="${Math.abs(x2 - x1) / 2}" ry="${Math.abs(y2 - y1) / 2}" fill="none" stroke="${sh.c}" stroke-width="${sw}"/>`;
+  const a = Math.atan2(y2 - y1, x2 - x1), L = Math.max(10, sw * 4);
+  const h1 = [x2 - L * Math.cos(a - 0.45), y2 - L * Math.sin(a - 0.45)], h2 = [x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45)];
+  return `<g stroke="${sh.c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" fill="none"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><polyline points="${h1.join(',')} ${x2},${y2} ${h2.join(',')}"/></g>`;
+}
+function drawPaint() {
+  const box = $('.mo-video'), v = box && box.querySelector('video'), ov = box && box.querySelector('.an-ov');
+  if (!v || !ov || !Draw.d) return;
+  const r = videoBox(v);
+  Object.assign(ov.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  const svg = ov.querySelector('svg');
+  svg.setAttribute('viewBox', `0 0 ${r.width} ${r.height}`);
+  svg.innerHTML = Draw.d.shapes.concat(Draw.cur ? [Draw.cur] : []).map(x => shapeSvg(x, r.width, r.height)).join('');
+}
+function drawBarHtml() {
+  return `<div class="seg">${[['fleche', 'arrow-up-right', 'Flèche'], ['cercle', 'circle', 'Cercle'], ['trait', 'pen', 'Trait libre']].map(([k, ic, l]) => `<button class="${Draw.tool === k ? 'on' : ''}" data-action="draw-tool" data-v="${k}" data-tip="${l}">${icon(ic, 14)}</button>`).join('')}</div>
+    <div class="an-colors">${DRAW_COLORS.map(c => `<button class="${Draw.color === c ? 'on' : ''}" style="background:${c}" data-action="draw-color" data-v="${c}"></button>`).join('')}</div>
+    <button class="icon-btn" data-action="draw-undo" data-tip="Retirer la dernière forme">${icon('undo', 15)}</button><span class="spacer"></span>
+    <button class="btn ghost" data-action="draw-close">Annuler</button><button class="btn primary" data-action="draw-attach">${icon('check', 14)} Joindre au message</button>`;
+}
+function drawClose() {
+  document.querySelectorAll('.mo-video .an-ov, .an-drawbar').forEach(x => x.remove());
+  Object.assign(Draw, { mode: null, d: null, cur: null });
+}
+// mode « edit » : dessiner ; « view » : voir un dessin reçu (se ferme quand la vidéo repart)
+function drawOpen(d, mode) {
+  const box = $('.mo-video'), v = box && box.querySelector('video');
+  if (!v) return false;
+  drawClose();
+  v.pause();
+  Object.assign(Draw, { mode, d, cur: null });
+  const ov = document.createElement('div');
+  ov.className = 'an-ov ' + mode;
+  ov.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+  box.appendChild(ov);
+  const bar = document.createElement('div');
+  bar.className = 'an-drawbar';
+  bar.innerHTML = mode === 'edit' ? drawBarHtml() : `<span class="small">${icon('pen', 13)} Dessin à <b>${mmss(d.g * 1000)}</b></span><span class="spacer"></span><button class="btn ghost" data-action="draw-close">${icon('close', 13)} Fermer</button>`;
+  box.after(bar);
+  if (mode === 'edit') {
+    ov.addEventListener('pointerdown', e => {
+      const r = ov.getBoundingClientRect();
+      const P = ev => [Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height))];
+      const p0 = P(e);
+      try { ov.setPointerCapture(e.pointerId); } catch (err) { /* pointeur simulé */ }
+      Draw.cur = Draw.tool === 'trait' ? { k: 'trait', c: Draw.color, pts: [p0] } : { k: Draw.tool, c: Draw.color, p: [p0[0], p0[1], p0[0], p0[1]] };
+      const move = ev => {
+        if (!Draw.cur) return;
+        const q = P(ev);
+        if (Draw.cur.k === 'trait') { const l = Draw.cur.pts[Draw.cur.pts.length - 1]; if (Math.hypot(q[0] - l[0], q[1] - l[1]) > 0.01) Draw.cur.pts.push(q); } else { Draw.cur.p[2] = q[0]; Draw.cur.p[3] = q[1]; }
+        drawPaint();
+      };
+      const up = () => {
+        ov.removeEventListener('pointermove', move); ov.removeEventListener('pointerup', up);
+        const c = Draw.cur; Draw.cur = null;
+        if (!c || !Draw.d) return;
+        if (c.k === 'trait' && c.pts.length > 60) { const k = Math.ceil(c.pts.length / 60); c.pts = c.pts.filter((q, i) => i % k === 0 || i === c.pts.length - 1).slice(-60); }
+        const big = c.k === 'trait' ? c.pts.length >= 2 : Math.hypot(c.p[2] - c.p[0], c.p[3] - c.p[1]) > 0.02;
+        if (big && Draw.d.shapes.length < 20) Draw.d.shapes.push(c);
+        drawPaint();
+      };
+      ov.addEventListener('pointermove', move); ov.addEventListener('pointerup', up);
+    });
+  } else v.addEventListener('play', drawClose, { once: true });
+  drawPaint();
+  return true;
+}
+window.addEventListener('resize', () => { if (Draw.d) drawPaint(); });
 function momentsRows(S) {
   const m = S.data, A = S.mode === 'analysis' ? S.analysis : null;
   const badge = n => (n ? `<i class="mo-cnt">${icon('chat', 10)}${n}</i>` : '');
@@ -857,16 +1072,17 @@ function momentsHtml() {
   const m = S.data, A = S.mode === 'analysis' ? S.analysis : null;
   const me = m.participants.find(p => p.id === m.me), opp = m.participants.find(p => p.id === m.opp);
   const mo = S.sel >= 0 ? m.moments[S.sel] || null : null;
-  const clip = clipFor(m, mo);
-  const view = clip && S.view !== 'carte' ? 'video' : 'carte';
+  const focusClip = S.focus !== undefined && S.focus !== null ? clipFor(m, { t: S.focus * 1000 }) : null;
+  const clip = focusClip || clipFor(m, mo);
+  const view = clip && (focusClip || S.view !== 'carte') ? 'video' : 'carte';
   const fmtN = n => Number(n).toLocaleString('fr-FR');
   const lane = (k, l) => { const a = m.lane[k]; if (!a) return ''; const d = a.opp ? a.me.gold - a.opp.gold : null; return `<div><span>À ${l} min</span><b>${a.me.cs} CS · ${fmtN(a.me.gold)} or</b>${d === null ? '' : `<em class="${d >= 0 ? 'ok' : 'red'}">${d >= 0 ? '+' : ''}${fmtN(d)} or</em>`}</div>`; };
   const game = `${champ(me.champion)}${opp ? ' contre ' + champ(opp.champion) : ''} · ${m.win ? 'Victoire' : 'Défaite'} · ${m.kda.join('/')} · ${mmss(m.duration * 1000)}`;
   const sub = A
     ? `<span class="muted small">${S.me === 'coach' ? esc(gameNameOf(S.playerName)) + ' · ' : ''}${game} · envoyée le ${dateFr(A.createdAt)}</span><span class="chip ${A.status === 'ouverte' ? 'accent' : ''}">${A.status === 'ouverte' ? 'En cours' : 'Terminée'}</span>`
     : `<span class="muted small">${game}</span>`;
-  const seg = clip ? `<div class="seg mo-seg"><button class="${view === 'video' ? 'on' : ''}" data-action="mo-view" data-v="video">${icon('play', 13)} Vidéo</button><button class="${view === 'carte' ? 'on' : ''}" data-action="mo-view" data-v="carte">Carte</button></div>` : '';
-  const visual = !mo ? '' : view === 'video' ? momentsVideo(m, mo, clip) : momentsMap(m, mo);
+  const seg = clip && mo && !focusClip ? `<div class="seg mo-seg"><button class="${view === 'video' ? 'on' : ''}" data-action="mo-view" data-v="video">${icon('play', 13)} Vidéo</button><button class="${view === 'carte' ? 'on' : ''}" data-action="mo-view" data-v="carte">Carte</button></div>` : '';
+  const visual = focusClip ? momentsVideo(m, mo || { t: S.focus * 1000 }, focusClip, S.focus) : !mo ? '' : view === 'video' ? momentsVideo(m, mo, clip) : momentsMap(m, mo);
   const gone = A && A.clipsState !== 'en_ligne' ? `<div class="faint small" style="margin:6px 0">${icon('video', 13)} Vidéos effacées du serveur (analyse terminée ou de plus de 30 jours).</div>` : '';
   const foot = A ? '' : S.canFilm
     ? `<div class="faint tiny" style="margin-top:8px">Filme les moments, choisis ceux dont tu veux parler et envoie la partie au coach : vous en discutez moment par moment dans « Analyses ».</div>`
@@ -874,7 +1090,7 @@ function momentsHtml() {
   const sum = `<div class="mo-sum">${lane('at10', 10)}${lane('at15', 15)}<div><span>Vision</span><b>${m.vision.placed} wards · ${m.vision.control} pink${m.vision.control > 1 ? 's' : ''}</b><em class="muted">${m.vision.killed} détruite${m.vision.killed > 1 ? 's' : ''}</em></div></div>`;
   return momentsHead(S, sub) + `
     <div class="mo-body">
-      <div>${seg}${visual}${gone}${A ? `<div id="an-thread-box">${threadHtml(S)}</div>` : ''}${!A || !mo ? sum : ''}${foot}</div>
+      <div>${A && S.goalsOpen ? `<div id="an-goals-box">${analysisGoalsHtml(S)}</div>` : ''}${seg}${visual}${gone}${A ? `<div id="an-thread-box">${threadHtml(S)}</div>` : ''}${!A || !mo ? sum : ''}${foot}</div>
       <div class="mo-list">${m.moments.length || A ? momentsRows(S) : '<div class="empty">Aucun moment notable.</div>'}</div>
     </div>`;
 }
@@ -947,6 +1163,7 @@ async function openAnalysis(id) {
 // propositions de Claude (dossier « Analyses pour Claude ») : brouillons des réponses, à relire avant d'envoyer
 function applyClaude(S, c) {
   S.fromClaude = {};
+  S.claudePriorities = c && Array.isArray(c.priorities) ? c.priorities : [];
   if (!c || S.analysis.status !== 'ouverte') return;
   const used = c.used || {};
   if (c.general && !used.g && !S.drafts[-1]) { S.drafts[-1] = c.general; S.fromClaude[-1] = true; }
@@ -984,8 +1201,13 @@ function showMoments() {
   if ($('.mo-list')) $('.mo-list').scrollTop = sc;
   const msgs = $('.an-msgs');
   if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  Object.assign(Draw, { mode: null, d: null, cur: null }); // la fenêtre est redessinée : plus de dessin en cours
   const v = $('.mo-video video');
-  if (v) v.addEventListener('loadedmetadata', () => { try { v.currentTime = Number(v.dataset.from) || 0; } catch (e) { /* vidéo non positionnable */ } }, { once: true });
+  if (v) v.addEventListener('loadedmetadata', () => {
+    try { v.currentTime = Number(v.dataset.from) || 0; } catch (e) { /* vidéo non positionnable */ }
+    const S = state.moments, d = S && S.pendingDrawing;
+    if (v.dataset.pause && d) { v.pause(); S.pendingDrawing = null; v.addEventListener('seeked', () => drawOpen(d, 'view'), { once: true }); }
+  }, { once: true });
 }
 const momentsOpen = () => !!(state.moments && $('#modal-box .mo-head'));
 // avancement de l'enregistrement des vidéos (envoyé par l'app pendant qu'elle pilote le replay)
@@ -996,10 +1218,10 @@ window.api.onVideoStatus(async v => {
     if (here) {
       S.vstatus = null;
       S.vcancel = false;
-      if (/^ACCES:/.test(v.error)) S.perm = 'acces'; else S.verror = v.error;
+      if (/^ACCES:/.test(v.error)) S.perm = 'acces'; else S.verror = v.error + (v.reported ? ' (Le journal a été envoyé au coach.)' : '');
       showMoments();
     }
-    if (!/^ACCES:/.test(v.error)) toast('Vidéos : ' + v.error, 'err', 9000);
+    if (!/^ACCES:/.test(v.error)) toast('Vidéos : ' + v.error + (v.reported ? ' Le journal du tournage a été envoyé au coach.' : ''), 'err', 9000);
     return;
   }
   if (v.cancelled) {
@@ -1102,10 +1324,18 @@ function pageAnalyses() {
       ? `${C.waiting} partie${C.waiting > 1 ? 's' : ''} prête${C.waiting > 1 ? 's' : ''} pour Claude. Dans une conversation Claude reliée à cet ordinateur, demande « analyse les nouvelles parties » : ses propositions arrivent ici en brouillon, tu les relis avant de les envoyer.`
       : 'Chaque partie envoyée est préparée pour Claude dans un dossier de ton ordinateur (vidéos, données, ta méthode dans methode-coach.md).'}
       ${C.error ? `<div class="red small" style="margin-top:4px">${esc(C.error)}</div>` : ''}</div><button class="btn" data-action="claude-folder">${icon('folder', 15)} Ouvrir le dossier</button></div>` : '';
+  // place des vidéos sur le serveur (900 Mo) et tournages en échec chez les joueurs
+  const st = A.storage;
+  const pct = st ? st.used / st.limit : 0;
+  const gauge = st ? `<div class="st-gauge ${pct >= 0.95 ? 'red' : pct >= 0.8 ? 'amber' : ''}">${icon('hard-drive', 15)}<span>Vidéos sur le serveur : <b>${fmtMo(st.used)}</b> sur ${fmtMo(st.limit)}</span><i><b style="width:${Math.min(100, Math.round(pct * 100))}%"></b></i><em>${Math.round(pct * 100)} %</em>
+    ${pct >= 0.8 ? `<span class="small">${pct >= 0.95 ? 'Plein : les prochains envois seront refusés.' : 'Presque plein.'} Termine des analyses (le joueur les exporte) ou supprimes-en.</span>` : ''}</div>` : '';
+  const fr = (A.filmReports || []).map(r => `<div class="fr-row">${icon('alert', 15, 'warn')}<div><b>${esc(gameNameOf(r.playerName))}</b> · ${esc(r.label)} <span class="faint small">${dateTimeFr(r.at)}${r.version ? ' · app ' + esc(r.version) : ''}</span><div class="muted small">${esc(r.error)}</div></div>
+    <button class="btn ghost" data-action="fr-open" data-id="${esc(String(r.id))}">${icon('file-text', 14)} Lire le journal</button><button class="icon-btn" data-action="fr-done" data-id="${esc(String(r.id))}" data-tip="Effacer ce journal">${icon('check', 15)}</button></div>`).join('');
+  const reports = fr ? `<h2>${icon('alert', 16)} Tournages en échec <span class="muted small" style="font-weight:400">le journal est envoyé automatiquement par l'app du joueur</span></h2><div class="fr-list">${fr}</div>` : '';
   return `<h1>Analyses</h1><div class="sub">${intro}</div>
-    ${A.error ? `<div class="note" style="margin-bottom:12px">${icon('alert', 14)} ${esc(A.error)}</div>` : ''}${claudeBox}
+    ${A.error ? `<div class="note" style="margin-bottom:12px">${icon('alert', 14)} ${esc(A.error)}</div>` : ''}${gauge}${claudeBox}
     ${rows ? `<table class="table"><tr>${coach ? '<th class="l">Joueur</th>' : ''}<th class="l">Partie</th><th class="l">Envoyée le</th><th>Vidéos</th><th>Messages</th><th>Statut</th>${coach ? '<th></th>' : ''}</tr>${rows}</table>`
-      : `<div class="empty">${A.loaded ? (coach ? 'Aucune partie envoyée pour l\'instant.' : 'Tu n\'as pas encore envoyé de partie.') : '<span class="spinner"></span> Chargement…'}</div>`}`;
+      : `<div class="empty">${A.loaded ? (coach ? 'Aucune partie envoyée pour l\'instant.' : 'Tu n\'as pas encore envoyé de partie.') : '<span class="spinner"></span> Chargement…'}</div>`}${reports}`;
 }
 
 async function setGameField(field, value) {
@@ -1662,6 +1892,7 @@ function openModal(html) { $('#modal-box').innerHTML = html; $('#modal').classLi
 function closeModal() {
   const wasOpen = !$('#modal').classList.contains('hidden');
   $('#modal').classList.add('hidden'); $('#modal-box').innerHTML = ''; $('#modal-box').style.width = ''; state.proposing = null;
+  Object.assign(Draw, { mode: null, d: null, cur: null });
   if (wasOpen && state.pending && !isTyping()) { state.pending = false; setTimeout(render, 0); } // données arrivées pendant la fenêtre
 }
 
@@ -1733,6 +1964,45 @@ document.addEventListener('click', async e => {
     case 'player-settings': state.playerId = id; state.page = 'parametres'; state.settingsTab = 'joueur'; render(); break;
     case 'period': state.period = el.dataset.v; render(); break;
     case 'metric': state.metric = el.dataset.metric; render(); break;
+    case 'fr-open': {
+      const r = ((D().analyses || {}).filmReports || []).find(x => String(x.id) === id);
+      if (!r) break;
+      openModal(`<div class="mo-head"><h2>${icon('file-text', 17)} Journal du tournage</h2><span class="muted small">${esc(gameNameOf(r.playerName))} · ${esc(r.label)} · ${dateTimeFr(r.at)}</span><span class="spacer"></span><button class="btn" data-action="fr-copy" data-id="${esc(String(r.id))}">${icon('copy', 14)} Copier</button><button class="icon-btn" data-action="close-modal">${icon('close', 18)}</button></div>
+        <div class="note" style="margin:10px 0">${icon('alert', 14)} ${esc(r.error)}</div><pre class="fr-journal">${esc(r.journal)}</pre>`);
+      $('#modal-box').style.width = 'min(980px, 94vw)';
+      break;
+    }
+    case 'fr-copy': { const r = ((D().analyses || {}).filmReports || []).find(x => String(x.id) === id); if (r) copyText('Erreur : ' + r.error + '\n\n' + r.journal, 'Journal copié : colle-le dans ta conversation avec Claude.'); break; }
+    case 'fr-done': { const r = await window.api.filmReportsDone([Number(id)]); if (r && r.ok === false) toast(r.message, 'err'); break; }
+    case 'goal-add': {
+      const p = player();
+      const text = ($('#gl-text') || {}).value || '', kpi = ($('#gl-kpi') || {}).value || null, target = ($('#gl-target') || {}).value || '';
+      state.goalForm = { text, kpi, target };
+      if (!text.trim()) { toast('Écris l\'objectif.', 'err'); break; }
+      const r = await window.api.addGoals(p.id, [{ text, kpi, target }], 'coach');
+      if (r && r.ok) { state.goalForm = null; apply(r, 'Objectif ajouté : il est suivi sur les prochaines parties.'); } else toast(r ? r.message : 'Erreur', 'err');
+      break;
+    }
+    case 'goal-done': case 'goal-reopen': { const r = await window.api.updateGoal(player().id, id, { status: a === 'goal-done' ? 'atteint' : 'actif' }); apply(r); break; }
+    case 'goal-del': { if (!confirm('Supprimer cet objectif ?')) break; apply(await window.api.deleteGoal(player().id, id)); break; }
+    case 'bilan-prepare': {
+      const old = el.innerHTML; el.disabled = true; el.innerHTML = '<span class="spinner"></span> Préparation…';
+      const r = await window.api.prepareBilan(player().id);
+      if (r && r.ok) apply(r, 'Dossier du bilan prêt : demande à Claude « fais les bilans ».'); else { el.disabled = false; el.innerHTML = old; toast(r ? r.message : 'Erreur', 'err', 7000); }
+      break;
+    }
+    case 'bilan-open': { const r = await window.api.openBilanFolder(player().id); if (r && r.ok === false) toast(r.message, 'err'); break; }
+    case 'bilan-dismiss': { if (!confirm('Effacer ce bilan en préparation ?')) break; if (state.bilanEdit) delete state.bilanEdit[player().id]; apply(await window.api.dismissBilan(player().id)); break; }
+    case 'bilan-send': {
+      const p = player(), dr = D().bilanDrafts && D().bilanDrafts[p.id];
+      if (!dr || !dr.draft) break;
+      const text = ($('#bl-text') || {}).value || '';
+      const goals = (dr.draft.objectifs || []).filter((g, i) => { const c = document.querySelector('[data-bl-goal="' + i + '"]'); return c && c.checked; });
+      const r = await window.api.sendBilan(p.id, text, goals);
+      if (r && r.ok) { if (state.bilanEdit) delete state.bilanEdit[p.id]; apply(r, 'Bilan envoyé à ' + gameNameOf(p.riotId) + (goals.length ? ' · ' + goals.length + ' objectif' + (goals.length > 1 ? 's' : '') + ' ajouté' + (goals.length > 1 ? 's' : '') + ' au suivi' : '') + '.'); } else toast(r ? r.message : 'Erreur', 'err');
+      break;
+    }
+    case 'bilan-del': { e.preventDefault(); if (!confirm('Supprimer ce bilan (aussi chez le joueur) ?')) break; apply(await window.api.deleteBilan(player().id, id)); break; }
     case 'gfilter': state.gameFilter = el.dataset.v; render(); break;
     case 'game': openGame(id); break;
     case 'close-drawer': closeDrawer(); break;
@@ -1831,7 +2101,73 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'moments': openMoments(id); break;
-    case 'mo-sel': if (state.moments && state.moments.data) { state.moments.sel = Number(el.dataset.v); showMoments(); } break;
+    case 'mo-sel': if (state.moments && state.moments.data) { state.moments.sel = Number(el.dataset.v); state.moments.focus = null; state.moments.pendingDrawing = null; showMoments(); } break;
+    case 'an-seek': { // « 6:10 » cité dans un message
+      const S = state.moments;
+      if (!S || !S.data) break;
+      const t = Number(el.dataset.t);
+      const c = (S.data.clips || []).find(x => t >= x.start - 1 && t <= x.end + 1);
+      if (!c) { toast('Pas de vidéo filmée à ' + mmss(t * 1000) + ' : regarde la carte du moment le plus proche.', 'err', 5000); break; }
+      const v = $('.mo-video video');
+      if (v && v.dataset.file === c.file) { drawClose(); v.currentTime = Math.max(0, videoAt(c, t) - 1); v.play().catch(() => {}); break; }
+      S.focus = t; S.pendingDrawing = null; showMoments();
+      break;
+    }
+    case 'an-draw': {
+      const S = state.moments, v = $('.mo-video video');
+      if (!S || !v || !S.data) break;
+      const c = (S.data.clips || []).find(x => x.file === v.dataset.file);
+      if (!c || !v.videoWidth) { toast('La vidéo n\'est pas encore chargée.', 'err'); break; }
+      drawOpen({ file: c.file, v: Math.round(v.currentTime * 10) / 10, g: Math.round(gameAt(c, v.currentTime) * 10) / 10, w: v.videoWidth, h: v.videoHeight, shapes: [] }, 'edit');
+      break;
+    }
+    case 'draw-tool': Draw.tool = el.dataset.v; if ($('.an-drawbar') && Draw.mode === 'edit') $('.an-drawbar').innerHTML = drawBarHtml(); break;
+    case 'draw-color': Draw.color = el.dataset.v; if ($('.an-drawbar') && Draw.mode === 'edit') $('.an-drawbar').innerHTML = drawBarHtml(); break;
+    case 'draw-undo': if (Draw.d) { Draw.d.shapes.pop(); drawPaint(); } break;
+    case 'draw-close': drawClose(); break;
+    case 'draw-attach': {
+      const S = state.moments;
+      if (!S || !Draw.d) break;
+      if (!Draw.d.shapes.length) { toast('Dessine d\'abord une flèche, un cercle ou un trait sur l\'image.', 'err'); break; }
+      S.drawing = JSON.parse(JSON.stringify(Draw.d));
+      drawClose();
+      updateAnalysisParts();
+      if ($('#an-text')) $('#an-text').focus();
+      break;
+    }
+    case 'an-draw-drop': if (state.moments) { state.moments.drawing = null; updateAnalysisParts(); } break;
+    case 'an-drawing': { // voir le dessin d'un message
+      const S = state.moments;
+      const c = S && S.analysis && S.analysis.comments.find(x => String(x.id) === el.dataset.cid);
+      const d = c && c.drawing;
+      if (!d) break;
+      if (!(S.data.clips || []).some(x => x.file === d.file)) { toast('La vidéo de ce dessin n\'est plus disponible.', 'err'); break; }
+      const v = $('.mo-video video');
+      if (v && v.dataset.file === d.file && v.readyState >= 1) {
+        drawClose();
+        v.pause();
+        if (Math.abs(v.currentTime - d.v) < 0.05) drawOpen(d, 'view');
+        else { v.addEventListener('seeked', () => drawOpen(d, 'view'), { once: true }); v.currentTime = d.v; }
+        break;
+      }
+      S.focus = d.g; S.pendingDrawing = d; showMoments();
+      break;
+    }
+    case 'an-goals': { const S = state.moments; if (!S) break; S.goalsOpen = !S.goalsOpen; if (S.goalsOpen) S.goalRows = null; showMoments(); break; }
+    case 'an-goals-save': {
+      const S = state.moments;
+      if (!S || !S.goalRows) break;
+      const goals = S.goalRows.filter(r => r.on && String(r.text || '').trim()).map(r => ({ text: r.text, kpi: r.kpi || null, target: r.target }));
+      if (!goals.length) { toast('Coche au moins une priorité à suivre.', 'err'); break; }
+      const r = await window.api.addGoals(S.analysis.playerId, goals, 'analyse', S.analysis.id);
+      if (!r || !r.ok) { toast(r ? r.message : 'Erreur', 'err', 6000); break; }
+      if (r.data) state.data = r.data;
+      state.pending = true; // le tableau de bord sera redessiné à la fermeture de la fenêtre
+      S.goalsOpen = false;
+      if ($('#an-goals-box')) $('#an-goals-box').remove();
+      toast(goals.length + ' objectif' + (goals.length > 1 ? 's' : '') + ' ajouté' + (goals.length > 1 ? 's' : '') + ' au tableau de bord de ' + gameNameOf(S.playerName) + ' : suivi automatique sur ses prochaines parties.', 'ok', 6000);
+      break;
+    }
     case 'analysis-open': openAnalysis(id); break;
     case 'mo-send': if (state.moments && state.moments.data) { const S = state.moments; S.mode = 'send'; S.sendLabel = $('.mo-head .muted') ? $('.mo-head .muted').textContent : ''; showMoments(); } break;
     case 'mo-back': if (state.moments) { state.moments.mode = 'moments'; showMoments(); } break;
@@ -1862,13 +2198,14 @@ document.addEventListener('click', async e => {
     case 'an-send': {
       const S = state.moments;
       const text = $('#an-text') ? $('#an-text').value.trim() : '';
-      if (!S || !S.analysis || !text) break;
+      if (!S || !S.analysis || (!text && !S.drawing)) break;
       el.disabled = true;
       const mo = S.sel >= 0 ? S.data.moments[S.sel] : null;
-      const r = await window.api.commentAnalysis(S.analysis.id, mo ? mo.t : null, text);
+      const r = await window.api.commentAnalysis(S.analysis.id, mo ? mo.t : null, text, S.drawing || null);
       el.disabled = false;
       if (!r || !r.ok) { toast(r ? r.message : 'Erreur inconnue.', 'err', 7000); break; }
       S.drafts[S.sel] = '';
+      S.drawing = null;
       if (S.fromClaude) S.fromClaude[S.sel] = false;
       setAnalysis(r);
       updateAnalysisParts();
@@ -1912,6 +2249,7 @@ document.addEventListener('click', async e => {
       if (!S || !S.analysis) break;
       const mo = S.sel >= 0 ? S.data.moments[S.sel] : null;
       S.drafts[S.sel] = '';
+      S.drawing = null;
       if (S.fromClaude) S.fromClaude[S.sel] = false;
       window.api.claudeDismiss(S.analysis.id, mo ? mo.t : null);
       updateAnalysisParts();
@@ -1947,7 +2285,7 @@ document.addEventListener('click', async e => {
       toast('Analyse exportée (' + r.files + ' vidéo' + (r.files > 1 ? 's' : '') + ' + débrief) dans « ' + r.dir + ' ». Elle est supprimée de l\'app.', 'ok', 12000);
       break;
     }
-    case 'mo-view': if (state.moments) { state.moments.view = el.dataset.v; showMoments(); } break;
+    case 'mo-view': if (state.moments) { state.moments.view = el.dataset.v; state.moments.focus = null; showMoments(); } break;
     case 'mo-film': {
       const S = state.moments, p = player();
       if (!S || !p) break;
@@ -2015,6 +2353,12 @@ document.addEventListener('change', async e => {
     if ($('#sd-total')) $('#sd-total').textContent = sendTotal();
     return;
   }
+  if (el.dataset.change === 'goal-kpi') { // cible proposée : l'objectif du joueur pour cet indicateur
+    const p = player(), t = $('#gl-target'), k = el.value || null;
+    state.goalForm = Object.assign(state.goalForm || {}, { kpi: k });
+    if (t && !t.value.trim() && k) { const v = Stats.goalTarget(D(), p, k); if (v !== null) { t.value = String(v).replace('.', ','); state.goalForm.target = t.value; } }
+    return;
+  }
   if (el.dataset.change === 'player') { state.playerId = el.value; state.metric = null; state.sessionOpen = null; closeDrawer(true); render(); return; }
   if (el.dataset.change === 'card') {
     const p = player();
@@ -2035,6 +2379,22 @@ document.addEventListener('input', e => {
   const el = e.target;
   if (el.dataset.input === 'q') { state.q = el.value; render(); return; }
   if (el.id === 'an-text' && state.moments && state.moments.drafts) { state.moments.drafts[state.moments.sel] = el.value; return; }
+  if (el.dataset.gr !== undefined && state.moments && state.moments.goalRows) {
+    const r = state.moments.goalRows[Number(el.dataset.gr)];
+    if (!r) return;
+    const f = el.dataset.gf;
+    if (f === 'on') r.on = el.checked;
+    else if (f === 'kpi') {
+      r.kpi = el.value || null;
+      const pl = (D().players || []).find(x => x.id === state.moments.analysis.playerId);
+      const t = document.querySelector('[data-gr="' + el.dataset.gr + '"][data-gf="target"]');
+      const v = pl ? Stats.goalTarget(D(), pl, r.kpi) : null;
+      r.target = v; if (t) t.value = v === null ? '' : String(v).replace('.', ',');
+    } else { r[f] = el.value; if (f === 'text' && el.value.trim()) { r.on = true; const cb = document.querySelector('[data-gr="' + el.dataset.gr + '"][data-gf="on"]'); if (cb) cb.checked = true; } }
+    return;
+  }
+  if (el.id === 'bl-text') { (state.bilanEdit || (state.bilanEdit = {}))[el.dataset.pid] = el.value; return; }
+  if (el.id === 'gl-text' || el.id === 'gl-target') { state.goalForm = Object.assign(state.goalForm || {}, { [el.id === 'gl-text' ? 'text' : 'target']: el.value }); return; }
   if (el.dataset.input === 'send-c' && state.moments && state.moments.sendDraft) {
     const P = state.moments.sendDraft.picks;
     P[el.dataset.file] = Object.assign(P[el.dataset.file] || {}, { comment: el.value });

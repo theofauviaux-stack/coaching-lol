@@ -4,6 +4,58 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const mmss = ms => { const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const dateFr = t => (t ? new Date(t).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', dateStyle: 'short', timeStyle: 'short' }) : '');
 const BEFORE_VIEW = 30; // la vidéo d'un moment démarre 30 s avant
+const { videoAt } = require('./replay');
+const attr = o => esc(JSON.stringify(o));
+// Dans la page : « 6:10 » d'un message → la vidéo saute à ce moment ; « Voir le dessin » → image en pause et dessin par-dessus.
+const SCRIPT = `(function () {
+  function videoAt(c, g) {
+    var s = (c.sync || []).filter(function (p) { return p && p.length === 2; });
+    if (s.length >= 2) {
+      var last = s[s.length - 1];
+      if (g <= s[0][1]) return Math.max(0, s[0][0] - (s[0][1] - g));
+      if (g >= last[1]) return Math.max(0, last[0] + (g - last[1]));
+      var i = 1; while (s[i][1] < g) i++;
+      return Math.max(0, s[i - 1][0] + (g - s[i - 1][1]) * (s[i][0] - s[i - 1][0]) / (s[i][1] - s[i - 1][1]));
+    }
+    return Math.max(0, (c.lead || 0) + (g - c.start));
+  }
+  function shape(sh, w, h) {
+    var sw = Math.max(3, w / 150), X = function (x) { return (x * w).toFixed(1); }, Y = function (y) { return (y * h).toFixed(1); };
+    if (sh.k === 'trait') return '<polyline points="' + sh.pts.map(function (q) { return X(q[0]) + ',' + Y(q[1]); }).join(' ') + '" fill="none" stroke="' + sh.c + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round"/>';
+    var x1 = sh.p[0] * w, y1 = sh.p[1] * h, x2 = sh.p[2] * w, y2 = sh.p[3] * h;
+    if (sh.k === 'cercle') return '<ellipse cx="' + (x1 + x2) / 2 + '" cy="' + (y1 + y2) / 2 + '" rx="' + Math.abs(x2 - x1) / 2 + '" ry="' + Math.abs(y2 - y1) / 2 + '" fill="none" stroke="' + sh.c + '" stroke-width="' + sw + '"/>';
+    var a = Math.atan2(y2 - y1, x2 - x1), L = Math.max(12, sw * 4);
+    return '<g stroke="' + sh.c + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round" fill="none"><line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/><polyline points="' + (x2 - L * Math.cos(a - .45)) + ',' + (y2 - L * Math.sin(a - .45)) + ' ' + x2 + ',' + y2 + ' ' + (x2 - L * Math.cos(a + .45)) + ',' + (y2 - L * Math.sin(a + .45)) + '"/></g>';
+  }
+  function clear() { Array.prototype.forEach.call(document.querySelectorAll('.ov'), function (o) { o.remove(); }); }
+  function videos() { return Array.prototype.slice.call(document.querySelectorAll('video[data-c]')); }
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-t]'), d = e.target.closest('[data-d]');
+    if (t) {
+      e.preventDefault();
+      var g = Number(t.dataset.t);
+      var v = videos().filter(function (x) { var c = JSON.parse(x.dataset.c); return g >= c.start - 1 && g <= c.end + 1; })[0];
+      if (!v) { alert('Pas de vidéo pour ' + t.textContent + '.'); return; }
+      clear(); v.currentTime = Math.max(0, videoAt(JSON.parse(v.dataset.c), g) - 1); v.scrollIntoView({ behavior: 'smooth', block: 'center' }); v.play();
+    }
+    if (d) {
+      var dr = JSON.parse(d.dataset.d);
+      var v2 = videos().filter(function (x) { return JSON.parse(x.dataset.c).file === dr.file; })[0];
+      if (!v2) { alert('La vidéo de ce dessin n\\'est pas dans ce dossier.'); return; }
+      clear(); v2.pause();
+      var show = function () {
+        var w = dr.w || v2.videoWidth || 1600, h = dr.h || v2.videoHeight || 900;
+        var o = document.createElement('div'); o.className = 'ov';
+        o.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + dr.shapes.map(function (s) { return shape(s, w, h); }).join('') + '</svg>';
+        v2.parentNode.appendChild(o);
+        v2.addEventListener('play', clear, { once: true });
+      };
+      v2.addEventListener('seeked', show, { once: true });
+      v2.currentTime = dr.v;
+      v2.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
+})();`;
 
 function buildDebrief({ analysis: a, label, playerName, champName = x => x, files = [] }) {
   const m = a.moments || {};
@@ -22,7 +74,10 @@ function buildDebrief({ analysis: a, label, playerName, champName = x => x, file
   };
   const clipFor = x => (a.clips || []).find(c => files.includes(c.file) && x.t / 1000 >= c.start - 1 && x.t / 1000 <= c.end + 1);
   const who = c => (c.author === 'coach' ? 'Coach' : esc(playerName || 'Joueur'));
-  const msgs = arr => arr.map(c => `<div class="msg ${c.author === 'coach' ? 'coach' : 'joueur'}"><div class="who">${who(c)} <span>${esc(dateFr(c.at))}</span></div><div class="txt">${esc(c.text)}</div></div>`).join('');
+  const maxT = (m.duration || 3600) + 30;
+  const linkTimes = html => html.replace(/(^|[^\d:])(\d{1,2}):([0-5]\d)(?![\d:])/g, (all, pre, mm, ss) => { const t = Number(mm) * 60 + Number(ss); return t > maxT ? all : `${pre}<a href="#" class="tl" data-t="${t}">${mm}:${ss}</a>`; });
+  const drawn = c => (c.drawing && files.includes(c.drawing.file) ? `<button class="dr" data-d="${attr(c.drawing)}">✎ Voir le dessin à ${mmss(c.drawing.g * 1000)}</button>` : '');
+  const msgs = arr => arr.map(c => `<div class="msg ${c.author === 'coach' ? 'coach' : 'joueur'}"><div class="who">${who(c)} <span>${esc(dateFr(c.at))}</span></div>${c.text ? `<div class="txt">${linkTimes(esc(c.text))}</div>` : ''}${drawn(c)}</div>`).join('');
   const comments = a.comments || [];
   const general = (a.note ? [{ author: 'joueur', text: a.note, at: a.createdAt }] : []).concat(comments.filter(c => c.t === null || c.t === undefined));
   const moments = m.moments || [];
@@ -44,12 +99,12 @@ function buildDebrief({ analysis: a, label, playerName, champName = x => x, file
   };
   const section = x => {
     const c = clipFor(x);
-    const from = c ? Math.max(0, Math.round(x.t / 1000 - c.start - BEFORE_VIEW)) : 0;
+    const from = c ? Math.round(videoAt(c, x.t / 1000 - BEFORE_VIEW) * 10) / 10 : 0;
     const said = comments.filter(k => k.t === x.t);
     return `<section>
   <h2><span class="t">${mmss(x.t)}</span> ${title(x)}</h2>
   <p class="det">${detail(x)}</p>
-  ${c ? `<video controls preload="metadata" src="${encodeURI(c.file)}#t=${from}"></video>
+  ${c ? `<div class="vw"><video controls preload="metadata" src="${encodeURI(c.file)}#t=${from}" data-c="${attr({ file: c.file, start: c.start, end: c.end, lead: c.lead || 0, sync: c.sync || null })}"></video></div>
   <p class="vid">Extrait ${mmss(c.start * 1000)} → ${mmss(c.end * 1000)} · la vidéo démarre ${BEFORE_VIEW} s avant le moment (fichier ${esc(c.file)})</p>` : ''}
   ${said.length ? msgs(said) : '<p class="none">Pas de message sur ce moment.</p>'}
 </section>`;
@@ -82,6 +137,8 @@ function buildDebrief({ analysis: a, label, playerName, champName = x => x, file
   .none { color: #7d888f; font-size: 13px; }
   ul.others { color: #9aa6ad; font-size: 13.5px; padding-left: 18px; } ul.others b { color: #c9d1d6; }
   footer { color: #6c767c; font-size: 12px; margin-top: 30px; }
+  .vw { position: relative; } .ov { position: absolute; inset: 0; pointer-events: none; } .ov svg { width: 100%; height: 100%; display: block; }
+  a.tl { color: #c3ec7f; font-weight: 700; } button.dr { margin-top: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(195, 236, 127, .35); background: rgba(195, 236, 127, .09); color: #c3ec7f; font: 600 12px inherit; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -99,6 +156,7 @@ function buildDebrief({ analysis: a, label, playerName, champName = x => x, file
   ${files.length ? '' : '<p class="none">Les vidéos avaient déjà été effacées du serveur : ce débrief contient la discussion seulement.</p>'}
   <footer>Exporté depuis Coaching LoL. Les vidéos (${files.length}) sont dans ce même dossier : garde-les à côté de ce fichier.</footer>
 </main>
+<script>${SCRIPT}</script>
 </body>
 </html>
 `;

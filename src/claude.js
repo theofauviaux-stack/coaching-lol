@@ -3,6 +3,7 @@
 // « analyse-claude.json » ; l'app le reprend comme brouillons de réponses que le coach relit avant d'envoyer.
 const { mmss } = require('./moments');
 const { videoAt } = require('./replay');
+const Stats = require('../renderer/stats');
 
 const RESULT = 'analyse-claude.json';
 const MANIFEST = 'a-analyser.json';
@@ -30,7 +31,7 @@ function manifest(a, m, { playerName, label, champName = c => c }) {
   const clips = Array.isArray(a.clips) ? a.clips : [];
   const clipOf = t => clips.find(c => t / 1000 >= c.start - 1 && t / 1000 <= c.end + 1) || null;
   const comments = Array.isArray(a.comments) ? a.comments : [];
-  const said = t => comments.filter(c => c.t === t).map(c => ({ auteur: c.author === 'coach' ? 'coach' : 'joueur', texte: c.text }));
+  const said = t => comments.filter(c => c.t === t).map(c => ({ auteur: c.author === 'coach' ? 'coach' : 'joueur', texte: c.text + (c.drawing ? (c.text ? ' ' : '') + '[dessin sur la vidéo à ' + mmss(c.drawing.g * 1000) + ']' : '') }));
   const me = (m.participants || []).find(p => p.id === m.me) || {};
   return {
     version: 1,
@@ -64,9 +65,11 @@ function manifest(a, m, { playerName, label, champName = c => c }) {
       format: {
         version: 1, analysisId: a.id,
         general: 'Résumé de la partie pour le joueur (moins de 1200 caractères).',
-        priorites: ['Priorité 1', 'Priorité 2', 'Priorité 3'],
+        priorites: [{ texte: 'Priorité 1, concrète et vérifiable à la prochaine partie', indicateur: 'un de « indicateurs » (ou null si rien ne la mesure)', cible: 'nombre (ou null)' }],
         moments: [{ t: 'le « t » exact du moment, en millisecondes', texte: 'Ce qui s\'est passé, l\'erreur probable, le meilleur move, ta confiance (moins de 1200 caractères).' }]
-      }
+      },
+      // chaque priorité peut devenir un objectif suivi automatiquement sur les parties suivantes
+      indicateurs: Stats.GOAL_KPIS
     }
   };
 }
@@ -89,13 +92,53 @@ function parseResult(json, man) {
     if (!Number.isFinite(t) || !Number.isFinite(near) || Math.abs(near - t) > 2000) { errors.push('Moment inconnu : ' + (x && x.t)); continue; }
     moments[near] = text;
   }
-  const prio = (Array.isArray(json.priorites) ? json.priorites : []).map(p => String(p || '').trim()).filter(Boolean).slice(0, 5);
+  const priorities = readGoals(json.priorites, errors);
+  const prio = priorities.map(p => p.text);
   let general = String(json.general || '').trim();
   if (prio.length) general += (general ? '\n\n' : '') + 'Priorités de travail :\n' + prio.map((p, i) => (i + 1) + '. ' + p).join('\n');
   general = cut(general);
   if (!general && !Object.keys(moments).length) errors.push('Aucun texte : ni « general » ni « moments ».');
   if (errors.length && (json.analysisId !== man.analysisId || (!general && !Object.keys(moments).length))) return { ok: false, errors };
-  return { ok: true, errors, draft: { general, moments } };
+  return { ok: true, errors, draft: { general, moments, priorities } };
+}
+
+// Priorités / objectifs proposés : « texte » ou { texte, indicateur, cible } → [{ text, kpi, target }]
+function readGoals(list, errors = []) {
+  return (Array.isArray(list) ? list : []).map(p => {
+    const text = cut(typeof p === 'string' ? p : p && (p.texte || p.text)).slice(0, 300);
+    if (!text) return null;
+    let kpi = p && typeof p === 'object' ? p.indicateur || p.kpi || null : null;
+    if (kpi && !Stats.GOAL_KPIS.includes(kpi)) { errors.push('Indicateur inconnu : ' + kpi); kpi = null; }
+    if (!kpi) kpi = Stats.suggestKpi(text);
+    const n = p && typeof p === 'object' && p.cible !== undefined && p.cible !== null && p.cible !== '' ? Number(String(p.cible).replace(',', '.')) : null;
+    return { text, kpi: kpi || null, target: Number.isFinite(n) ? n : null };
+  }).filter(Boolean).slice(0, 5);
+}
+
+// ---- bilan du mois d'un joueur (dossier « Bilans/<mois> <joueur> [bilan-<id8>] »)
+const BILAN_RESULT = 'bilan-claude.json';
+const BILAN_DIR = 'Bilans';
+const bilanId = (playerId, month) => 'bilan-' + String(playerId).replace(/[^\w]/g, '').slice(0, 8) + '-' + month;
+function bilanFolderName(playerId, month, playerName) {
+  const safe = String(playerName || 'Joueur').replace(/[\\/:*?"<>|#]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+  return month + ' ' + safe + ' [' + bilanId(playerId, month) + ']';
+}
+// Réponse de Claude → brouillon { general, forts, axes, objectifs: [{ text, kpi, target }] }
+function parseBilan(json, man) {
+  const errors = [];
+  if (!json || typeof json !== 'object') return { ok: false, errors: ['Le fichier n\'est pas un objet JSON.'] };
+  if (json.bilanId !== man.bilanId) return { ok: false, errors: ['bilanId différent de celui de a-analyser.json.'] };
+  const list = v => (Array.isArray(v) ? v : []).map(x => cut(x).slice(0, 400)).filter(Boolean).slice(0, 6);
+  const draft = { general: cut(String(json.general || '').slice(0, 3000)), forts: list(json.pointsForts), axes: list(json.axes), objectifs: readGoals(json.objectifs, errors).slice(0, 4) };
+  if (!draft.general && !draft.axes.length) return { ok: false, errors: ['Aucun texte : ni « general » ni « axes ».'] };
+  return { ok: true, errors, draft };
+}
+// Texte du bilan envoyé au joueur (modifiable par le coach avant l'envoi)
+function bilanText(d) {
+  const parts = [d.general];
+  if (d.forts && d.forts.length) parts.push('Points forts :\n' + d.forts.map(x => '• ' + x).join('\n'));
+  if (d.axes && d.axes.length) parts.push('À travailler :\n' + d.axes.map(x => '• ' + x).join('\n'));
+  return parts.filter(Boolean).join('\n\n').slice(0, 4000);
 }
 
 const README = `Dossier « Analyses pour Claude » de Coaching LoL
@@ -116,6 +159,14 @@ suit la méthode du coach (methode-coach.md, modifiable) et écrit « ${RESULT} 
 
 L'app reprend ce fichier toute seule : dans « Analyses », les réponses proposées par Claude
 apparaissent en brouillon sur chaque moment. Le coach les relit, les corrige et les envoie.
+
+Priorités : chacune peut donner un indicateur (liste « indicateurs » de a-analyser.json) et une cible ;
+le coach peut alors en faire un objectif suivi automatiquement sur les parties suivantes du joueur.
+
+Bilans du mois (sous-dossier « ${BILAN_DIR} ») : quand le coach clique « Préparer le bilan » sur le tableau
+de bord d'un joueur, l'app y dépose un dossier (statistiques du mois, erreurs récurrentes, objectifs et
+leur suivi, analyses du mois, parties). Demander à Claude « fais les bilans » : il écrit « ${BILAN_RESULT} »
+(format dans a-analyser.json, « aRendre »). Le coach le relit dans l'app puis l'envoie au joueur.
 
 Quand l'analyse est terminée, l'app retire les vidéos de ce dossier (le reste est gardé).
 Pour redemander une analyse : supprimer « ${RESULT} » du dossier de la partie.
@@ -144,4 +195,4 @@ Ce texte guide Claude quand il analyse une partie. Modifie-le librement : Claude
 - Des conseils génériques (« ward plus ») sans dire où et quand.
 `;
 
-module.exports = { RESULT, MANIFEST, MAX_TEXT, folderName, idFromFolder, manifest, parseResult, momentTitle, README, METHOD };
+module.exports = { RESULT, MANIFEST, MAX_TEXT, folderName, idFromFolder, manifest, parseResult, readGoals, momentTitle, README, METHOD, BILAN_RESULT, BILAN_DIR, bilanId, bilanFolderName, parseBilan, bilanText };

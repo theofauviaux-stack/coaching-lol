@@ -74,6 +74,18 @@ module.exports = async function ({ app, win, fs, path }) {
         an.clips = await js(`state.moments.data.clips.length`);
         out.annulation = an;
       }
+      // tournage en échec (replays désactivés dans le client LoL) : le journal part chez le coach
+      {
+        const ech = {};
+        fs.writeFileSync(path.join(dir, 'replays-off'), '1');
+        await js(`document.querySelector('[data-action="mo-film"]').click(); 0`);
+        await until(`window.__toasts.some(t => /replays sont désactivés/.test(t))`, 30000);
+        fs.unlinkSync(path.join(dir, 'replays-off'));
+        ech.toast = (await toasts()).find(t => /replays sont désactivés/.test(t));
+        await wait(300);
+        ech.encadre = await js(`document.querySelector('.mo-err') ? document.querySelector('.mo-err').textContent.replace(/\\s+/g, ' ').trim() : ''`);
+        out.echec = ech;
+      }
       // choisir 2 vidéos sur 4, les commenter, envoyer
       await js(`document.querySelector('[data-action="mo-send"]').click(); 0`);
       await until(`document.querySelectorAll('.sd-card').length > 0`);
@@ -157,6 +169,24 @@ module.exports = async function ({ app, win, fs, path }) {
       await until(`state.data.analyses && state.data.analyses.list.length === 1`, 240000);
       await until(`window.__toasts.some(t => /Partie à analyser/.test(t))`, 15000);
       out.notification = (await toasts()).find(t => /Partie à analyser/.test(t));
+      // tournage en échec chez le joueur : notification, journal lisible, puis effacé
+      {
+        const jr = {};
+        await until(`state.data.analyses.filmReports && state.data.analyses.filmReports.length === 1`, 30000);
+        await until(`window.__toasts.some(t => /Tournage en échec/.test(t))`, 10000);
+        jr.notif = (await toasts()).find(t => /Tournage en échec/.test(t));
+        await js(`state.page = 'analyses'; render(); 0`);
+        await wait(300);
+        jr.ligne = await js(`document.querySelector('.fr-row').textContent.replace(/\\s+/g, ' ').trim()`);
+        jr.jauge = await js(`document.querySelector('.st-gauge') ? document.querySelector('.st-gauge').textContent.replace(/\\s+/g, ' ').trim() : ''`);
+        await js(`document.querySelector('[data-action="fr-open"]').click(); 0`);
+        await until(`!!document.querySelector('.fr-journal')`);
+        jr.journal = await js(`document.querySelector('.fr-journal').textContent`);
+        await shot('a4c-journal-tournage');
+        await js(`closeModal(); document.querySelector('[data-action="fr-done"]').click(); 0`);
+        await until(`state.data.analyses.filmReports.length === 0`, 15000);
+        out.journalEchec = jr;
+      }
       // dossier pour Claude : préparé tout seul sur l'ordinateur du coach (vidéos, dossier de partie, fiche)
       const cdir = process.env.COACHING_LOL_CLAUDE_DIR;
       let fd = null;
@@ -208,6 +238,47 @@ module.exports = async function ({ app, win, fs, path }) {
       out.videoGardee = await js(`!!document.querySelector('.mo-video video[data-marque="1"]')`);
       out.filApres = await js(`[...document.querySelectorAll('.an-msg')].map(m => m.querySelector('.an-who').firstChild.textContent.trim())`);
       await shot('a7-discussion-coach');
+      // dessin sur la vidéo, joint à un message ; lien « 15:30 » vers l'autre extrait
+      {
+        const ds = {};
+        ds.liens = await js(`[...document.querySelectorAll('.an-msg.coach a.an-time')].map(a => a.textContent)`);
+        await until(`document.querySelector('.mo-video video') && document.querySelector('.mo-video video').videoWidth > 0`, 15000);
+        await js(`document.querySelector('[data-action="an-draw"]').click(); 0`);
+        await until(`!!document.querySelector('.mo-video .an-ov.edit')`, 10000);
+        const trace = (a, b) => js(`(() => { const ov = document.querySelector('.an-ov.edit'); const r = ov.getBoundingClientRect(); const ev = (t, x, y) => ov.dispatchEvent(new PointerEvent(t, { clientX: r.left + r.width * x, clientY: r.top + r.height * y, pointerId: 1, bubbles: true })); ev('pointerdown', ${a[0]}, ${a[1]}); ev('pointermove', ${(a[0] + b[0]) / 2}, ${(a[1] + b[1]) / 2}); ev('pointermove', ${b[0]}, ${b[1]}); ev('pointerup', ${b[0]}, ${b[1]}); return 0; })()`);
+        await trace([0.2, 0.3], [0.6, 0.6]);
+        await js(`document.querySelector('[data-action="draw-tool"][data-v="cercle"]').click(); 0`);
+        await trace([0.55, 0.5], [0.8, 0.85]);
+        ds.formes = await js(`Draw.d.shapes.map(x => x.k)`);
+        await shot('a7b-dessin');
+        await js(`document.querySelector('[data-action="draw-attach"]').click(); 0`);
+        await until(`!!document.querySelector('.an-attach')`);
+        await fill('#an-text', 'Ici tu aurais dû reculer, comme à 15:30.');
+        await js(`document.querySelector('[data-action="an-send"]').click(); 0`);
+        await until(`!!document.querySelector('.an-msg.coach .an-draw-chip')`, 15000);
+        ds.envoye = await js(`(() => { const c = state.moments.analysis.comments[state.moments.analysis.comments.length - 1]; return { texte: c.text, dessin: c.drawing && { file: c.drawing.file, formes: c.drawing.shapes.map(x => x.k), w: c.drawing.w } }; })()`);
+        await js(`document.querySelector('.an-msg.coach .an-draw-chip').click(); 0`);
+        await until(`!!document.querySelector('.an-ov.view svg line')`, 10000);
+        ds.vu = await js(`document.querySelectorAll('.an-ov.view svg ellipse').length`);
+        await shot('a7c-dessin-vu');
+        await js(`[...document.querySelectorAll('.an-msg.coach a.an-time')].find(a => a.textContent === '15:30').click(); 0`);
+        await until(`document.querySelector('.mo-video video') && document.querySelector('.mo-video video').dataset.file === '04_15m25.webm'`, 10000);
+        ds.lien = await js(`document.querySelector('.mo-video .mo-maptime').textContent.replace(/\\s+/g, ' ').trim()`);
+        out.dessin = ds;
+      }
+      // priorités de l'analyse → objectifs suivis sur le tableau de bord du joueur
+      {
+        const ob = {};
+        await js(`document.querySelector('[data-action="an-goals"]').click(); 0`);
+        await until(`!!document.querySelector('.an-goals')`);
+        ob.lignes = await js(`state.moments.goalRows.map(r => [r.on, r.text, r.kpi, r.target])`);
+        await shot('a7d-objectifs');
+        await js(`document.querySelector('[data-action="an-goals-save"]').click(); 0`);
+        await until(`window.__toasts.some(t => /ajoutés? au tableau de bord/.test(t))`, 10000);
+        ob.toast = (await toasts()).find(t => /ajoutés? au tableau de bord/.test(t));
+        ob.objectifs = await js(`state.data.players.find(p => p.id === 'p1').goals.map(g => [g.text, g.kpi, g.source, !!g.analysisId])`);
+        out.objectifs = ob;
+      }
       // fin de l'analyse
       await js(`document.querySelector('[data-action="an-close"]').click(); 0`);
       await until(`state.moments.analysis.status === 'terminee'`);
@@ -276,6 +347,48 @@ module.exports = async function ({ app, win, fs, path }) {
       out.persoStats = await js(`Stats.playerGames(state.data, state.data.players.find(p => p.id === 'p1'), '').some(g => g.custom)`);
       out.persoNotif = await js(`window.__toasts.find(t => /Partie personnalisée ajoutée/.test(t)) || ''`);
       await wait(2500); // la partie part aussi dans le serveur (espace du joueur)
+      // tableau de bord du joueur : objectifs suivis, erreurs récurrentes, bilan du mois avec Claude
+      {
+        const tb = {};
+        await js(`closeModal(); state.page = 'dashboard'; state.playerId = 'p1'; render(); 0`);
+        await until(`!!document.querySelector('.gl-card')`, 10000);
+        tb.objectifs = await js(`[...document.querySelectorAll('.gl-card')].map(c => c.textContent.replace(/\\s+/g, ' ').trim())`);
+        await until(`!!document.querySelector('.tr-box')`, 30000);
+        tb.tendances = await js(`({ points: document.querySelectorAll('.tr-map > .tr-dot').length, phrases: [...document.querySelectorAll('.tr-said li')].map(l => l.textContent) })`);
+        await fill('#gl-text', 'Pas plus de 2 morts avant 15 min');
+        await js(`(() => { const x = document.querySelector('#gl-kpi'); x.value = 'Morts avant 15 min'; x.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+        tb.cibleProposee = await js(`document.querySelector('#gl-target').value`);
+        await js(`document.querySelector('[data-action="goal-add"]').click(); 0`);
+        await until(`state.data.players.find(p => p.id === 'p1').goals.length === 3`, 10000);
+        await js(`document.querySelector('[data-action="bilan-prepare"]').click(); 0`);
+        const bdir = path.join(cdir, 'Bilans');
+        let bf = null;
+        for (const t0 = Date.now(); !bf && Date.now() - t0 < 20000; await wait(200)) { const d = fs.existsSync(bdir) ? fs.readdirSync(bdir) : []; if (d.length) bf = path.join(bdir, d[0]); }
+        if (!bf) throw new Error('dossier du bilan absent : ' + JSON.stringify((await toasts()).slice(-3)));
+        const bm = JSON.parse(fs.readFileSync(path.join(bf, 'a-analyser.json'), 'utf8'));
+        tb.bilanDossier = { nom: path.basename(bf), fichiers: fs.readdirSync(bf).sort(), type: bm.type, parties: bm.parties.length, objectifs: bm.objectifsDeTravail.length, erreurs: !!(bm.erreursRecurrentes && bm.erreursRecurrentes.phrases.length) };
+        await until(`!!document.querySelector('.bl-card [data-action="bilan-open"]')`, 10000);
+        fs.writeFileSync(path.join(bf, 'bilan-claude.json'), JSON.stringify({ bilanId: bm.bilanId, general: 'Bon mois : ta lane progresse.', pointsForts: ['78 CS à 10 min en moyenne'], axes: ['Morts en top lane entre 5 et 10 min'], objectifs: [{ texte: 'Ward la rivière à 2:30', indicateur: 'Vision/min', cible: 1.2 }] }));
+        await until(`!!document.querySelector('.bl-draft')`, 20000);
+        await until(`window.__toasts.some(t => /Bilan de Claude prêt/.test(t))`, 10000);
+        tb.brouillon = await js(`document.querySelector('#bl-text').value`);
+        await js(`document.querySelector('.gl-grid').scrollIntoView(); document.querySelector('#page').scrollTop -= 60; 0`);
+        await wait(300);
+        await shot('a12-tableau-de-bord');
+        await js(`document.querySelector('.bl-draft').scrollIntoView(); 0`);
+        await wait(300);
+        await shot('a12b-bilan-brouillon');
+        await js(`document.querySelector('[data-action="bilan-send"]').click(); 0`);
+        await until(`window.__toasts.some(t => /Bilan envoyé/.test(t))`, 10000);
+        tb.envoi = (await toasts()).find(t => /Bilan envoyé/.test(t));
+        tb.envoyes = await js(`document.querySelectorAll('.bl-sent').length`);
+        tb.objectifsApres = await js(`state.data.players.find(p => p.id === 'p1').goals.length`);
+        await js(`document.querySelector('.bl-sent').scrollIntoView(); document.querySelector('#page').scrollTop -= 300; 0`);
+        await wait(300);
+        await shot('a13-bilan-envoye');
+        await wait(3000); // envoi au serveur (espace du joueur)
+        out.tableau = tb;
+      }
     }
   } catch (e) {
     out.exception = e.stack || String(e);
