@@ -18,8 +18,16 @@ module.exports = async function ({ app, win, fs, path }) {
     out.depart = await view();
     out.texte = await js(`document.querySelector('.welcome').innerText.replace(/\\s+/g, ' ').trim()`);
     // l'œil suit la souris
-    await js(`document.dispatchEvent(new MouseEvent('mousemove', { clientX: 1300, clientY: 120, bubbles: true })); 0`);
+    // l'œil suit la souris en douceur : à mi-chemin juste après, posé sur la cible ensuite
+    const px = () => js(`(() => { const m = /translate\\(([-\\d.]+) ([-\\d.]+)\\)/.exec(document.getElementById('wl-pupil').getAttribute('transform') || ''); return m ? [+m[1], +m[2]] : null; })()`);
+    await js(`document.dispatchEvent(new MouseEvent('mousemove', { clientX: 1300, clientY: 420, bubbles: true })); 0`);
+    await wait(40);
+    out.pupilleDebut = await px();
+    await wait(900);
+    out.pupilleFin = await px();
     out.pupille = await js(`document.getElementById('wl-pupil').getAttribute('transform')`);
+    await wait(2200); // la carte, plus lente, finit de se poser
+    out.boucleArretee = await js(`wl.raf === 0`);
     await shot('m0-accueil');
     // un chiffre tapé au clavier ouvre le pavé avec ce chiffre ; Échap revient à l'accueil (code effacé)
     await key('4'); await wait(300);

@@ -332,13 +332,15 @@ const isTyping = () => {
 // Un clic sur l'œil (ou Entrée, ou un chiffre tapé au clavier) ouvre le pavé du code ; Échap ou un clic à côté y revient.
 const WL_WARDS = [[27, 33, 0], [70, 68, 1.3], [38, 61, 2.6], [61, 38, 3.9], [22, 62, 5.2], [78, 40, 0.7], [50, 50, 2], [57, 81, 3.3], [44, 19, 4.6], [84, 84, 5.9]];
 function riftSvg() {
-  const wards = WL_WARDS.map(([x, y, dl], i) => `<g class="wl-ward ${i === 6 ? 'pink' : ''}" transform="translate(${x} ${y})"><circle class="vis" r="9" style="animation-delay:${dl}s"/><circle class="dot" r=".9" style="animation-delay:${dl}s"/></g>`).join('');
+  // la carte est dessinée une fois (rien ne bouge dedans) ; les wards sont des calques HTML posés dessus,
+  // animés seulement en transform/opacity : la carte graphique s'en charge, sans redessiner la carte
+  const wards = WL_WARDS.map(([x, y, dl], i) => `<span class="wl-ward ${i === 6 ? 'pink' : ''}" style="left:${x}%;top:${y}%;--dl:${dl}s"><i class="vis"></i><i class="dot"></i></span>`).join('');
   const towers = [[11, 64], [11, 38], [36, 11], [62, 11], [36, 89], [64, 89], [89, 62], [89, 36], [31, 69], [41, 59], [59, 41], [69, 31]]
     .map(([x, y]) => `<rect class="tw" x="${x - 1.1}" y="${y - 1.1}" width="2.2" height="2.2" rx=".5"/>`).join('');
-  return `<svg class="wl-map" viewBox="0 0 100 100" aria-hidden="true">
+  return `<div class="wl-world" aria-hidden="true"><svg class="wl-map" viewBox="0 0 100 100">
     <path class="river" d="M14 14C30 34 42 44 50 50S70 66 86 86"/>
     <path class="lane" d="M11 86V11H86"/><path class="lane" d="M14 89H89V14"/><path class="lane" d="M16 84L84 16"/>
-    <circle class="base ally" cx="9" cy="91" r="5"/><circle class="base enemy" cx="91" cy="9" r="5"/>${towers}${wards}</svg>`;
+    <circle class="base ally" cx="9" cy="91" r="5"/><circle class="base enemy" cx="91" cy="9" r="5"/>${towers}</svg><div class="wl-wards">${wards}</div></div>`;
 }
 function eyeSvg() {
   return `<svg class="wl-eye-svg" viewBox="0 0 100 100" aria-hidden="true">
@@ -407,17 +409,42 @@ function backToWelcome() {
   Object.assign(state, { loginView: 'welcome', code: '', setupFirst: null, loginMsg: '', shake: false });
   renderLogin();
 }
-// l'œil suit la souris, la carte bouge un peu (parallaxe)
-document.addEventListener('mousemove', e => {
+// l'œil suit la souris, la carte bouge un peu (parallaxe). La souris donne seulement la cible ; une boucle
+// d'animation (une fois par image) rapproche la pupille et la carte de leur cible en douceur, quelle que soit
+// la fréquence de l'écran (60 ou 120 Hz), puis s'arrête quand tout est immobile.
+const wl = { tx: 0, ty: 0, x: 0, y: 0, mx: 0, my: 0, px: 0, py: 0, raf: 0, last: 0, center: null };
+function wlTick(now) {
+  const pupil = document.getElementById('wl-pupil'), world = document.querySelector('.wl-world');
+  if (!pupil || state.loginView !== 'welcome' || $('#login').classList.contains('hidden')) { wl.raf = 0; wl.last = 0; return; }
+  const dt = wl.last ? Math.min(64, now - wl.last) : 16.7;
+  wl.last = now;
+  const a = 1 - Math.pow(1 - 0.2, dt / 16.7), b = 1 - Math.pow(1 - 0.06, dt / 16.7); // pupille vive, carte lente
+  wl.x += (wl.tx - wl.x) * a; wl.y += (wl.ty - wl.y) * a;
+  wl.px += (wl.mx - wl.px) * b; wl.py += (wl.my - wl.py) * b;
+  pupil.setAttribute('transform', `translate(${wl.x.toFixed(2)} ${wl.y.toFixed(2)})`);
+  if (world) world.style.transform = `translate3d(${wl.px.toFixed(1)}px, ${wl.py.toFixed(1)}px, 0)`;
+  const still = Math.abs(wl.tx - wl.x) < 0.01 && Math.abs(wl.ty - wl.y) < 0.01 && Math.abs(wl.mx - wl.px) < 0.05 && Math.abs(wl.my - wl.py) < 0.05;
+  wl.raf = still ? 0 : requestAnimationFrame(wlTick);
+  if (still) wl.last = 0;
+}
+function wlAim(cx, cy) {
   if (state.loginView !== 'welcome' || $('#login').classList.contains('hidden')) return;
-  const eye = $('.wl-eye'), pupil = document.getElementById('wl-pupil'), map = $('.wl-map');
-  if (!eye || !pupil) return;
-  const r = eye.getBoundingClientRect();
-  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-  const dist = Math.hypot(dx, dy) || 1, k = Math.min(1, dist / 260);
-  pupil.setAttribute('transform', `translate(${(dx / dist * 11 * k).toFixed(2)} ${(dy / dist * 7 * k).toFixed(2)})`);
-  if (map) map.style.transform = `translate(calc(-50% + ${(-dx / 60).toFixed(1)}px), calc(-50% + ${(-dy / 60).toFixed(1)}px))`;
-});
+  const eye = document.querySelector('.wl-eye');
+  if (!eye) return;
+  if (!wl.center || !wl.center.el.isConnected || wl.center.el !== eye) { const r = eye.getBoundingClientRect(); wl.center = { el: eye, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+  if (cx == null) { wl.tx = wl.ty = wl.mx = wl.my = 0; }
+  else {
+    const dx = cx - wl.center.x, dy = cy - wl.center.y;
+    const dist = Math.hypot(dx, dy) || 1, k = Math.min(1, dist / 220);
+    const ease = k * (2 - k); // le regard part vite puis se pose : plus naturel qu'une ligne droite
+    wl.tx = dx / dist * 11 * ease; wl.ty = dy / dist * 7 * ease;
+    wl.mx = Math.max(-24, Math.min(24, -dx / 45)); wl.my = Math.max(-18, Math.min(18, -dy / 45));
+  }
+  if (!wl.raf) wl.raf = requestAnimationFrame(wlTick);
+}
+document.addEventListener('mousemove', e => wlAim(e.clientX, e.clientY), { passive: true });
+document.documentElement.addEventListener('mouseleave', () => wlAim(null)); // souris sortie de la fenêtre : regard au centre
+window.addEventListener('resize', () => { wl.center = null; });
 
 function pressKey(k) {
   if (state.busy) return;
