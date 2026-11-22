@@ -1,7 +1,7 @@
 {
   "name": "coaching-lol",
   "productName": "Coaching LoL",
-  "version": "1.6.21",
+  "version": "1.6.22",
   "description": "Suivi privé de coaching League of Legends : parties SoloQ au rôle coaché, objectifs, sessions.",
   "main": "main.js",
   "author": "Theo Fauviaux",

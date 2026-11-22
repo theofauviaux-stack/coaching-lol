@@ -853,7 +853,7 @@ async function getAnalysis({ id }) {
   const r = me === 'coach' ? await cloud.coachAnalysisGet(getPushToken(), id) : await cloud.analysisGet(playerToken(), id);
   keepAnalysis(r.analysis, true);
   setTimeout(refreshView, 0);
-  prefetchServerClips(r.analysis); // anciennes vidéos (sans durée ni index) : préparées pendant qu'on lit
+  prefetchServerClips(r.analysis); // vidéos téléchargées sur l'ordinateur pendant qu'on lit
   const cd = me === 'coach' ? readClaudeDrafts()[id] : null;
   return { ok: true, analysis: r.analysis, me, label: gameLabel(r.analysis), playerName: playerName(r.analysis.playerId), claude: cd ? { general: cd.general, moments: cd.moments, used: cd.used || {}, priorities: cd.priorities || [] } : null, goals: me === 'coach' ? goalsOfAnalysis(r.analysis) : [] };
 }
@@ -1562,10 +1562,11 @@ function fileResponse(f, range) {
   }
   return new Response(Readable.toWeb(fs.createReadStream(f)), { status: 200, headers: Object.assign(headers, { 'Content-Length': String(size) }) });
 }
-// Vidéos du serveur : lues directement si elles sont navigables ; sinon (envoyées avant la 1.6.16) téléchargées une
-// fois, réparées et gardées sur cet ordinateur tant que l'analyse existe
+// Vidéos du serveur : téléchargées en entier sur cet ordinateur dès l'ouverture de l'analyse (une seconde par vidéo
+// avec une connexion normale), réparées si besoin (envoyées avant la 1.6.16), puis lues depuis le disque et gardées
+// tant que l'analyse existe. Les lire en flux à travers l'app (clip:// → serveur) pouvait se bloquer sur Mac :
+// données au compte-gouttes, vidéo figée au bout de quelques secondes. Connexion lente : lecture directe en attendant.
 const serverClipsDir = () => path.join(process.env.COACHING_LOL_DATA || app.getPath('userData'), 'videos-serveur');
-const remoteSeekable = new Map();
 const caching = new Map();
 function cacheServerClip(id, file) {
   const f = path.join(serverClipsDir(), id, file);
@@ -1584,36 +1585,23 @@ function cacheServerClip(id, file) {
   }
   return caching.get(key);
 }
+const CLIP_WAIT_MS = 10000; // au-delà, on lit en flux pendant que le téléchargement continue
 async function serverClip(id, file, range) {
   const f = path.join(serverClipsDir(), id, file);
   if (fs.existsSync(f)) return fileResponse(f, range);
-  const key = id + '/' + file;
-  if (!remoteSeekable.has(key)) {
-    try {
-      const head = await net.fetch(cloud.clipUrl(id, file), { headers: { Range: 'bytes=0-16383' } });
-      if (head.ok) remoteSeekable.set(key, webmMod.isSeekable(Buffer.from(await head.arrayBuffer())));
-    } catch (e) { /* on lira la vidéo telle quelle */ }
-  }
-  if (remoteSeekable.get(key) === false) {
-    try { return fileResponse(await cacheServerClip(id, file), range); } catch (e) { /* lecture directe ci-dessous */ }
-  }
+  try {
+    const got = await Promise.race([cacheServerClip(id, file), new Promise(r => setTimeout(() => r(null), CLIP_WAIT_MS))]);
+    if (got) return fileResponse(got, range);
+  } catch (e) { /* téléchargement impossible : lecture directe ci-dessous */ }
   return net.fetch(cloud.clipUrl(id, file), { headers: range ? { Range: range } : {} });
 }
-// analyse ouverte : ses anciennes vidéos sont préparées d'avance, en arrière-plan
+// analyse ouverte : toutes ses vidéos sont téléchargées d'avance, en arrière-plan, la première d'abord
 function prefetchServerClips(a) {
   if (!cloud || !a || a.clipsState !== 'en_ligne') return;
   (async () => {
     for (const c of a.clips || []) {
       if (!/^[\w-]+\.webm$/.test(c.file)) continue;
-      const key = a.id + '/' + c.file;
-      try {
-        if (!remoteSeekable.has(key)) {
-          const head = await net.fetch(cloud.clipUrl(a.id, c.file), { headers: { Range: 'bytes=0-16383' } });
-          if (!head.ok) continue;
-          remoteSeekable.set(key, webmMod.isSeekable(Buffer.from(await head.arrayBuffer())));
-        }
-        if (remoteSeekable.get(key) === false) await cacheServerClip(a.id, c.file);
-      } catch (e) { /* réessayé à la lecture */ }
+      try { await cacheServerClip(a.id, c.file); } catch (e) { /* réessayé à la lecture */ }
     }
   })();
 }

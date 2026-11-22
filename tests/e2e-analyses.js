@@ -243,8 +243,10 @@ function launch(phase, dataDir, env) {
   assert.deepStrictEqual(rj.navigables, [true, true, true, true], 'vidéos filmées navigables (durée + index)');
   assert.ok(rj.videoLocale.duree !== 'Infinity' && Number(rj.videoLocale.duree) > 0, 'durée connue : ' + rj.videoLocale.duree);
   assert.ok(Math.abs(Number(rc.video.duree) - 7.19) < 0.2 && rc.video.largeur === 160, 'ancienne vidéo du serveur réparée à la lecture : ' + JSON.stringify(rc.video));
-  assert.deepStrictEqual(rc.videosGardees, ['01_5m55.webm'], 'seule l\'ancienne vidéo est gardée sur l\'ordinateur du coach');
-  assert.ok(Math.abs(Number(rj.videoEnLigne.duree) - 7.19) < 0.2, 'joueur : même vidéo réparée : ' + JSON.stringify(rj.videoEnLigne));
+  // depuis la 1.6.22, toutes les vidéos de l'analyse ouverte sont téléchargées sur l'ordinateur du coach et lues depuis le disque
+  assert.ok(rc.videosGardees.includes('01_5m55.webm') && rc.videosGardees.every(f => /^\d\d_\w+\.webm$/.test(f)), 'vidéos téléchargées sur l\'ordinateur du coach : ' + rc.videosGardees.join(', '));
+  // le joueur a téléchargé ses vidéos à l'ouverture de l'analyse, avant que le test ne remplace la 1re sur le serveur : il lit sa copie
+  assert.ok(rj.videoEnLigne.erreur === null && rj.videoEnLigne.largeur > 0 && Number(rj.videoEnLigne.duree) > 0 && rj.videoEnLigne.duree !== 'Infinity', 'joueur : vidéo lue depuis son ordinateur : ' + JSON.stringify(rj.videoEnLigne));
   assert.strictEqual(rj.cartes, 4);
   assert.ok(/^2 vidéos choisies · [\d,]+ Mo$/.test(rj.total), rj.total);
   assert.ok(/envoyée au coach/.test(rj.messageEnvoi), rj.messageEnvoi);
