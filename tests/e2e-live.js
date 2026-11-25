@@ -45,7 +45,7 @@ const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'part
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
 const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [], spectate: [] };
 // faux client LoL : « fermé » sur demande du scénario, « ouvert » dès que l'app l'a lancé (fichier client-ouvert)
-const lcu = { closed: false };
+const lcu = { closed: false, friends: true };
 // faux client LoL (replays) et faux jeu (Replay API)
 const rp = { state: 'download', polls: 0, watching: false, loading: 3, time: 0, selection: '' };
 const partieMoments = require('./fixtures/partie-moments')('P-UAWAWA');
@@ -83,6 +83,16 @@ function startRiot() {
       const up = !lcu.closed || fs.existsSync(path.join(DIR, 'coach', 'client-ouvert'));
       return up ? send(200, { puuid: 'COACH', gameName: 'Coach', tagLine: 'EUW' }) : send(503, {});
     }
+    if (req.url === '/__amis-vides') { lcu.friends = false; return send(200, {}); }
+    if (req.url === '/__amis') { lcu.friends = true; return send(200, {}); }
+    if (req.url === '/lol-chat/v1/friends') {
+      // Kioga est un ami en partie (clé de spectateur dans sa présence) ; identifiants du client ≠ ceux de l'API Riot
+      return send(200, lcu.friends ? [
+        { gameName: 'Quelqu\'un', gameTag: 'EUW', puuid: 'lcu-autre', lol: {} },
+        { gameName: 'UCE Kioga', gameTag: 'EUWWW', puuid: 'lcu-kioga', lol: { gameStatus: 'inGame', gameQueueType: 'RANKED_SOLO_5x5', isObservable: 'ALL', spectatorKey: 'KeYkIoGa0123456789ab/Q==' } }
+      ] : []);
+    }
+    if (req.url.startsWith('/lol-spectator/v3/buddy/can-spectate/')) { calls.canSpectate = (calls.canSpectate || 0) + 1; return send(200, true); }
     if (req.url === '/lol-spectator/v1/spectate/launch') {
       calls.spectate.push({ method: req.method, body, auth: req.headers.authorization || '' });
       return send(204);
@@ -188,7 +198,10 @@ function startRiot() {
   // Regarder : le client LoL ouvre la partie (le jeu n'est plus lancé directement)
   assert.ok(/s'ouvre dans League of Legends/.test(r.toastRegarder), r.toastRegarder);
   assert.strictEqual(calls.spectate.length, 2, 'deux parties ouvertes par le client : ' + JSON.stringify(calls.spectate));
-  assert.deepStrictEqual(calls.spectate[0].body, { allowObserveMode: 'ALL', dropInSpectateGameId: '', gameQueueType: '', puuid: 'P-KIOGA' });
+  // même demande que le client quand on regarde un ami : clé de spectateur de sa présence, identifiant du client
+  assert.deepStrictEqual(calls.spectate[0].body, { allowObserveMode: 'ALL', dropInSpectateGameId: '', gameQueueType: 'RANKED_SOLO_5x5', puuid: 'lcu-kioga', spectatorKey: 'KeYkIoGa0123456789ab/Q==' });
+  assert.strictEqual(calls.canSpectate, 2, 'vérification « can-spectate » avant chaque lancement, comme le client');
+  assert.ok(/Ajoute UCE Kioga#EUWWW ou HaveHope#305 en ami dans League of Legends/.test(r.toastPasAmi), r.toastPasAmi);
   assert.strictEqual(calls.spectate[0].method, 'POST');
   assert.ok(/^Basic /.test(calls.spectate[0].auth), 'mot de passe du client envoyé');
   // client fermé : l'app l'ouvre, puis lance la partie dès qu'il répond

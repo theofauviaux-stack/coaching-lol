@@ -46,6 +46,12 @@ module.exports = async function ({ app, win, fs, path }) {
     out.toastRegarder = await js(`window.__toasts.find(t => /s'ouvre dans League of Legends/.test(t))`);
     await shot('l4-regarder');
     await hideToast();
+    // joueur pas dans les amis du coach : message clair, rien n'est lancé
+    await riot('/__amis-vides');
+    await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
+    out.toastPasAmi = await toastText();
+    await hideToast();
+    await riot('/__amis');
     // client fermé : l'app l'ouvre, puis lance la partie toute seule
     await riot('/__lcu-ferme');
     await js(`window.__toasts = []; document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);

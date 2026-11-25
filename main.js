@@ -2060,9 +2060,32 @@ function openLolClient() {
     return true;
   } catch (e) { return false; }
 }
-async function spectate(creds, puuid) {
+// Le client ne laisse regarder que ses amis : la clé de spectateur de la partie est dans la présence de l'ami
+// (chat du client). Les identifiants du client ne sont pas ceux de l'API Riot : on retrouve l'ami par son Riot ID.
+// Demande identique à celle du client quand on regarde un ami (vérifié dans ses journaux, novembre 2026).
+const riotKey = (name, tag) => String(name || '').toLowerCase().replace(/\s+/g, '') + '#' + String(tag || '').toLowerCase().replace(/\s+/g, '');
+function pickFriend(friends, ours) {
+  const list = Array.isArray(friends) ? friends : [];
+  let found = null;
+  for (const x of ours) {
+    const f = list.find(fr => riotKey(fr.gameName, fr.gameTag) === riotKey(x.gameName, x.tagLine));
+    if (f && f.lol && f.lol.spectatorKey) return { f, x };
+    if (f && !found) found = { f, x, noKey: true };
+  }
+  return found;
+}
+async function spectate(creds, g) {
+  const lcu = (method, p, body) => localJson(creds.base, method, p, body, creds.password);
+  const ours = g.allies.concat(g.enemies).filter(x => x.playerId && x.gameName);
+  const friends = await lcu('GET', '/lol-chat/v1/friends').catch(() => []);
+  const pick = pickFriend(friends, ours);
+  const names = ours.map(x => x.gameName + '#' + x.tagLine).join(' ou ');
+  if (!pick) throw new Error('Ajoute ' + names + ' en ami dans League of Legends : le client ne permet de regarder que ses amis.');
+  if (pick.noKey) throw new Error(pick.x.gameName + ' est dans tes amis, mais le client n\'a pas encore la clé de sa partie : réessaie dans un instant.');
+  const key = pick.f.lol.spectatorKey;
+  await lcu('GET', '/lol-spectator/v3/buddy/can-spectate/' + encodeURIComponent(pick.f.puuid) + '/' + encodeURIComponent(key)).catch(() => null);
   try {
-    await localJson(creds.base, 'POST', '/lol-spectator/v1/spectate/launch', { allowObserveMode: 'ALL', dropInSpectateGameId: '', gameQueueType: '', puuid }, creds.password);
+    await lcu('POST', '/lol-spectator/v1/spectate/launch', { allowObserveMode: pick.f.lol.isObservable || 'ALL', dropInSpectateGameId: '', gameQueueType: pick.f.lol.gameQueueType || 'RANKED_SOLO_5x5', puuid: pick.f.puuid, spectatorKey: key });
   } catch (e) {
     throw new Error(e.status === 404 ? 'Riot ne trouve pas la partie (elle vient peut-être de se terminer).' : 'Le client League of Legends a refusé d\'ouvrir la partie (' + e.message + ').');
   }
@@ -2075,12 +2098,11 @@ async function watchGame(gameId) {
   requireEdit();
   const g = live.games.find(x => String(x.gameId) === String(gameId));
   if (!g) throw new Error('Cette partie est terminée.');
-  const target = g.allies.concat(g.enemies).find(x => x.playerId && x.puuid);
-  if (!target) throw new Error('Aucun de tes joueurs n\'est identifiable dans cette partie.');
+  if (!g.allies.concat(g.enemies).some(x => x.playerId && x.gameName)) throw new Error('Aucun de tes joueurs n\'est identifiable dans cette partie.');
   if (watching.busy) return { ok: true, message: 'Le client League of Legends s\'ouvre : la partie se lancera dès qu\'il sera prêt.' };
   const creds = await lcuReady();
   if (creds) {
-    await spectate(creds, target.puuid);
+    await spectate(creds, g);
     return { ok: true, message: watchMsg(g) };
   }
   // client fermé (ou pas encore connecté) : on l'ouvre, puis on lance la partie dès qu'il répond
@@ -2095,7 +2117,7 @@ async function watchGame(gameId) {
       }
       if (!c) return tellCoach('Mode spectateur', 'Le client League of Legends ne répond pas : connecte-toi à ton compte dans le client, puis clique à nouveau sur « Regarder ».');
       if (!live.games.some(x => String(x.gameId) === String(gameId))) return tellCoach('Mode spectateur', 'La partie s\'est terminée entre-temps.');
-      await spectate(c, target.puuid);
+      await spectate(c, g);
       tellCoach('Mode spectateur', watchMsg(g));
     } catch (e) {
       tellCoach('Mode spectateur', e.message);
