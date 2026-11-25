@@ -40,23 +40,24 @@ module.exports = async function ({ app, win, fs, path }) {
     await js(`document.querySelectorAll('.lv-card')[1].scrollIntoView({ block: 'start' }); 0`);
     await shot('l3-en-direct-2e-partie');
     await js(`document.querySelector('#page').scrollTop = 0; 0`);
-    // Regarder
+    // Regarder : le client LoL (faux, ouvert) lance la partie
     await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
-    await until(`window.__toasts.some(t => /s'ouvre en mode spectateur/.test(t))`, 15000);
-    out.toastRegarder = await js(`window.__toasts.find(t => /s'ouvre en mode spectateur/.test(t))`);
-    out.spectateur = JSON.parse(fs.readFileSync(path.join(data, 'spectateur.json'), 'utf8'));
+    await until(`window.__toasts.some(t => /s'ouvre dans League of Legends/.test(t))`, 15000);
+    out.toastRegarder = await js(`window.__toasts.find(t => /s'ouvre dans League of Legends/.test(t))`);
     await shot('l4-regarder');
     await hideToast();
-    // le faux jeu se ferme tout de suite : l'app le relance d'elle-même
-    await until(`window.__toasts.some(t => /nouvelle tentative/.test(t))`, 15000);
-    out.toastRelance = await js(`window.__toasts.find(t => /nouvelle tentative/.test(t))`);
-    await wait(1500);
-    out.lancements = Number(fs.readFileSync(path.join(dir, 'lancements'), 'utf8'));
-    out.journalLancement = fs.readFileSync(path.join(dir, 'lancements.log'), 'utf8').split('\n')[0];
-    await shot('l4b-relance');
+    // client fermé : l'app l'ouvre, puis lance la partie toute seule
+    await riot('/__lcu-ferme');
+    await js(`window.__toasts = []; document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
+    await until(`window.__toasts.some(t => /J'ouvre le client League of Legends/.test(t))`, 15000);
+    out.toastClientFerme = await js(`window.__toasts.find(t => /J'ouvre le client League of Legends/.test(t))`);
+    await shot('l4b-client-ferme');
+    await until(`window.__toasts.some(t => /^Mode spectateur/.test(t))`, 20000);
+    out.toastApresOuverture = await js(`window.__toasts.find(t => /^Mode spectateur/.test(t))`);
+    out.clientOuvert = fs.existsSync(path.join(data, 'client-ouvert'));
     await hideToast();
-    // jeu introuvable : message clair
-    fs.rmSync(path.join(data, 'spectateur.json'));
+    // client fermé et jeu introuvable : message clair
+    await riot('/__lcu-ferme');
     await js(`window.api.saveSettings({ lolPath: '/nulle/part' }).then(r => { state.data = r.data; render(); }); 0`);
     await wait(800);
     await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
@@ -64,6 +65,7 @@ module.exports = async function ({ app, win, fs, path }) {
     out.alerteIntrouvable = await js(`!!document.querySelector('.lv-card .bk-alert')`);
     await shot('l5-introuvable');
     await hideToast();
+    await riot('/__lcu-ouvert');
     await js(`window.api.saveSettings({ lolPath: ${JSON.stringify(path.join(dir, 'Jeux'))} }).then(r => { state.data = r.data; render(); }); 0`);
     await wait(800);
     // réglage dans Paramètres

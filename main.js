@@ -2033,30 +2033,77 @@ function gameRunning() {
 // Message dans l'app du coach (sans notification système)
 function tellCoach(title, body) { if (win && !win.isDestroyed()) win.webContents.send('coach:alert', { title, body }); }
 
-// Bouton « Regarder » : lance League of Legends en mode spectateur sur la partie
+// Bouton « Regarder » : demande au client League of Legends d'ouvrir la partie en mode spectateur, comme quand on
+// regarde un joueur depuis son profil dans le client. Le jeu lancé directement par l'app (ancienne méthode) reste
+// désormais sur un écran noir puis se ferme : il attend des informations de connexion que seul le client lui donne
+// (constaté dans les journaux du jeu, novembre 2026). Le client gère aussi le retard de 3 minutes des classées.
+const watching = { busy: false };
+async function lcuReady() {
+  const creds = await lcuCreds();
+  if (!creds) return null;
+  const me = await localJson(creds.base, 'GET', '/lol-summoner/v1/current-summoner', undefined, creds.password).catch(() => null);
+  return me && me.puuid ? creds : null;
+}
+// Ouvre le client League of Legends (le joueur doit être connecté à son compte Riot)
+function openLolClient() {
+  const ins = lolInstall();
+  if (!ins) return false;
+  if (process.env.COACHING_LOL_TEST) { fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'client-ouvert'), '1'); return true; }
+  const { spawn: sp } = require('child_process');
+  try {
+    if (LOL_OS === 'darwin') sp('open', [ins.base], { detached: true, stdio: 'ignore' }).unref();
+    else {
+      const exe = path.join(ins.base, 'LeagueClient.exe');
+      if (!fs.existsSync(exe)) return false;
+      sp(exe, [], { cwd: ins.base, detached: true, stdio: 'ignore' }).unref();
+    }
+    return true;
+  } catch (e) { return false; }
+}
+async function spectate(creds, puuid) {
+  try {
+    await localJson(creds.base, 'POST', '/lol-spectator/v1/spectate/launch', { allowObserveMode: 'ALL', dropInSpectateGameId: '', gameQueueType: '', puuid }, creds.password);
+  } catch (e) {
+    throw new Error(e.status === 404 ? 'Riot ne trouve pas la partie (elle vient peut-être de se terminer).' : 'Le client League of Legends a refusé d\'ouvrir la partie (' + e.message + ').');
+  }
+}
+const watchMsg = g => {
+  const wait = Math.max(0, 180 - liveMod.elapsed(g));
+  return 'La partie s\'ouvre dans League of Legends' + (wait > 30 ? ' dans environ ' + Math.ceil(wait / 60) + ' min (3 min de retard en classée).' : ' (3 min de retard en classée).');
+};
 async function watchGame(gameId) {
   requireEdit();
   const g = live.games.find(x => String(x.gameId) === String(gameId));
   if (!g) throw new Error('Cette partie est terminée.');
-  const bad = liveMod.checkGame(g);
-  if (bad) throw new Error(bad);
-  const ins = lolInstall();
-  if (!ins) throw new Error('League of Legends est introuvable sur cet ordinateur. Indique son emplacement dans Paramètres › Général › Mode spectateur.');
-  let locale = '';
-  try { locale = liveMod.readLocale(fs.readFileSync(ins.config, 'utf8')); } catch (e) { /* langue par défaut du jeu */ }
-  const args = liveMod.spectateArgs(g, LOL_OS, locale);
-  if (process.env.COACHING_LOL_TEST) fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'spectateur.json'), JSON.stringify({ exe: ins.exe, cwd: ins.gameDir, args }));
-  if (LOL_OS === 'darwin') { try { fs.chmodSync(ins.exe, 0o755); } catch (e) { /* déjà exécutable */ } }
-  // le jeu se ferme souvent au premier lancement : relance automatique (3 essais), jamais deux fenêtres
-  await liveMod.launchWatch({
-    spawn, exe: ins.exe, args, cwd: ins.gameDir, env: Object.assign({}, process.env, { riot_launched: 'true' }),
-    tries: 3, minRunMs: 30000, gapMs: FAST ? 500 : 4000,
-    isRunning: gameRunning, stillLive: () => live.games.some(x => String(x.gameId) === String(gameId)),
-    onRetry: (n, total) => tellCoach('Mode spectateur', 'Le jeu s\'est fermé tout de suite : nouvelle tentative (' + n + '/' + total + ')…'),
-    onGiveUp: () => tellCoach('Mode spectateur', 'Le jeu ne s\'est pas ouvert après 3 essais. Ouvre le client League of Legends une fois (pour qu\'il se mette à jour), puis réessaie.')
-  }).catch(e => { throw new Error('Impossible de lancer League of Legends (' + e.message + ').'); });
-  const wait = Math.max(0, 180 - liveMod.elapsed(g));
-  return { ok: true, message: 'League of Legends s\'ouvre en mode spectateur' + (wait > 30 ? ' : la partie s\'affichera dans environ ' + Math.ceil(wait / 60) + ' min (3 min de retard en classée).' : ' (3 min de retard en classée).') };
+  const target = g.allies.concat(g.enemies).find(x => x.playerId && x.puuid);
+  if (!target) throw new Error('Aucun de tes joueurs n\'est identifiable dans cette partie.');
+  if (watching.busy) return { ok: true, message: 'Le client League of Legends s\'ouvre : la partie se lancera dès qu\'il sera prêt.' };
+  const creds = await lcuReady();
+  if (creds) {
+    await spectate(creds, target.puuid);
+    return { ok: true, message: watchMsg(g) };
+  }
+  // client fermé (ou pas encore connecté) : on l'ouvre, puis on lance la partie dès qu'il répond
+  if (!openLolClient()) throw new Error('Ouvre le client League of Legends (connecté à ton compte), puis clique à nouveau sur « Regarder ».');
+  watching.busy = true;
+  (async () => {
+    try {
+      let c = null;
+      for (const t0 = Date.now(); !c && Date.now() - t0 < (FAST ? 15000 : 120000); ) {
+        await new Promise(r => setTimeout(r, FAST ? 500 : 3000));
+        c = await lcuReady();
+      }
+      if (!c) return tellCoach('Mode spectateur', 'Le client League of Legends ne répond pas : connecte-toi à ton compte dans le client, puis clique à nouveau sur « Regarder ».');
+      if (!live.games.some(x => String(x.gameId) === String(gameId))) return tellCoach('Mode spectateur', 'La partie s\'est terminée entre-temps.');
+      await spectate(c, target.puuid);
+      tellCoach('Mode spectateur', watchMsg(g));
+    } catch (e) {
+      tellCoach('Mode spectateur', e.message);
+    } finally {
+      watching.busy = false;
+    }
+  })();
+  return { ok: true, message: 'J\'ouvre le client League of Legends : la partie se lancera toute seule dès qu\'il sera prêt.' };
 }
 
 function scheduleAutoSync() {

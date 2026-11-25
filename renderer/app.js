@@ -1948,7 +1948,7 @@ function liveCard(g) {
       <div class="lv-clock" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</div>
       <button class="btn primary lv-watch" data-action="live-watch" data-id="${g.gameId}">${icon('play', 15)} Regarder</button>
     </div>
-    ${lol.found ? '' : `<div class="bk-alert muted-alert">${icon('alert', 16)}<span>League of Legends est introuvable sur cet ordinateur : le bouton Regarder ne pourra pas l'ouvrir.</span><span class="spacer"></span><button class="btn" data-action="go-spectator">Indiquer son emplacement</button></div>`}
+    ${lol.found ? '' : `<div class="bk-alert muted-alert">${icon('alert', 16)}<span>League of Legends est introuvable sur cet ordinateur : ouvre toi-même le client avant de cliquer sur Regarder.</span><span class="spacer"></span><button class="btn" data-action="go-spectator">Indiquer son emplacement</button></div>`}
     ${facing ? `<div class="lv-face">
       <div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>
       <div class="lv-th lv-mid"></div>
@@ -1958,7 +1958,7 @@ function liveCard(g) {
       <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>${g.allies.map(x => liveRow(x)).join('')}</div>
       <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(enemySide)}"></span><b>Adversaires</b><span class="faint small">côté ${side(enemySide)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span></div>${g.enemies.map(x => liveRow(x)).join('')}</div>
     </div>`}
-    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}Regarder ouvre League of Legends en mode spectateur, avec 3 minutes de retard (règle de Riot pour les classées). Le jeu doit être installé et à jour sur cet ordinateur.</div>
+    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}Regarder demande au client League of Legends d'ouvrir la partie en mode spectateur (il s'ouvre tout seul s'il est fermé ; reste connecté à ton compte), avec 3 minutes de retard (règle de Riot pour les classées).</div>
   </div>`;
 }
 function pageDirect() {

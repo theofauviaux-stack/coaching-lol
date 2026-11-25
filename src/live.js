@@ -126,26 +126,6 @@ function elapsed(game, now = Date.now()) {
 }
 
 // ---------------------------------------------------------------- mode spectateur
-// Serveur d'observation de Riot (depuis le patch 14.1 : spectator.<plateforme>.lol.pvp.net:8080)
-const spectatorHost = platformId => `spectator.${String(platformId).toLowerCase()}.lol.pvp.net:8080`;
-
-function checkGame(game) {
-  if (!game || !/^\d+$/.test(String(game.gameId))) return 'Partie inconnue.';
-  if (!/^[A-Z0-9]{2,5}$/.test(String(game.platformId))) return 'Serveur de jeu inconnu.';
-  if (!/^[A-Za-z0-9+/=]{8,}$/.test(String(game.key || ''))) return 'Riot n\'a pas donné de clé d\'observation pour cette partie.';
-  return '';
-}
-
-// Arguments passés au jeu (sans shell : chaque valeur est un argument distinct)
-function spectateArgs(game, os, locale) {
-  const args = [`spectator ${spectatorHost(game.platformId)} ${game.key} ${game.gameId} ${game.platformId}`, '-UseRads'];
-  if (os === 'win32') args.push('-GameBaseDir=..', '-SkipBuild', '-EnableCrashpad=true', '-EnableLNP');
-  if (locale) args.push('-Locale=' + locale);
-  return args;
-}
-
-const readLocale = text => { const m = String(text || '').match(/locale:\s*"?([a-z]{2}_[A-Z]{2})"?/); return m ? m[1] : ''; };
-
 // Emplacement de League of Legends. io = { exists(p), read(p) } ; custom = chemin saisi par le coach.
 // Renvoie { base, gameDir, exe, config } ou null.
 function findInstall(os, io, custom, env = {}) {
@@ -187,32 +167,6 @@ function findInstall(os, io, custom, env = {}) {
 // souvent (jeu qui se ferme pendant le chargement). Résout dès que le premier lancement a démarré.
 // Pas de relance si une fenêtre de jeu tourne déjà (isRunning), si la partie est finie (stillLive) ou si
 // le jeu est resté ouvert plus de minRunMs (le coach a regardé puis fermé).
-function launchWatch(o) {
-  const opt = Object.assign({ tries: 3, minRunMs: 30000, gapMs: 4000, now: Date.now, wait: ms => new Promise(r => setTimeout(r, ms)),
-    isRunning: async () => false, stillLive: () => true, onRetry() {}, onGiveUp() {} }, o);
-  let attempt = 0;
-  const start = () => new Promise((resolve, reject) => {
-    attempt++;
-    const t0 = opt.now();
-    const child = opt.spawn(opt.exe, opt.args, { cwd: opt.cwd, env: opt.env, detached: true, stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('spawn', () => {
-      child.once('exit', async code => {
-        if (opt.now() - t0 >= opt.minRunMs) return;
-        if (!opt.stillLive()) return;
-        if (await opt.isRunning()) return;
-        if (attempt >= opt.tries) return opt.onGiveUp(attempt, code);
-        opt.onRetry(attempt + 1, opt.tries);
-        await opt.wait(opt.gapMs);
-        start().catch(e => opt.onGiveUp(attempt, e.message));
-      });
-      if (child.unref) child.unref();
-      resolve(child);
-    });
-  });
-  return start();
-}
-
 // Table Meraki (championrates.json) → { patch, data: { idChampion: [part top, jungle, mid, bot, support] } }
 function compactRates(json) {
   const data = {};
@@ -224,4 +178,4 @@ function compactRates(json) {
   return Object.keys(data).length > 100 ? { patch: json.patch || '', data } : null;
 }
 
-module.exports = { POSITIONS, assignPositions, compactRates, BUNDLED_RATES, parseSmurfs, trackedAccounts, launchWatch, MAX_SMURFS, QUEUE_SOLO, soloRank, buildGame, elapsed, spectatorHost, checkGame, spectateArgs, readLocale, findInstall, splitRiotId };
+module.exports = { POSITIONS, assignPositions, compactRates, BUNDLED_RATES, parseSmurfs, trackedAccounts, MAX_SMURFS, QUEUE_SOLO, soloRank, buildGame, elapsed, findInstall, splitRiotId };

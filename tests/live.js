@@ -55,16 +55,6 @@ assert.strictEqual(g2.enemies[1].champion, 'LeeSin', 'en face : jungle contre ju
 assert.strictEqual(live.elapsed(g, 1763500000000 + 125000), 125);
 assert.strictEqual(live.elapsed({ startTime: null, length: 30, fetchedAt: 1000 }, 11000), 40);
 
-// ---------------- mode spectateur
-assert.strictEqual(live.spectatorHost('EUW1'), 'spectator.euw1.lol.pvp.net:8080');
-assert.strictEqual(live.checkGame(g), '');
-assert.ok(live.checkGame(Object.assign({}, g, { key: 'x" & rm -rf' })), 'clé refusée si elle contient autre chose que du base64');
-assert.ok(live.checkGame(Object.assign({}, g, { platformId: 'euw1; ls' })));
-assert.deepStrictEqual(live.spectateArgs(g, 'darwin', 'fr_FR'), ['spectator spectator.euw1.lol.pvp.net:8080 aB3+/xyzKEY0123456789abcd 7123456789 EUW1', '-UseRads', '-Locale=fr_FR']);
-const wa = live.spectateArgs(g, 'win32', '');
-assert.ok(wa.includes('-GameBaseDir=..') && wa.includes('-EnableLNP') && !wa.some(a => a.startsWith('-Locale')));
-assert.strictEqual(live.readLocale('install:\n    globals:\n        locale: "fr_FR"\n'), 'fr_FR');
-assert.strictEqual(live.readLocale(''), '');
 
 // ---------------- emplacement de League of Legends
 const io = files => ({ exists: f => files.includes(f), read: f => { if (f in (io.texts || {})) return io.texts[f]; throw new Error('absent'); } });
@@ -116,40 +106,7 @@ const cr = live.compactRates({ patch: '16.3', data: Object.fromEntries(Array.fro
 assert.deepStrictEqual(cr.data['1'], [0.75, 0.25, 0, 0, 0]);
 
 // ---------------- relance automatique du mode spectateur
-const EventEmitter = require('events');
-async function scenario(lifetimes, opts = {}) {
-  let clock = 0;
-  const launches = [], retries = [], giveUps = [];
-  const spawn = (exe, args, o) => {
-    const c = new EventEmitter();
-    const life = lifetimes[launches.length];
-    launches.push({ exe, args, o });
-    setImmediate(() => {
-      if (life === 'erreur') return c.emit('error', new Error('ENOENT'));
-      c.emit('spawn');
-      if (life !== null) setImmediate(() => { clock += life; c.emit('exit', 1); });
-    });
-    c.unref = () => {};
-    return c;
-  };
-  await live.launchWatch(Object.assign({ spawn, exe: '/jeu', args: ['a'], cwd: '/', env: {}, now: () => clock, wait: async () => {},
-    onRetry: (n, t) => retries.push(n + '/' + t), onGiveUp: n => giveUps.push(n) }, opts));
-  await new Promise(r => setTimeout(r, 30));
-  return { launches: launches.length, retries, giveUps };
-}
-(async () => {
-  let s1 = await scenario([2000, null]);
-  assert.deepStrictEqual([s1.launches, s1.retries, s1.giveUps], [2, ['2/3'], []], 'fermé au bout de 2 s : relancé une fois, puis il tient');
-  s1 = await scenario([1000, 1000, 1000]);
-  assert.deepStrictEqual([s1.launches, s1.retries, s1.giveUps], [3, ['2/3', '3/3'], [3]], 'trois échecs : on abandonne avec un message');
-  s1 = await scenario([45 * 60000]);
-  assert.deepStrictEqual([s1.launches, s1.retries], [1, []], 'regardé 45 min puis fermé : pas de relance');
-  s1 = await scenario([1000], { isRunning: async () => true });
-  assert.strictEqual(s1.launches, 1, 'un jeu tourne déjà : pas de deuxième fenêtre');
-  s1 = await scenario([1000], { stillLive: () => false });
-  assert.strictEqual(s1.launches, 1, 'partie terminée : pas de relance');
-  await assert.rejects(scenario(['erreur']), /ENOENT/, 'jeu impossible à lancer : erreur tout de suite');
-})().then(() => {
+Promise.resolve().then(() => {
 // ---------------- client Riot : partie en cours et adresse de test
 return (async () => {
   const urls = [];

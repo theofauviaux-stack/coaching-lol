@@ -43,7 +43,9 @@ const GAMES = {
 };
 const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram', 'S-QUEST': 'smurf' };
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
-const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [] };
+const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [], spectate: [] };
+// faux client LoL : « fermé » sur demande du scénario, « ouvert » dès que l'app l'a lancé (fichier client-ouvert)
+const lcu = { closed: false };
 // faux client LoL (replays) et faux jeu (Replay API)
 const rp = { state: 'download', polls: 0, watching: false, loading: 3, time: 0, selection: '' };
 const partieMoments = require('./fixtures/partie-moments')('P-UAWAWA');
@@ -74,6 +76,16 @@ function startRiot() {
       if (req.url === '/lol-replays/v1/rofls/7300000099/download') { rp.state = 'downloading'; return send(204); }
       if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
       return send(404, {});
+    }
+    if (req.url === '/__lcu-ferme') { lcu.closed = true; try { fs.rmSync(path.join(DIR, 'coach', 'client-ouvert')); } catch (e) { /* pas encore ouvert */ } return send(200, {}); }
+    if (req.url === '/__lcu-ouvert') { lcu.closed = false; return send(200, {}); }
+    if (req.url === '/lol-summoner/v1/current-summoner') {
+      const up = !lcu.closed || fs.existsSync(path.join(DIR, 'coach', 'client-ouvert'));
+      return up ? send(200, { puuid: 'COACH', gameName: 'Coach', tagLine: 'EUW' }) : send(503, {});
+    }
+    if (req.url === '/lol-spectator/v1/spectate/launch') {
+      calls.spectate.push({ method: req.method, body, auth: req.headers.authorization || '' });
+      return send(204);
     }
     if (req.url.startsWith('/replay/')) {
       calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
@@ -120,12 +132,7 @@ function startRiot() {
   fs.mkdirSync(path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS'), { recursive: true });
   fs.mkdirSync(path.join(app, 'Contents/LoL/Config'), { recursive: true });
   const exe = path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends');
-  fs.writeFileSync(exe, `#!/bin/sh
-n=$(cat "${DIR}/lancements" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${DIR}/lancements"
-echo "$riot_launched|$(pwd)|$1" >> "${DIR}/lancements.log"
-[ "$n" -ge 2 ] && exec sleep 25
-exit 1
-`);
+  fs.writeFileSync(exe, '#!/bin/sh\nexit 0\n'); // jamais lancé : « Regarder » passe par le client LoL
   fs.chmodSync(exe, 0o755);
   fs.writeFileSync(path.join(app, 'Contents/LoL/Config/LeagueClientSettings.yaml'), 'install:\n    globals:\n        locale: "fr_FR"\n        region: "EUW"\n');
 
@@ -178,16 +185,18 @@ exit 1
   assert.ok(/Postes devinés/.test(r.cartes[0].texte));
   assert.ok(/écran de chargement/.test(r.cartes[1].texte), 'partie encore au chargement');
   assert.ok(/Adversaires/.test(r.cartes[1].texte));
-  // Regarder
-  assert.deepStrictEqual(r.spectateur.args, ['spectator spectator.euw1.lol.pvp.net:8080 k8Jd2+PqZ0aB/cDeF1gHiJ2kLmN3oPq4 7300000001 EUW1', '-UseRads', '-Locale=fr_FR']);
-  assert.ok(r.spectateur.exe.endsWith('League of Legends.app/Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends'));
-  assert.ok(r.spectateur.cwd.endsWith('League of Legends.app/Contents/LoL/Game'));
-  assert.ok(/mode spectateur/.test(r.toastRegarder), r.toastRegarder);
-  assert.ok(/introuvable/.test(r.toastIntrouvable), r.toastIntrouvable);
-  // relance automatique : le faux jeu se ferme au premier lancement, tient au deuxième
-  assert.ok(/nouvelle tentative \(2\/3\)/.test(r.toastRelance), r.toastRelance);
-  assert.strictEqual(r.lancements, 2, 'un seul relancement');
-  assert.ok(/^true\|.*League of Legends\.app\/Contents\/LoL\/Game\|spectator spectator\.euw1/.test(r.journalLancement), r.journalLancement);
+  // Regarder : le client LoL ouvre la partie (le jeu n'est plus lancé directement)
+  assert.ok(/s'ouvre dans League of Legends/.test(r.toastRegarder), r.toastRegarder);
+  assert.strictEqual(calls.spectate.length, 2, 'deux parties ouvertes par le client : ' + JSON.stringify(calls.spectate));
+  assert.deepStrictEqual(calls.spectate[0].body, { allowObserveMode: 'ALL', dropInSpectateGameId: '', gameQueueType: '', puuid: 'P-KIOGA' });
+  assert.strictEqual(calls.spectate[0].method, 'POST');
+  assert.ok(/^Basic /.test(calls.spectate[0].auth), 'mot de passe du client envoyé');
+  // client fermé : l'app l'ouvre, puis lance la partie dès qu'il répond
+  assert.ok(/J'ouvre le client League of Legends/.test(r.toastClientFerme), r.toastClientFerme);
+  assert.ok(r.clientOuvert, 'client LoL ouvert par l\'app');
+  assert.ok(/Mode spectateur — La partie s'ouvre dans League of Legends/.test(r.toastApresOuverture), r.toastApresOuverture);
+  // client fermé et jeu introuvable : message clair
+  assert.ok(/Ouvre le client League of Legends/.test(r.toastIntrouvable), r.toastIntrouvable);
   // smurfs
   assert.ok(/Smurf introuvable chez Riot : Inconnu#XXX/.test(r.toastSmurfInconnu), r.toastSmurfInconnu);
   assert.deepStrictEqual(r.smurfsEnregistres, [{ riotId: 'Quest Smurf#EUW', puuid: 'S-QUEST' }]);
