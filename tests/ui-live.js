@@ -40,40 +40,8 @@ module.exports = async function ({ app, win, fs, path }) {
     await js(`document.querySelectorAll('.lv-card')[1].scrollIntoView({ block: 'start' }); 0`);
     await shot('l3-en-direct-2e-partie');
     await js(`document.querySelector('#page').scrollTop = 0; 0`);
-    // Regarder : le client LoL (faux, ouvert) lance la partie
-    await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
-    await until(`window.__toasts.some(t => /s'ouvre dans League of Legends/.test(t))`, 15000);
-    out.toastRegarder = await js(`window.__toasts.find(t => /s'ouvre dans League of Legends/.test(t))`);
-    await shot('l4-regarder');
-    await hideToast();
-    // joueur pas dans les amis du coach : message clair, rien n'est lancé
-    await riot('/__amis-vides');
-    await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
-    out.toastPasAmi = await toastText();
-    await hideToast();
-    await riot('/__amis');
-    // client fermé : l'app l'ouvre, puis lance la partie toute seule
-    await riot('/__lcu-ferme');
-    await js(`window.__toasts = []; document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
-    await until(`window.__toasts.some(t => /J'ouvre le client League of Legends/.test(t))`, 15000);
-    out.toastClientFerme = await js(`window.__toasts.find(t => /J'ouvre le client League of Legends/.test(t))`);
-    await shot('l4b-client-ferme');
-    await until(`window.__toasts.some(t => /^Mode spectateur/.test(t))`, 20000);
-    out.toastApresOuverture = await js(`window.__toasts.find(t => /^Mode spectateur/.test(t))`);
-    out.clientOuvert = fs.existsSync(path.join(data, 'client-ouvert'));
-    await hideToast();
-    // client fermé et jeu introuvable : message clair
-    await riot('/__lcu-ferme');
-    await js(`window.api.saveSettings({ lolPath: '/nulle/part' }).then(r => { state.data = r.data; render(); }); 0`);
-    await wait(800);
-    await js(`document.querySelector('.lv-card [data-action="live-watch"]').click(); 0`);
-    out.toastIntrouvable = await toastText();
-    out.alerteIntrouvable = await js(`!!document.querySelector('.lv-card .bk-alert')`);
-    await shot('l5-introuvable');
-    await hideToast();
-    await riot('/__lcu-ouvert');
-    await js(`window.api.saveSettings({ lolPath: ${JSON.stringify(path.join(dir, 'Jeux'))} }).then(r => { state.data = r.data; render(); }); 0`);
-    await wait(800);
+    // plus de bouton « Regarder »
+    out.boutonsRegarder = await js(`document.querySelectorAll('[data-action="live-watch"]').length`);
     // réglage dans Paramètres
     await js(`state.page = 'parametres'; state.settingsTab = 'general'; render(); document.getElementById('spectateur').scrollIntoView({ block: 'start' }); 0`);
     out.reglage = await js(`document.getElementById('spectateur').textContent.replace(/\\s+/g, ' ').trim()`);
@@ -124,6 +92,19 @@ module.exports = async function ({ app, win, fs, path }) {
     await riot('/__fin');
     await until(`state.data.live.games.length === 2`, 20000);
     out.apresFin = await js(`state.data.live.games.length`);
+    // fin de partie : pop-up avec le résultat dès que Riot publie la partie
+    await until(`!!document.querySelector('#results .res-card')`, 30000);
+    out.popup = await js(`(() => { const c = document.querySelector('#results .res-card'); return { classe: c.className, texte: c.innerText.replace(/\\s+/g, ' ').trim() }; })()`);
+    await shot('l6b-fin-de-partie');
+    // « Voir ses parties » sur la 2e ligne, puis fermeture d'une nouvelle pop-up
+    await js(`document.querySelector('#results .res-card [data-action="res-see"]').click(); 0`);
+    await wait(400);
+    out.voirSesParties = await js(`state.page`);
+    await js(`showResult({ gameId: 1, duration: 600, remake: false, players: [{ playerId: 'p1', name: 'Test', champion: 'Ahri', win: false, k: 1, d: 5, a: 2, kda: 0.6, cs: 80 }] }); 0`);
+    await js(`document.querySelector('#results .res-card [data-action="res-close"]').click(); 0`);
+    await wait(200);
+    out.popupApresFermeture = await js(`document.querySelectorAll('#results .res-card').length`);
+    await js(`state.page = 'direct'; render(); 0`);
     await riot('/__nouvelle');
     await until(`window.__toasts.some(t => /Partie classée en cours/.test(t) && /UCE Uawawa/.test(t))`, 20000);
     out.notification = await js(`window.__toasts.find(t => /Partie classée en cours/.test(t) && /UCE Uawawa/.test(t))`);

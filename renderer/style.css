@@ -396,7 +396,6 @@ h3.exh { display: flex; align-items: center; gap: 8px; color: var(--text); font-
 .lv-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
 .lv-title { font: 700 20px Manrope, sans-serif; }
 .lv-clock { font: 800 26px Manrope, sans-serif; color: var(--red); font-variant-numeric: tabular-nums; min-width: 78px; text-align: right; }
-.lv-watch { padding: 10px 18px; font-size: 14px; }
 .lv-card .bk-alert { margin: 0 0 12px; }
 .lv-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .lv-team { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -872,3 +871,26 @@ a.an-time { color: var(--accent); font-weight: 700; cursor: pointer; text-decora
 .upd-line.ko { color: var(--text); } .upd-line.ko .i { color: var(--red); }
 .upd-line b { color: var(--text); }
 .upd-btns { display: flex; gap: 8px; }
+
+/* ------------------------------------------------------------------ fin de partie (pop-up du coach) */
+#results { position: fixed; right: 18px; top: 66px; z-index: 61; display: flex; flex-direction: column; gap: 10px; width: min(420px, calc(100vw - 36px)); pointer-events: none; }
+.res-card { pointer-events: auto; background: var(--panel); border: 1px solid var(--line-2); border-left: 4px solid var(--line-2); border-radius: 14px; padding: 12px 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .5); animation: resIn .35s cubic-bezier(.2, .7, .2, 1); }
+.res-card.win { border-left-color: var(--accent); }
+.res-card.loss { border-left-color: var(--red); }
+.res-card.mixed { border-left-color: var(--amber); }
+.res-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.res-head b { color: var(--text); }
+.res-card.win .res-head .i { color: var(--accent); }
+.res-card.loss .res-head .i { color: var(--red); }
+.res-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.res-row + .res-row { border-top: 1px solid var(--line); }
+.res-img { width: 46px; height: 46px; border-radius: 10px; display: block; background: var(--hover); }
+.res-main { flex: 1; min-width: 0; }
+.res-who { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.res-verdict.ok { color: var(--accent); }
+.res-verdict.ko { color: var(--red); }
+.res-kda { font-size: 20px; font-weight: 700; letter-spacing: .01em; display: flex; align-items: baseline; gap: 4px; margin: 1px 0; }
+.res-kda .res-d { color: var(--red); }
+.res-kda .muted { font-size: 12.5px; font-weight: 500; margin-left: 8px; }
+@keyframes resIn { from { opacity: 0; transform: translateX(28px) scale(.98); } to { opacity: 1; transform: none; } }

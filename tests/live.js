@@ -1,4 +1,4 @@
-// Parties en direct et mode spectateur : tests sans réseau ni Electron.
+// Parties en direct, smurfs et résultat de fin de partie : tests sans réseau ni Electron.
 const assert = require('assert');
 const live = require('../src/live');
 const { RiotClient } = require('../src/riot');
@@ -105,7 +105,25 @@ assert.strictEqual(live.compactRates({ data: { 1: {} } }), null, 'table vide ref
 const cr = live.compactRates({ patch: '16.3', data: Object.fromEntries(Array.from({ length: 120 }, (_, i) => [String(i + 1), { TOP: { playRate: 3 }, JUNGLE: { playRate: 1 }, MIDDLE: { playRate: 0 }, BOTTOM: { playRate: 0 }, UTILITY: { playRate: 0 } }])) });
 assert.deepStrictEqual(cr.data['1'], [0.75, 0.25, 0, 0, 0]);
 
-// ---------------- relance automatique du mode spectateur
+// ---------------- fin de partie : résultat des joueurs suivis
+{
+  const m = { metadata: { matchId: 'EUW1_42' }, info: { gameId: 42, gameDuration: 1712, participants: [
+    { puuid: 'P1', championName: 'LeeSin', win: true, kills: 7, deaths: 2, assists: 9, totalMinionsKilled: 150, neutralMinionsKilled: 40 },
+    { puuid: 'P2', championName: 'Thresh', win: true, kills: 1, deaths: 0, assists: 14, totalMinionsKilled: 30, neutralMinionsKilled: 0 },
+    { puuid: 'X', championName: 'Jinx', win: false, kills: 3, deaths: 8, assists: 2 }] } };
+  const r = live.gameResult(m, [{ playerId: 'a', puuid: 'P1' }, { playerId: 'b', puuid: 'P2', smurf: 'Smurf#EUW' }, { playerId: 'c', puuid: 'ABSENT' }]);
+  assert.strictEqual(r.duration, 1712);
+  assert.strictEqual(r.remake, false);
+  assert.deepStrictEqual(r.players.map(p => [p.playerId, p.champion, p.win, p.k, p.d, p.a, p.kda, p.cs, p.smurf]),
+    [['a', 'LeeSin', true, 7, 2, 9, 8, 190, null], ['b', 'Thresh', true, 1, 0, 14, null, 30, 'Smurf#EUW']], 'KDA parfait (0 mort) : null');
+  assert.strictEqual(live.gameResult(m, [{ playerId: 'c', puuid: 'ABSENT' }]), null, 'aucun joueur suivi : rien');
+  assert.strictEqual(live.gameResult({}, []), null);
+  const remake = JSON.parse(JSON.stringify(m)); remake.info.gameDuration = 205; remake.info.participants[0].gameEndedInEarlySurrender = true;
+  assert.strictEqual(live.gameResult(remake, [{ playerId: 'a', puuid: 'P1' }]).remake, true, 'remake signalé');
+  const ms = JSON.parse(JSON.stringify(m)); ms.info.gameDuration = 1712000;
+  assert.strictEqual(live.gameResult(ms, [{ playerId: 'a', puuid: 'P1' }]).duration, 1712, 'anciennes parties : durée en millisecondes');
+}
+
 Promise.resolve().then(() => {
 // ---------------- client Riot : partie en cours et adresse de test
 return (async () => {
@@ -118,6 +136,6 @@ return (async () => {
   const t = new RiotClient('RGAPI-test', { fetch, delayMs: 0, base: 'http://127.0.0.1:9' });
   await t.activeGame('A1', 'kr');
   assert.strictEqual(urls[2], 'http://127.0.0.1:9/lol/spectator/v5/active-games/by-summoner/A1');
-  console.log('✅ Parties en direct, smurfs et mode spectateur : OK');
+  console.log('✅ Parties en direct, smurfs et fin de partie : OK');
 })();
 }).catch(e => { console.error(e); process.exit(1); });

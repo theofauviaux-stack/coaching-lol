@@ -178,4 +178,23 @@ function compactRates(json) {
   return Object.keys(data).length > 100 ? { patch: json.patch || '', data } : null;
 }
 
-module.exports = { POSITIONS, assignPositions, compactRates, BUNDLED_RATES, parseSmurfs, trackedAccounts, MAX_SMURFS, QUEUE_SOLO, soloRank, buildGame, elapsed, findInstall, splitRiotId };
+// Résultat d'une partie terminée (match-v5) pour les joueurs suivis qui y étaient : victoire, K/D/A, CS, durée.
+// Remake (partie annulée dans les premières minutes) signalé à part. null si aucun joueur suivi n'y figure.
+function gameResult(match, tracked) {
+  const info = match && match.info;
+  if (!info || !Array.isArray(info.participants)) return null;
+  const players = [];
+  for (const t of tracked || []) {
+    const p = info.participants.find(x => x.puuid === t.puuid);
+    if (!p || players.some(x => x.playerId === t.playerId)) continue;
+    const k = p.kills || 0, d = p.deaths || 0, a = p.assists || 0;
+    players.push({ playerId: t.playerId, smurf: t.smurf || null, champion: p.championName || '', win: !!p.win, k, d, a,
+      kda: d ? Math.round((k + a) / d * 10) / 10 : null, cs: (p.totalMinionsKilled || 0) + (p.neutralMinionsKilled || 0) });
+  }
+  if (!players.length) return null;
+  const secs = info.gameDuration > 100000 ? Math.round(info.gameDuration / 1000) : (info.gameDuration || 0); // anciennes parties : en millisecondes
+  return { gameId: info.gameId, matchId: (match.metadata && match.metadata.matchId) || null, duration: secs,
+    remake: info.participants.some(x => x.gameEndedInEarlySurrender), players };
+}
+
+module.exports = { gameResult, POSITIONS, assignPositions, compactRates, BUNDLED_RATES, parseSmurfs, trackedAccounts, MAX_SMURFS, QUEUE_SOLO, soloRank, buildGame, elapsed, findInstall, splitRiotId };

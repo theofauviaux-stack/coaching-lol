@@ -1820,9 +1820,9 @@ function settingsGeneral() {
     <div class="section"><h3>${icon('key', 17)} Clé API Riot</h3>
       <div class="status-line"><span class="dot ${c.hasKey ? 'on' : 'err'}"></span>${c.hasKey ? 'Clé enregistrée (' + esc(c.keyPreview) + '). Les parties arrivent automatiquement.' : 'Aucune clé : les parties ne peuvent pas être récupérées.'}</div>
       <div class="row" style="margin-top:12px"><input id="key" style="width:420px" placeholder="Remplacer la clé : RGAPI-…"><button class="btn" data-action="save-key">Tester et enregistrer</button></div></div>
-    <div class="section" id="spectateur"><h3>${icon('play', 17)} Mode spectateur (bouton Regarder)</h3>
+    <div class="section" id="spectateur"><h3>${icon('folder', 17)} Emplacement de League of Legends</h3>
       <div class="status-line"><span class="dot ${(c.lol || {}).found ? 'on' : 'err'}"></span>${(c.lol || {}).found ? 'League of Legends trouvé : ' + esc(c.lol.path) : 'League of Legends introuvable sur cet ordinateur.'}</div>
-      <div class="muted small" style="margin-top:8px">Laisse vide pour le chercher tout seul (dossier Applications sur Mac, C:\\Riot Games sur Windows). S'il est ailleurs, colle ici le dossier où il est installé.</div>
+      <div class="muted small" style="margin-top:8px">Sert à filmer les moments des parties. Laisse vide pour le chercher tout seul (dossier Applications sur Mac, C:\\Riot Games sur Windows). S'il est ailleurs, colle ici le dossier où il est installé.</div>
       <div class="row" style="margin-top:10px"><input id="lolpath" style="width:420px" placeholder="/Applications/League of Legends.app" value="${esc((c.lol || {}).custom || '')}"><button class="btn" data-action="save-lolpath">Enregistrer</button></div></div>
     <div class="section"><h3>${icon('cloud', 17)} Serveur en ligne (espaces joueurs)</h3>
       ${cl.linked
@@ -1929,7 +1929,6 @@ function liveRow(x, mirror = false, end = false) {
 }
 const LANE = { TOP: 'Top', JUNGLE: 'Jungle', MIDDLE: 'Mid', BOTTOM: 'ADC', UTILITY: 'Support' };
 function liveCard(g) {
-  const lol = (D().coach && D().coach.lol) || {};
   const who = x => (x.smurf ? `${esc(ownerName(x.playerId))} <span class="muted">sur son smurf</span> ${esc(x.gameName)}` : esc(x.gameName));
   const allyOurs = g.allies.filter(x => x.playerId).map(who);
   const enemyOurs = g.enemies.filter(x => x.playerId).map(who);
@@ -1946,9 +1945,7 @@ function liveCard(g) {
       <div><div class="lv-title">${title}</div><div class="muted small">Classée Solo/Duo · ${esc(g.platformId)} · ${started}</div></div>
       <span class="spacer"></span>
       <div class="lv-clock" ${clockAttrs(g)}>${fmtGame(gameSecs(g.startTime, g.length, g.fetchedAt))}</div>
-      <button class="btn primary lv-watch" data-action="live-watch" data-id="${g.gameId}">${icon('play', 15)} Regarder</button>
     </div>
-    ${lol.found ? '' : `<div class="bk-alert muted-alert">${icon('alert', 16)}<span>League of Legends est introuvable sur cet ordinateur : ouvre toi-même le client avant de cliquer sur Regarder.</span><span class="spacer"></span><button class="btn" data-action="go-spectator">Indiquer son emplacement</button></div>`}
     ${facing ? `<div class="lv-face">
       <div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>
       <div class="lv-th lv-mid"></div>
@@ -1958,7 +1955,7 @@ function liveCard(g) {
       <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(g.teamId)}"></span><b>${allyTeam}</b><span class="faint small">côté ${side(g.teamId)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.allies)}</span></div>${g.allies.map(x => liveRow(x)).join('')}</div>
       <div class="lv-team"><div class="lv-th"><span class="lv-side ${side(enemySide)}"></span><b>Adversaires</b><span class="faint small">côté ${side(enemySide)}</span><span class="spacer"></span><span class="lv-bans" data-tip="Champions bannis par cette équipe">${bans(g.bans.enemies)}</span></div>${g.enemies.map(x => liveRow(x)).join('')}</div>
     </div>`}
-    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}Regarder demande au client League of Legends d'ouvrir la partie en mode spectateur (il s'ouvre tout seul s'il est fermé ; reste connecté à ton compte), avec 3 minutes de retard (règle de Riot pour les classées).</div>
+    <div class="faint tiny lv-foot">${facing ? 'Postes devinés d\'après les champions et les sorts (Riot ne les donne pas pendant la partie). ' : ''}À la fin de la partie, le résultat (victoire ou défaite, K/D/A) s'affiche en pop-up dès que Riot le publie, en général quelques minutes après.</div>
   </div>`;
 }
 function pageDirect() {
@@ -2108,6 +2105,8 @@ document.addEventListener('click', async e => {
     case 'upd-check': updCheck(); break;
     case 'upd-install': updInstall(); break;
     case 'open-player': state.playerId = id; state.page = 'dashboard'; state.metric = null; render(); $('#page').scrollTop = 0; break;
+    case 'res-close': el.closest('.res-card').remove(); break;
+    case 'res-see': el.closest('.res-card').remove(); state.playerId = id; state.page = 'parties'; render(); $('#page').scrollTop = 0; break;
     case 'player-settings': state.playerId = id; state.page = 'parametres'; state.settingsTab = 'joueur'; render(); break;
     case 'period': state.period = el.dataset.v; render(); break;
     case 'metric': state.metric = el.dataset.metric; render(); break;
@@ -2476,15 +2475,6 @@ document.addEventListener('click', async e => {
     }
     case 'mo-copy': if (state.moments && state.moments.text) copyText(state.moments.text, 'Dossier de la partie copié : colle-le dans ta conversation avec Claude.'); break;
     case 'live-refresh': { el.disabled = true; el.innerHTML = '<span class="spinner"></span> Vérification…'; apply(await window.api.refreshLive()); break; }
-    case 'live-watch': {
-      const old = el.innerHTML;
-      el.disabled = true; el.innerHTML = '<span class="spinner"></span> Ouverture…';
-      const r = await window.api.watchLive(id);
-      el.disabled = false; el.innerHTML = old;
-      if (r && r.ok) toast(r.message, 'ok', 7000); else toast(r ? r.message : 'Erreur inconnue.', 'err', 8000);
-      break;
-    }
-    case 'go-spectator': state.page = 'parametres'; state.settingsTab = 'general'; render(); { const s = document.getElementById('spectateur'); if (s) s.scrollIntoView({ block: 'start' }); } break;
     case 'save-lolpath': apply(await window.api.saveSettings({ lolPath: $('#lolpath').value }), 'Emplacement enregistré.'); break;
     case 'export': { const r = await window.api.exportBackup(); if (r.ok) toast(r.message); break; }
     case 'import': if (confirm('Remplacer toutes les données par la sauvegarde ?')) apply(await window.api.importBackup()); break;
@@ -2644,6 +2634,32 @@ document.addEventListener('keydown', e => {
 // nouvelles données venues du processus principal (synchro, serveur) : rafraîchir sans gêner la saisie
 document.addEventListener('focusout', () => { if (state.pending) setTimeout(() => { if (!isTyping() && state.pending) { state.pending = false; render(); } }, 50); });
 window.api.onAlert(a => toast(a.title + ' — ' + a.body, 'ok', 9000));
+// Fin de partie (coach) : pop-up qui reste jusqu'à ce qu'on la ferme ; 3 au plus, la plus récente en haut
+function resultCard(r) {
+  const verdict = p => (r.remake ? 'Partie annulée' : p.win ? 'Victoire' : 'Défaite');
+  const kind = r.remake ? 'remake' : r.players.every(p => p.win) ? 'win' : r.players.every(p => !p.win) ? 'loss' : 'mixed';
+  const mins = Math.round(r.duration / 60);
+  const rows = r.players.map(p => `<div class="res-row">
+      <div class="res-champ">${img(p.champion, 'res-img') || '<span class="res-img"></span>'}</div>
+      <div class="res-main">
+        <div class="res-who"><b class="res-verdict ${r.remake ? '' : p.win ? 'ok' : 'ko'}">${verdict(p)}</b> · ${esc(p.name)}${p.smurf ? ` <span class="faint">(smurf ${esc(p.smurf)})</span>` : ''}</div>
+        <div class="res-kda"><b>${p.k}</b> / <b class="res-d">${p.d}</b> / <b>${p.a}</b><span class="muted">${champ(p.champion)}</span></div>
+        <div class="faint tiny">KDA ${p.kda === null ? 'parfait' : String(p.kda).replace('.', ',')} · ${p.cs} CS · ${mins} min</div>
+      </div>
+      <button class="btn sm" data-action="res-see" data-id="${esc(p.playerId)}">Voir ses parties</button>
+    </div>`).join('');
+  return `<div class="res-head">${icon(kind === 'loss' ? 'flat' : 'trophy', 16)}<b>Partie terminée</b><span class="spacer"></span><button class="icon-btn" data-action="res-close" aria-label="Fermer">${icon('close', 15)}</button></div>${rows}`;
+}
+function showResult(r) {
+  let box = document.getElementById('results');
+  if (!box) { box = document.createElement('div'); box.id = 'results'; document.body.appendChild(box); }
+  const card = document.createElement('div');
+  card.className = 'res-card ' + (r.remake ? 'remake' : r.players.every(p => p.win) ? 'win' : r.players.every(p => !p.win) ? 'loss' : 'mixed');
+  card.innerHTML = resultCard(r);
+  box.prepend(card);
+  while (box.children.length > 3) box.lastChild.remove();
+}
+window.api.onLiveResult(r => showResult(r));
 window.api.onData(d => {
   state.data = d;
   analysisLiveUpdate();

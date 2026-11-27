@@ -621,17 +621,19 @@ async function pollLive() {
           ranks[x.puuid] = rk;
         } catch (e) { if (e.code === 'KEY') break; }
       }
-      games.push(liveMod.buildGame(f.raw, store.data.players, ranks, store.data.settings.champKeys || {}, Date.now(), store.data.settings.roleRates || null));
+      games.push(Object.assign(liveMod.buildGame(f.raw, store.data.players, ranks, store.data.settings.champKeys || {}, Date.now(), store.data.settings.roleRates || null), { region: f.region }));
     }
     const before = new Set(live.games.map(g => g.gameId));
     const after = new Set(games.map(g => g.gameId));
     if (!live.first && isCoach()) {
       for (const g of games.filter(x => !before.has(x.gameId))) {
         const who = g.allies.concat(g.enemies).filter(x => x.playerId).map(x => (x.smurf ? playerName(x.playerId) + ' sur son smurf ' + x.smurf : x.gameName || playerName(x.playerId)) + ' (' + champName(x.champion) + ')');
-        notifyCoach('Partie classée en cours', who.join(', ') + ' · ouvre « En direct » pour la regarder');
+        notifyCoach('Partie classée en cours', who.join(', ') + ' · ouvre « En direct » pour la suivre');
       }
     }
     if (live.games.some(g => !after.has(g.gameId))) setTimeout(pollRanks, FAST ? 2000 : 2 * 60 * 1000);
+    if (isCoach()) for (const g of live.games.filter(x => !after.has(x.gameId))) trackEnded(g);
+    for (const id of after) ended.delete(id); // revenue dans la liste (erreur passagère de Riot) : pas finie
     const sig = JSON.stringify([games.map(g => g.gameId + ':' + g.allies.concat(g.enemies).map(x => x.rank ? x.rank.lp : '').join()), error]);
     const changed = sig !== live.sig || live.first;
     Object.assign(live, { games, checkedAt: Date.now(), error, first: false, sig });
@@ -639,6 +641,59 @@ async function pollLive() {
   } finally {
     live.checking = false;
   }
+}
+
+// ---------------------------------------------------------------- fin de partie : résultat en pop-up
+// Quand une partie suivie disparaît d'« En direct », on la cherche chez Riot chaque minute (publiée en général 1 à 5
+// minutes après la fin ; abandon au bout de 30 minutes). Victoire ou défaite et K/D/A de chaque joueur suivi
+// arrivent en pop-up dans l'app et en notification de l'ordinateur, puis la partie est ajoutée à « Parties ».
+const ended = new Map();
+let checkingEnded = false;
+function trackEnded(g) {
+  const players = g.allies.concat(g.enemies).filter(x => x.playerId && x.puuid).map(x => ({ playerId: x.playerId, puuid: x.puuid, smurf: x.smurf || null }));
+  if (!players.length) return;
+  if (ended.has(g.gameId)) { ended.get(g.gameId).endedAt = Date.now(); return; }
+  ended.set(g.gameId, { gameId: g.gameId, matchId: (g.platformId || 'EUW1') + '_' + g.gameId, region: g.region || 'euw', players, endedAt: Date.now() });
+  setTimeout(checkEnded, FAST ? 1000 : 60 * 1000);
+}
+async function checkEnded() {
+  const key = getSecret('apiKey');
+  if (!key || !ended.size || checkingEnded) return;
+  checkingEnded = true;
+  const client = new RiotClient(key, { delayMs: 250, base: RIOT_BASE });
+  const done = [];
+  try {
+    for (const e of [...ended.values()]) {
+      if (Date.now() - e.endedAt > 30 * 60 * 1000) { ended.delete(e.gameId); continue; }
+      let m = null;
+      try { m = await client.match(e.matchId, e.region); } catch (err) { if (err.code === 'KEY') break; continue; }
+      if (!m || !m.info) continue; // pas encore publiée : on réessaie à la prochaine minute
+      ended.delete(e.gameId);
+      const r = liveMod.gameResult(m, e.players);
+      if (!r) continue;
+      for (const p of r.players) p.name = playerName(p.playerId);
+      done.push(r);
+      announceResult(r);
+    }
+  } finally {
+    checkingEnded = false;
+  }
+  if (done.length) setTimeout(() => runSync([...new Set(done.flatMap(r => r.players.map(p => p.playerId)))]), FAST ? 500 : 5000);
+  if (ended.size) setTimeout(checkEnded, FAST ? 1500 : 60 * 1000);
+}
+function announceResult(r) {
+  const verdict = p => (r.remake ? 'Partie annulée (remake)' : p.win ? 'Victoire' : 'Défaite');
+  const title = r.remake ? 'Partie annulée' : r.players.every(p => p.win) ? 'Victoire' : r.players.every(p => !p.win) ? 'Défaite' : 'Partie terminée';
+  const names = r.players.map(p => p.name).join(' et ');
+  const body = r.players.map(p => (r.players.length > 1 ? p.name + ' : ' : '') + verdict(p) + ' · ' + champName(p.champion) + ' ' + p.k + '/' + p.d + '/' + p.a + ' · ' + Math.round(r.duration / 60) + ' min').join('\n');
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title: title + ' — ' + names, body });
+      n.on('click', () => { if (win) { win.show(); win.focus(); } });
+      n.show();
+    }
+  } catch (e) { /* notifications indisponibles */ }
+  send('live:result', r);
 }
 
 // Smurfs d'un joueur (page En direct seulement) : pseudos saisis → { riotId, puuid }. Sans clé API, le puuid
@@ -2030,103 +2085,6 @@ function gameRunning() {
     else execFile('pgrep', ['-x', 'LeagueofLegends'], e => resolve(!e));
   });
 }
-// Message dans l'app du coach (sans notification système)
-function tellCoach(title, body) { if (win && !win.isDestroyed()) win.webContents.send('coach:alert', { title, body }); }
-
-// Bouton « Regarder » : demande au client League of Legends d'ouvrir la partie en mode spectateur, comme quand on
-// regarde un joueur depuis son profil dans le client. Le jeu lancé directement par l'app (ancienne méthode) reste
-// désormais sur un écran noir puis se ferme : il attend des informations de connexion que seul le client lui donne
-// (constaté dans les journaux du jeu, novembre 2026). Le client gère aussi le retard de 3 minutes des classées.
-const watching = { busy: false };
-async function lcuReady() {
-  const creds = await lcuCreds();
-  if (!creds) return null;
-  const me = await localJson(creds.base, 'GET', '/lol-summoner/v1/current-summoner', undefined, creds.password).catch(() => null);
-  return me && me.puuid ? creds : null;
-}
-// Ouvre le client League of Legends (le joueur doit être connecté à son compte Riot)
-function openLolClient() {
-  const ins = lolInstall();
-  if (!ins) return false;
-  if (process.env.COACHING_LOL_TEST) { fs.writeFileSync(path.join(process.env.COACHING_LOL_DATA, 'client-ouvert'), '1'); return true; }
-  const { spawn: sp } = require('child_process');
-  try {
-    if (LOL_OS === 'darwin') sp('open', [ins.base], { detached: true, stdio: 'ignore' }).unref();
-    else {
-      const exe = path.join(ins.base, 'LeagueClient.exe');
-      if (!fs.existsSync(exe)) return false;
-      sp(exe, [], { cwd: ins.base, detached: true, stdio: 'ignore' }).unref();
-    }
-    return true;
-  } catch (e) { return false; }
-}
-// Le client ne laisse regarder que ses amis : la clé de spectateur de la partie est dans la présence de l'ami
-// (chat du client). Les identifiants du client ne sont pas ceux de l'API Riot : on retrouve l'ami par son Riot ID.
-// Demande identique à celle du client quand on regarde un ami (vérifié dans ses journaux, novembre 2026).
-const riotKey = (name, tag) => String(name || '').toLowerCase().replace(/\s+/g, '') + '#' + String(tag || '').toLowerCase().replace(/\s+/g, '');
-function pickFriend(friends, ours) {
-  const list = Array.isArray(friends) ? friends : [];
-  let found = null;
-  for (const x of ours) {
-    const f = list.find(fr => riotKey(fr.gameName, fr.gameTag) === riotKey(x.gameName, x.tagLine));
-    if (f && f.lol && f.lol.spectatorKey) return { f, x };
-    if (f && !found) found = { f, x, noKey: true };
-  }
-  return found;
-}
-async function spectate(creds, g) {
-  const lcu = (method, p, body) => localJson(creds.base, method, p, body, creds.password);
-  const ours = g.allies.concat(g.enemies).filter(x => x.playerId && x.gameName);
-  const friends = await lcu('GET', '/lol-chat/v1/friends').catch(() => []);
-  const pick = pickFriend(friends, ours);
-  const names = ours.map(x => x.gameName + '#' + x.tagLine).join(' ou ');
-  if (!pick) throw new Error('Ajoute ' + names + ' en ami dans League of Legends : le client ne permet de regarder que ses amis.');
-  if (pick.noKey) throw new Error(pick.x.gameName + ' est dans tes amis, mais le client n\'a pas encore la clé de sa partie : réessaie dans un instant.');
-  const key = pick.f.lol.spectatorKey;
-  await lcu('GET', '/lol-spectator/v3/buddy/can-spectate/' + encodeURIComponent(pick.f.puuid) + '/' + encodeURIComponent(key)).catch(() => null);
-  try {
-    await lcu('POST', '/lol-spectator/v1/spectate/launch', { allowObserveMode: pick.f.lol.isObservable || 'ALL', dropInSpectateGameId: '', gameQueueType: pick.f.lol.gameQueueType || 'RANKED_SOLO_5x5', puuid: pick.f.puuid, spectatorKey: key });
-  } catch (e) {
-    throw new Error(e.status === 404 ? 'Riot ne trouve pas la partie (elle vient peut-être de se terminer).' : 'Le client League of Legends a refusé d\'ouvrir la partie (' + e.message + ').');
-  }
-}
-const watchMsg = g => {
-  const wait = Math.max(0, 180 - liveMod.elapsed(g));
-  return 'La partie s\'ouvre dans League of Legends' + (wait > 30 ? ' dans environ ' + Math.ceil(wait / 60) + ' min (3 min de retard en classée).' : ' (3 min de retard en classée).');
-};
-async function watchGame(gameId) {
-  requireEdit();
-  const g = live.games.find(x => String(x.gameId) === String(gameId));
-  if (!g) throw new Error('Cette partie est terminée.');
-  if (!g.allies.concat(g.enemies).some(x => x.playerId && x.gameName)) throw new Error('Aucun de tes joueurs n\'est identifiable dans cette partie.');
-  if (watching.busy) return { ok: true, message: 'Le client League of Legends s\'ouvre : la partie se lancera dès qu\'il sera prêt.' };
-  const creds = await lcuReady();
-  if (creds) {
-    await spectate(creds, g);
-    return { ok: true, message: watchMsg(g) };
-  }
-  // client fermé (ou pas encore connecté) : on l'ouvre, puis on lance la partie dès qu'il répond
-  if (!openLolClient()) throw new Error('Ouvre le client League of Legends (connecté à ton compte), puis clique à nouveau sur « Regarder ».');
-  watching.busy = true;
-  (async () => {
-    try {
-      let c = null;
-      for (const t0 = Date.now(); !c && Date.now() - t0 < (FAST ? 15000 : 120000); ) {
-        await new Promise(r => setTimeout(r, FAST ? 500 : 3000));
-        c = await lcuReady();
-      }
-      if (!c) return tellCoach('Mode spectateur', 'Le client League of Legends ne répond pas : connecte-toi à ton compte dans le client, puis clique à nouveau sur « Regarder ».');
-      if (!live.games.some(x => String(x.gameId) === String(gameId))) return tellCoach('Mode spectateur', 'La partie s\'est terminée entre-temps.');
-      await spectate(c, g);
-      tellCoach('Mode spectateur', watchMsg(g));
-    } catch (e) {
-      tellCoach('Mode spectateur', e.message);
-    } finally {
-      watching.busy = false;
-    }
-  })();
-  return { ok: true, message: 'J\'ouvre le client League of Legends : la partie se lancera toute seule dès qu\'il sera prêt.' };
-}
 
 function scheduleAutoSync() {
   if (syncTimer) clearInterval(syncTimer);
@@ -2470,7 +2428,6 @@ function registerIpc() {
   handle('booking:refresh', async () => { await refreshBookings(); return { ok: true, data: viewData() }; });
 
   handle('live:refresh', async () => { requireEdit(); await pollLive(); return { ok: true, data: viewData() }; });
-  handle('live:watch', gameId => watchGame(gameId));
   handle('moments:get', q => getMoments(q || {}));
   handle('videos:record', q => recordVideos(q || {}));
   handle('videos:delete', q => deleteVideos(q || {}));

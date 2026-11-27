@@ -43,9 +43,7 @@ const GAMES = {
 };
 const where = { 'P-KIOGA': 'partie1', 'P-HAVEHOPE': 'partie1', 'P-KASKET': 'partie2', 'P-QUEST': 'aram', 'S-QUEST': 'smurf' };
 const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER'];
-const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [], spectate: [] };
-// faux client LoL : « fermé » sur demande du scénario, « ouvert » dès que l'app l'a lancé (fichier client-ouvert)
-const lcu = { closed: false, friends: true };
+const calls = { spectator: {}, league: {}, match: 0, lcu: [], replay: [], resultat: 0 };
 // faux client LoL (replays) et faux jeu (Replay API)
 const rp = { state: 'download', polls: 0, watching: false, loading: 3, time: 0, selection: '' };
 const partieMoments = require('./fixtures/partie-moments')('P-UAWAWA');
@@ -77,26 +75,6 @@ function startRiot() {
       if (req.url === '/lol-replays/v1/rofls/7300000099/watch') { rp.watching = true; return send(204); }
       return send(404, {});
     }
-    if (req.url === '/__lcu-ferme') { lcu.closed = true; try { fs.rmSync(path.join(DIR, 'coach', 'client-ouvert')); } catch (e) { /* pas encore ouvert */ } return send(200, {}); }
-    if (req.url === '/__lcu-ouvert') { lcu.closed = false; return send(200, {}); }
-    if (req.url === '/lol-summoner/v1/current-summoner') {
-      const up = !lcu.closed || fs.existsSync(path.join(DIR, 'coach', 'client-ouvert'));
-      return up ? send(200, { puuid: 'COACH', gameName: 'Coach', tagLine: 'EUW' }) : send(503, {});
-    }
-    if (req.url === '/__amis-vides') { lcu.friends = false; return send(200, {}); }
-    if (req.url === '/__amis') { lcu.friends = true; return send(200, {}); }
-    if (req.url === '/lol-chat/v1/friends') {
-      // Kioga est un ami en partie (clé de spectateur dans sa présence) ; identifiants du client ≠ ceux de l'API Riot
-      return send(200, lcu.friends ? [
-        { gameName: 'Quelqu\'un', gameTag: 'EUW', puuid: 'lcu-autre', lol: {} },
-        { gameName: 'UCE Kioga', gameTag: 'EUWWW', puuid: 'lcu-kioga', lol: { gameStatus: 'inGame', gameQueueType: 'RANKED_SOLO_5x5', isObservable: 'ALL', spectatorKey: 'KeYkIoGa0123456789ab/Q==' } }
-      ] : []);
-    }
-    if (req.url.startsWith('/lol-spectator/v3/buddy/can-spectate/')) { calls.canSpectate = (calls.canSpectate || 0) + 1; return send(200, true); }
-    if (req.url === '/lol-spectator/v1/spectate/launch') {
-      calls.spectate.push({ method: req.method, body, auth: req.headers.authorization || '' });
-      return send(204);
-    }
     if (req.url.startsWith('/replay/')) {
       calls.replay.push(req.method + ' ' + req.url + (body ? ' ' + JSON.stringify(body) : ''));
       if (!rp.watching || rp.loading-- > 0) return send(503, {});
@@ -116,6 +94,14 @@ function startRiot() {
     if ((m = req.url.match(/\/riot\/account\/v1\/accounts\/by-riot-id\/([^/]+)\/([^/?]+)/))) {
       const id = decodeURIComponent(m[1]) + '#' + decodeURIComponent(m[2]);
       return id === 'Quest Smurf#EUW' ? send(200, { puuid: 'S-QUEST', gameName: 'Quest Smurf', tagLine: 'EUW' }) : send(404, { status: { message: 'Data not found', status_code: 404 } });
+    }
+    if (req.url.startsWith('/lol/match/v5/matches/EUW1_7300000001')) {
+      calls.resultat++;
+      if (calls.resultat === 1) return send(404, { status: { message: 'Data not found', status_code: 404 } }); // pas encore publiée
+      return send(200, { metadata: { matchId: 'EUW1_7300000001' }, info: { gameId: 7300000001, gameDuration: 1712, participants: [
+        { puuid: 'P-KIOGA', championName: 'LeeSin', win: true, kills: 7, deaths: 2, assists: 9, totalMinionsKilled: 150, neutralMinionsKilled: 40 },
+        { puuid: 'P-HAVEHOPE', championName: 'Thresh', win: true, kills: 1, deaths: 0, assists: 14, totalMinionsKilled: 30, neutralMinionsKilled: 0 },
+        { puuid: 'E-ADC', championName: 'Caitlyn', win: false, kills: 3, deaths: 6, assists: 2 }] } });
     }
     if (req.url.startsWith('/lol/match/v5/matches/EUW1_7300000099')) {
       calls.match++;
@@ -142,7 +128,7 @@ function startRiot() {
   fs.mkdirSync(path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS'), { recursive: true });
   fs.mkdirSync(path.join(app, 'Contents/LoL/Config'), { recursive: true });
   const exe = path.join(app, 'Contents/LoL/Game/LeagueofLegends.app/Contents/MacOS/LeagueofLegends');
-  fs.writeFileSync(exe, '#!/bin/sh\nexit 0\n'); // jamais lancé : « Regarder » passe par le client LoL
+  fs.writeFileSync(exe, '#!/bin/sh\nexit 0\n'); // jamais lancé : sert seulement à trouver l'installation
   fs.chmodSync(exe, 0o755);
   fs.writeFileSync(path.join(app, 'Contents/LoL/Config/LeagueClientSettings.yaml'), 'install:\n    globals:\n        locale: "fr_FR"\n        region: "EUW"\n');
 
@@ -195,21 +181,9 @@ function startRiot() {
   assert.ok(/Postes devinés/.test(r.cartes[0].texte));
   assert.ok(/écran de chargement/.test(r.cartes[1].texte), 'partie encore au chargement');
   assert.ok(/Adversaires/.test(r.cartes[1].texte));
-  // Regarder : le client LoL ouvre la partie (le jeu n'est plus lancé directement)
-  assert.ok(/s'ouvre dans League of Legends/.test(r.toastRegarder), r.toastRegarder);
-  assert.strictEqual(calls.spectate.length, 2, 'deux parties ouvertes par le client : ' + JSON.stringify(calls.spectate));
-  // même demande que le client quand on regarde un ami : clé de spectateur de sa présence, identifiant du client
-  assert.deepStrictEqual(calls.spectate[0].body, { allowObserveMode: 'ALL', dropInSpectateGameId: '', gameQueueType: 'RANKED_SOLO_5x5', puuid: 'lcu-kioga', spectatorKey: 'KeYkIoGa0123456789ab/Q==' });
-  assert.strictEqual(calls.canSpectate, 2, 'vérification « can-spectate » avant chaque lancement, comme le client');
-  assert.ok(/Ajoute UCE Kioga#EUWWW ou HaveHope#305 en ami dans League of Legends/.test(r.toastPasAmi), r.toastPasAmi);
-  assert.strictEqual(calls.spectate[0].method, 'POST');
-  assert.ok(/^Basic /.test(calls.spectate[0].auth), 'mot de passe du client envoyé');
-  // client fermé : l'app l'ouvre, puis lance la partie dès qu'il répond
-  assert.ok(/J'ouvre le client League of Legends/.test(r.toastClientFerme), r.toastClientFerme);
-  assert.ok(r.clientOuvert, 'client LoL ouvert par l\'app');
-  assert.ok(/Mode spectateur — La partie s'ouvre dans League of Legends/.test(r.toastApresOuverture), r.toastApresOuverture);
-  // client fermé et jeu introuvable : message clair
-  assert.ok(/Ouvre le client League of Legends/.test(r.toastIntrouvable), r.toastIntrouvable);
+  // plus de bouton « Regarder »
+  assert.strictEqual(r.boutonsRegarder, 0, 'pas de bouton Regarder');
+  assert.ok(/le résultat \(victoire ou défaite, K\/D\/A\) s'affiche en pop-up/.test(r.cartes[0].texte), r.cartes[0].texte);
   // smurfs
   assert.ok(/Smurf introuvable chez Riot : Inconnu#XXX/.test(r.toastSmurfInconnu), r.toastSmurfInconnu);
   assert.deepStrictEqual(r.smurfsEnregistres, [{ riotId: 'Quest Smurf#EUW', puuid: 'S-QUEST' }]);
@@ -217,9 +191,17 @@ function startRiot() {
   assert.ok(/UCE Questinou sur son smurf Quest Smurf/.test(r.carteSmurf.titre), r.carteSmurf.titre);
   assert.ok(/smurf de UCE Questinou/.test(r.carteSmurf.texte));
   assert.ok(/Smurfs : Quest Smurf#EUW/.test(r.ficheJoueur), r.ficheJoueur);
-  assert.ok(/League of Legends trouvé/.test(r.reglage), r.reglage);
+  assert.ok(/Emplacement de League of Legends/.test(r.reglage) && /League of Legends trouvé/.test(r.reglage) && !/Regarder/.test(r.reglage), r.reglage);
   // fin de partie, nouvelle partie, plus rien
   assert.strictEqual(r.apresFin, 2, 'restent KasKet et le smurf de Questinou');
+  // fin de partie : pop-up avec le résultat de Kioga et HaveHope, une fois la partie publiée par Riot (2e essai)
+  assert.ok(calls.resultat >= 2, 'partie cherchée jusqu\'à sa publication');
+  assert.strictEqual(r.popup.classe, 'res-card win');
+  assert.ok(/Partie terminée/.test(r.popup.texte) && /Victoire · UCE Kioga/.test(r.popup.texte) && /Victoire · HaveHope/.test(r.popup.texte), r.popup.texte);
+  assert.ok(/7 \/ 2 \/ 9/.test(r.popup.texte) && /KDA 8 · 190 CS · 29 min/.test(r.popup.texte), r.popup.texte);
+  assert.ok(/1 \/ 0 \/ 14/.test(r.popup.texte) && /KDA parfait/.test(r.popup.texte), r.popup.texte);
+  assert.strictEqual(r.popupApresFermeture, 0, 'pop-up fermée');
+  assert.strictEqual(r.voirSesParties, 'parties', '« Voir ses parties » ouvre les parties du joueur');
   assert.ok(/Partie classée en cours/.test(r.notification) && /UCE Uawawa/.test(r.notification), r.notification);
   assert.ok(/UCE Questinou sur son smurf Quest Smurf#EUW \(Jhin\)/.test(r.notificationSmurf), r.notificationSmurf);
   assert.ok(/Aucun de tes joueurs/.test(r.vide), r.vide);
